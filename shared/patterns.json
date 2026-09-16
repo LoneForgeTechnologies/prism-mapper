@@ -1,0 +1,394 @@
+[
+  {
+    "id": "aurora",
+    "label": "Aurora",
+    "category": "Atmosphere",
+    "shader": 0,
+    "animated": true,
+    "description": "Slow ribbons of northern light"
+  },
+  {
+    "id": "ocean",
+    "label": "Ocean",
+    "category": "Atmosphere",
+    "shader": 5,
+    "animated": true,
+    "description": "Sunlit caustics across deep blue water"
+  },
+  {
+    "id": "flame",
+    "label": "Flame",
+    "category": "Atmosphere",
+    "shader": 6,
+    "animated": true,
+    "description": "Warm tongues of rising fire"
+  },
+  {
+    "id": "clouds",
+    "label": "Cloudscape",
+    "category": "Atmosphere",
+    "shader": 7,
+    "animated": true,
+    "description": "Soft clouds crossing a luminous sky"
+  },
+  {
+    "id": "lava",
+    "label": "Lava lamp",
+    "category": "Atmosphere",
+    "shader": 8,
+    "animated": true,
+    "description": "Warm liquid blobs floating and merging"
+  },
+  {
+    "id": "galaxy",
+    "label": "Galaxy",
+    "category": "Atmosphere",
+    "shader": 9,
+    "animated": true,
+    "description": "Nebula clouds and drifting stars"
+  },
+  {
+    "id": "rain",
+    "label": "Rainfall",
+    "category": "Atmosphere",
+    "shader": 10,
+    "animated": true,
+    "description": "Slanting rain across a midnight sky"
+  },
+  {
+    "id": "snow",
+    "label": "Snowfall",
+    "category": "Atmosphere",
+    "shader": 11,
+    "animated": true,
+    "description": "Layers of soft falling snow"
+  },
+  {
+    "id": "fireflies",
+    "label": "Fireflies",
+    "category": "Atmosphere",
+    "shader": 12,
+    "animated": true,
+    "description": "Golden motes floating in the dark"
+  },
+  {
+    "id": "rings",
+    "label": "Orbit",
+    "category": "Geometry",
+    "shader": 2,
+    "animated": true,
+    "description": "Radiating rings of colored light"
+  },
+  {
+    "id": "tunnel",
+    "label": "Neon tunnel",
+    "category": "Geometry",
+    "shader": 13,
+    "animated": true,
+    "description": "Travel through a glowing geometric tunnel"
+  },
+  {
+    "id": "kaleidoscope",
+    "label": "Kaleidoscope",
+    "category": "Geometry",
+    "shader": 14,
+    "animated": true,
+    "description": "Rotating symmetry in vivid colors"
+  },
+  {
+    "id": "neon-grid",
+    "label": "Neon grid",
+    "category": "Geometry",
+    "shader": 15,
+    "animated": true,
+    "description": "An endless retro grid under a neon horizon"
+  },
+  {
+    "id": "waves",
+    "label": "Wavelength",
+    "category": "Geometry",
+    "shader": 16,
+    "animated": true,
+    "description": "Layered waves in a flowing spectrum"
+  },
+  {
+    "id": "spiral",
+    "label": "Spiral",
+    "category": "Geometry",
+    "shader": 17,
+    "animated": true,
+    "description": "Smooth ribbons winding around a vortex"
+  },
+  {
+    "id": "hexagons",
+    "label": "Honeycomb",
+    "category": "Geometry",
+    "shader": 18,
+    "animated": true,
+    "description": "A field of glowing animated hexagons"
+  },
+  {
+    "id": "moire",
+    "label": "Interference",
+    "category": "Geometry",
+    "shader": 19,
+    "animated": true,
+    "description": "Overlapping lines creating fluid patterns"
+  },
+  {
+    "id": "shards",
+    "label": "Prism shards",
+    "category": "Geometry",
+    "shader": 20,
+    "animated": true,
+    "description": "Rotating geometric crystals"
+  },
+  {
+    "id": "confetti",
+    "label": "Confetti",
+    "category": "Playful",
+    "shader": 21,
+    "animated": true,
+    "description": "Colorful paper dancing through space"
+  },
+  {
+    "id": "bubbles",
+    "label": "Bubble garden",
+    "category": "Playful",
+    "shader": 22,
+    "animated": true,
+    "description": "Floating iridescent bubbles"
+  },
+  {
+    "id": "ribbons",
+    "label": "Silk ribbons",
+    "category": "Playful",
+    "shader": 23,
+    "animated": true,
+    "description": "Flowing satin bands of color"
+  },
+  {
+    "id": "comet",
+    "label": "Comet trails",
+    "category": "Playful",
+    "shader": 24,
+    "animated": true,
+    "description": "Luminous comets sweeping past stars"
+  },
+  {
+    "id": "fireworks",
+    "label": "Fireworks",
+    "category": "Playful",
+    "shader": 25,
+    "animated": true,
+    "description": "Colored sparks blooming in the night"
+  },
+  {
+    "id": "petals",
+    "label": "Cherry petals",
+    "category": "Playful",
+    "shader": 26,
+    "animated": true,
+    "description": "A gentle shower of drifting petals"
+  },
+  {
+    "id": "matrix",
+    "label": "Digital rain",
+    "category": "Playful",
+    "shader": 27,
+    "animated": true,
+    "description": "Columns of original green geometric glyphs"
+  },
+  {
+    "id": "rainbow",
+    "label": "Spectrum",
+    "category": "Playful",
+    "shader": 28,
+    "animated": true,
+    "description": "Smooth sweeps of saturated rainbow color"
+  },
+  {
+    "id": "edge-chase",
+    "label": "Edge chase",
+    "category": "Shape",
+    "shader": 29,
+    "animated": true,
+    "description": "Colored comet trails follow your mapped outline"
+  },
+  {
+    "id": "edge-pulse",
+    "label": "Edge pulse",
+    "category": "Shape",
+    "shader": 30,
+    "animated": true,
+    "description": "A soft breathing glow around your mapped outline"
+  },
+  {
+    "id": "edge-dashes",
+    "label": "Edge dashes",
+    "category": "Shape",
+    "shader": 31,
+    "animated": true,
+    "description": "Marching colored dashes trace the whole perimeter"
+  },
+  {
+    "id": "contour",
+    "label": "Contour flow",
+    "category": "Shape",
+    "shader": 32,
+    "animated": true,
+    "description": "Nested bands of light flow inward from your outline"
+  },
+  {
+    "id": "corner-bloom",
+    "label": "Perimeter blooms",
+    "category": "Shape",
+    "shader": 33,
+    "animated": true,
+    "description": "Soft colored blooms spaced around your mapped outline"
+  },
+  {
+    "id": "sweep",
+    "label": "Panel sweep",
+    "category": "Shape",
+    "shader": 34,
+    "animated": true,
+    "description": "A scanning light band illuminates the panel and its edges"
+  },
+  {
+    "id": "radar",
+    "label": "Radar sweep",
+    "category": "Shape",
+    "shader": 35,
+    "animated": true,
+    "description": "A rotating light fan reveals rings inside your outline"
+  },
+  {
+    "id": "triangle-weave",
+    "label": "Triangle weave",
+    "category": "Shape",
+    "shader": 36,
+    "animated": true,
+    "description": "Interlaced light waves across a triangular mosaic"
+  },
+  {
+    "id": "watching-eyes",
+    "label": "Watching eyes",
+    "category": "Halloween",
+    "shader": 37,
+    "animated": true,
+    "description": "Amber slit pupils look around and blink in the darkness"
+  },
+  {
+    "id": "bleeding-wall",
+    "label": "Bleeding wall",
+    "category": "Halloween",
+    "shader": 38,
+    "animated": true,
+    "description": "Glossy crimson blood crawls down the wall in long drips"
+  },
+  {
+    "id": "living-veins",
+    "label": "Living veins",
+    "category": "Halloween",
+    "shader": 39,
+    "animated": true,
+    "description": "Branching crimson vessels pulse beneath mottled skin"
+  },
+  {
+    "id": "haunted-skull",
+    "label": "Haunted skull",
+    "category": "Halloween",
+    "shader": 40,
+    "animated": true,
+    "description": "A weathered skull floats with smoldering eyes and cracked bone"
+  },
+  {
+    "id": "restless-spirits",
+    "label": "Restless spirits",
+    "category": "Halloween",
+    "shader": 41,
+    "animated": true,
+    "description": "Hollow-eyed apparitions drift through a spectral haze"
+  },
+  {
+    "id": "spider-nest",
+    "label": "Spider nest",
+    "category": "Halloween",
+    "shader": 42,
+    "animated": true,
+    "description": "Articulated spiders descend across a silvery swaying web"
+  },
+  {
+    "id": "blood-moon",
+    "label": "Blood moon",
+    "category": "Halloween",
+    "shader": 43,
+    "animated": true,
+    "description": "Flapping bats cross a rusty moon above dark hills"
+  },
+  {
+    "id": "jack-o-lantern",
+    "label": "Jack-o’-lantern",
+    "category": "Halloween",
+    "shader": 44,
+    "animated": true,
+    "description": "A carved pumpkin grins with sharp teeth and warm candlelight"
+  },
+  {
+    "id": "dread-portal",
+    "label": "Dread portal",
+    "category": "Halloween",
+    "shader": 45,
+    "animated": true,
+    "description": "Violet fire coils around a dark pulsing doorway"
+  },
+  {
+    "id": "open-wound",
+    "label": "Open wound",
+    "category": "Halloween",
+    "shader": 46,
+    "animated": true,
+    "description": "A torn fleshy gash breathes with wet red edges and blood trails"
+  },
+  {
+    "id": "crawling-swarm",
+    "label": "Crawling swarm",
+    "category": "Halloween",
+    "shader": 47,
+    "animated": true,
+    "description": "Skittering insects crawl across a decaying mottled wall"
+  },
+  {
+    "id": "graveyard-mist",
+    "label": "Graveyard mist",
+    "category": "Halloween",
+    "shader": 48,
+    "animated": true,
+    "description": "A green specter rises among headstones and rolling night fog"
+  },
+  {
+    "id": "grid",
+    "label": "Calibration grid",
+    "category": "Utility",
+    "shader": 1,
+    "animated": false,
+    "description": "Labeled edges and grid lines for alignment"
+  },
+  {
+    "id": "checker",
+    "label": "Checkerboard",
+    "category": "Utility",
+    "shader": 3,
+    "animated": false,
+    "description": "High contrast squares for fitting surfaces"
+  },
+  {
+    "id": "solid",
+    "label": "Solid color",
+    "category": "Utility",
+    "shader": 4,
+    "animated": false,
+    "description": "A single color you can choose"
+  }
+]

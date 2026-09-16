@@ -1,0 +1,240 @@
+{
+  "version": 2,
+  "name": "Halloween haunt",
+  "width": 1920,
+  "height": 1080,
+  "surfaces": [
+    {
+      "id": "house",
+      "name": "Bleeding house",
+      "corners": [
+        {
+          "x": 0.12,
+          "y": 0.07
+        },
+        {
+          "x": 0.88,
+          "y": 0.07
+        },
+        {
+          "x": 0.88,
+          "y": 0.92
+        },
+        {
+          "x": 0.12,
+          "y": 0.92
+        }
+      ],
+      "source": "bleeding-wall",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1,
+      "polygon": [
+        {
+          "x": 0.12,
+          "y": 0.4
+        },
+        {
+          "x": 0.5,
+          "y": 0.07
+        },
+        {
+          "x": 0.88,
+          "y": 0.4
+        },
+        {
+          "x": 0.88,
+          "y": 0.92
+        },
+        {
+          "x": 0.12,
+          "y": 0.92
+        }
+      ],
+      "audio": {
+        "enabled": true,
+        "band": "bass",
+        "amount": 0.6,
+        "mode": "brightness"
+      }
+    },
+    {
+      "id": "roof",
+      "name": "Spider attic",
+      "corners": [
+        {
+          "x": 0.15,
+          "y": 0.095
+        },
+        {
+          "x": 0.85,
+          "y": 0.095
+        },
+        {
+          "x": 0.85,
+          "y": 0.4
+        },
+        {
+          "x": 0.15,
+          "y": 0.4
+        }
+      ],
+      "source": "spider-nest",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1,
+      "polygon": [
+        {
+          "x": 0.5,
+          "y": 0.095
+        },
+        {
+          "x": 0.85,
+          "y": 0.4
+        },
+        {
+          "x": 0.15,
+          "y": 0.4
+        }
+      ]
+    },
+    {
+      "id": "eyes",
+      "name": "Watching window",
+      "corners": [
+        {
+          "x": 0.22,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.46
+        },
+        {
+          "x": 0.44,
+          "y": 0.66
+        },
+        {
+          "x": 0.22,
+          "y": 0.66
+        }
+      ],
+      "source": "watching-eyes",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1
+    },
+    {
+      "id": "wound",
+      "name": "Wounded window",
+      "corners": [
+        {
+          "x": 0.56,
+          "y": 0.46
+        },
+        {
+          "x": 0.78,
+          "y": 0.46
+        },
+        {
+          "x": 0.78,
+          "y": 0.66
+        },
+        {
+          "x": 0.56,
+          "y": 0.66
+        }
+      ],
+      "source": "open-wound",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1,
+      "audio": {
+        "enabled": true,
+        "band": "mid",
+        "amount": 0.6,
+        "mode": "brightness"
+      }
+    },
+    {
+      "id": "yard",
+      "name": "Haunted garden",
+      "corners": [
+        {
+          "x": 0.07,
+          "y": 0.86
+        },
+        {
+          "x": 0.93,
+          "y": 0.86
+        },
+        {
+          "x": 0.93,
+          "y": 0.98
+        },
+        {
+          "x": 0.07,
+          "y": 0.98
+        }
+      ],
+      "source": "graveyard-mist",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1
+    },
+    {
+      "id": "door",
+      "name": "Skull doorway",
+      "corners": [
+        {
+          "x": 0.445,
+          "y": 0.65
+        },
+        {
+          "x": 0.555,
+          "y": 0.65
+        },
+        {
+          "x": 0.555,
+          "y": 0.94
+        },
+        {
+          "x": 0.445,
+          "y": 0.94
+        }
+      ],
+      "source": "haunted-skull",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a8f3cb",
+      "speed": 1,
+      "detail": 1,
+      "audio": {
+        "enabled": true,
+        "band": "beat",
+        "amount": 0.6,
+        "mode": "brightness"
+      }
+    }
+  ],
+  "media": [],
+  "brightness": 0.65,
+  "blackout": false,
+  "playing": true
+}

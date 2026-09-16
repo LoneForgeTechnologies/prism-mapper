@@ -1,0 +1,63 @@
+name: Bug report
+description: Report a reproducible problem with Prism Mapper.
+title: "[Bug]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve Prism Mapper. Include enough detail to reproduce the problem. Use generated animations in example projects when possible, and remove private media or personal file paths before attaching anything.
+  - type: input
+    id: version
+    attributes:
+      label: Prism Mapper version
+      description: Release tag, or commit if you built from source.
+      placeholder: "0.4.1"
+    validations:
+      required: true
+  - type: input
+    id: operating-system
+    attributes:
+      label: Operating system and computer
+      description: Include OS version and processor type. Add graphics hardware if known.
+      placeholder: "macOS 15 on Apple M2, or Windows 11 on Intel x64"
+    validations:
+      required: true
+  - type: dropdown
+    id: installation
+    attributes:
+      label: How are you running the app?
+      options:
+        - macOS Apple silicon release ZIP
+        - Built from source
+        - Browser preview
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: Start from opening the app. Include the chosen material or tool and any exact error message.
+      placeholder: |
+        1. Open Prism Mapper.
+        2. ...
+        3. The problem occurs when ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected-actual
+    attributes:
+      label: Expected and actual result
+      description: What should happen, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: display-audio
+    attributes:
+      label: Projector or audio setup
+      description: If relevant, include projector model, resolution, connection, extended/mirrored display mode, and audio source. State whether the OS permission prompt appeared.
+      placeholder: "HDMI projector at 1920×1080, extended display; built-in microphone"
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshot, example project, or logs
+      description: Optional. A small project with generated animations is ideal. Remove personal file paths and private media before attaching. You can ZIP a .prism.json file for upload.

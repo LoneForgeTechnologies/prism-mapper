@@ -1,0 +1,93 @@
+{
+  "version": 1,
+  "name": "Indoor cube study",
+  "width": 1920,
+  "height": 1080,
+  "surfaces": [
+    {
+      "id": "top",
+      "name": "Box \u00b7 top",
+      "corners": [
+        {
+          "x": 0.5,
+          "y": 0.14
+        },
+        {
+          "x": 0.77,
+          "y": 0.3
+        },
+        {
+          "x": 0.5,
+          "y": 0.47
+        },
+        {
+          "x": 0.23,
+          "y": 0.3
+        }
+      ],
+      "source": "grid",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#b6f6ce"
+    },
+    {
+      "id": "left",
+      "name": "Box \u00b7 left",
+      "corners": [
+        {
+          "x": 0.23,
+          "y": 0.3
+        },
+        {
+          "x": 0.5,
+          "y": 0.47
+        },
+        {
+          "x": 0.5,
+          "y": 0.86
+        },
+        {
+          "x": 0.23,
+          "y": 0.68
+        }
+      ],
+      "source": "aurora",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a2dbc5"
+    },
+    {
+      "id": "right",
+      "name": "Box \u00b7 right",
+      "corners": [
+        {
+          "x": 0.5,
+          "y": 0.47
+        },
+        {
+          "x": 0.77,
+          "y": 0.3
+        },
+        {
+          "x": 0.77,
+          "y": 0.68
+        },
+        {
+          "x": 0.5,
+          "y": 0.86
+        }
+      ],
+      "source": "rings",
+      "visible": true,
+      "locked": false,
+      "opacity": 1,
+      "color": "#a2dbc5"
+    }
+  ],
+  "media": [],
+  "brightness": 0.65,
+  "blackout": false,
+  "playing": true
+}
