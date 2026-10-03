@@ -115,22 +115,36 @@ export function createDoubleTapDetector(
 }
 
 /**
- * Some browsers also synthesise a double-click from a double-tap. Both paths
- * ask this guard first, so one gesture inserts at most one point.
+ * Some browsers also synthesise a double-click from a double-tap. The touch
+ * path claims the gesture first and the double-click path checks `seen`, so
+ * one gesture inserts at most one point. A mouse never claims anything.
  */
 export function createRepeatGuard(windowMs = 700, radius = 24) {
   let last: TapSample | null = null;
-  return (sample: TapSample): boolean => {
-    if (
-      last &&
-      sample.time - last.time < windowMs &&
-      Math.hypot(sample.x - last.x, sample.y - last.y) <= radius
-    )
-      return false;
-    last = sample;
-    return true;
+  const near = (sample: TapSample) =>
+    last !== null &&
+    sample.time - last.time < windowMs &&
+    Math.hypot(sample.x - last.x, sample.y - last.y) <= radius;
+  return {
+    /** Records the gesture. False when a close one was claimed a moment ago. */
+    claim(sample: TapSample): boolean {
+      if (near(sample)) return false;
+      last = sample;
+      return true;
+    },
+    /** True when a close gesture was claimed a moment ago. Records nothing. */
+    seen: near,
   };
 }
+
+/** A finger must travel this many CSS pixels before a press becomes a drag. */
+export const TOUCH_DRAG_SLOP = 6;
+/**
+ * How close a pointer has to be to an outline edge, or to the first point of
+ * a drawing, to hit it, in CSS pixels. A finger gets a 44px wide target.
+ */
+export const hitReach = (pointerType?: string) =>
+  pointerType === "touch" ? 22 : 14;
 
 /** Largest rectangle of the given aspect ratio that fits inside a box. */
 export function fitAspect(boxWidth: number, boxHeight: number, ratio: number) {

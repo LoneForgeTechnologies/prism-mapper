@@ -1,0 +1,1323 @@
+/*
+ * Compact touch layout: phones, tablets in portrait and phones on their side.
+ * Everything below is scoped to the compact layout (.app-shell[data-layout="compact"])
+ * or to Present mode, so the desktop layout in style.css is left exactly as it was.
+ */
+
+/* Safe areas. Capacitor on Android injects --safe-area-inset-* because older
+   WebViews have no env(); iOS and modern Chromium report env(). Use both. */
+:root {
+  --inset-top: var(--safe-area-inset-top, 0px);
+  --inset-right: var(--safe-area-inset-right, 0px);
+  --inset-bottom: var(--safe-area-inset-bottom, 0px);
+  --inset-left: var(--safe-area-inset-left, 0px);
+}
+@supports (padding-top: env(safe-area-inset-top)) {
+  :root {
+    --inset-top: max(
+      env(safe-area-inset-top, 0px),
+      var(--safe-area-inset-top, 0px)
+    );
+    --inset-right: max(
+      env(safe-area-inset-right, 0px),
+      var(--safe-area-inset-right, 0px)
+    );
+    --inset-bottom: max(
+      env(safe-area-inset-bottom, 0px),
+      var(--safe-area-inset-bottom, 0px)
+    );
+    --inset-left: max(
+      env(safe-area-inset-left, 0px),
+      var(--safe-area-inset-left, 0px)
+    );
+  }
+}
+@media (max-width: 1049.98px) {
+  html,
+  body {
+    overscroll-behavior: none;
+    background: #121813;
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}
+
+.app-shell[data-layout="compact"] {
+  --c-hdr: 48px;
+  --c-strip: 52px;
+  --c-nav: 58px;
+  --c-min-stage: 170px;
+  --c-sheet-bg: #1a211c;
+  --c-sheet-h: min(
+    55dvh,
+    calc(
+      100dvh - var(--inset-top) - var(--c-hdr) - var(--c-strip) - var(--c-nav) -
+        var(--inset-bottom) - var(--c-min-stage)
+    )
+  );
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  height: 100vh;
+  height: 100dvh;
+  min-width: 0;
+  min-height: 0;
+  overscroll-behavior: none;
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+.app-shell[data-layout="compact"] footer,
+.app-shell[data-layout="compact"] .alpha,
+.app-shell[data-layout="compact"] .canvas-toolbar,
+.app-shell[data-layout="compact"] .transport,
+.app-shell[data-layout="compact"] .getting-started,
+.app-shell[data-layout="compact"] .stage-caption,
+.app-shell[data-layout="compact"] .stage-below,
+.app-shell[data-layout="compact"] .project-tag,
+.app-shell[data-layout="compact"] .session-meta,
+.app-shell[data-layout="compact"] .project-title .status-dot,
+.app-shell[data-layout="compact"] .left-bottom,
+.app-shell[data-layout="compact"] .blackout-overlay kbd {
+  display: none;
+}
+
+/* ---- Header: logo mark, editable project name, Open, Save, Help ---- */
+.app-shell[data-layout="compact"] .topbar {
+  grid-area: 1 / 1;
+  height: auto;
+  min-height: calc(var(--c-hdr) + var(--inset-top));
+  padding: var(--inset-top) calc(var(--inset-right) + 6px) 0
+    calc(var(--inset-left) + 6px);
+  gap: 4px;
+  touch-action: manipulation;
+}
+.app-shell[data-layout="compact"] .brand {
+  gap: 0;
+  min-width: 34px;
+}
+.app-shell[data-layout="compact"] .brand > span {
+  display: none;
+}
+.app-shell[data-layout="compact"] .brand svg {
+  width: 26px;
+  height: 26px;
+}
+.app-shell[data-layout="compact"] .header-actions {
+  gap: 0;
+}
+.app-shell[data-layout="compact"] .header-actions .separator {
+  display: none;
+}
+/* Icon only on phones. The text stays in the DOM as the accessible name. */
+.app-shell[data-layout="compact"] .header-actions button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  gap: 0;
+  font-size: 0;
+  border-radius: 10px;
+  color: #c3d3c8;
+  background: transparent;
+  border-color: transparent;
+}
+.app-shell[data-layout="compact"] .header-actions button svg {
+  width: 21px;
+  height: 21px;
+}
+.app-shell[data-layout="compact"] .header-actions button:active {
+  background: #2a352d;
+}
+/* The project name lives in the header row, between the mark and the buttons. */
+.app-shell[data-layout="compact"] .workspace-bar {
+  grid-area: 1 / 1;
+  z-index: 1;
+  height: auto;
+  align-self: stretch;
+  margin: 0 calc(var(--inset-right) + 6px + 132px + 4px) 0
+    calc(var(--inset-left) + 6px + 34px + 4px);
+  padding: var(--inset-top) 0 0;
+  border: 0;
+  background: transparent;
+  pointer-events: none;
+}
+.app-shell[data-layout="compact"] .project-title {
+  width: 100%;
+  height: var(--c-hdr);
+  pointer-events: auto;
+}
+.app-shell[data-layout="compact"] .project-title input {
+  width: 100%;
+  height: 44px;
+  padding: 0 10px;
+  font-size: 16px;
+  font-weight: 560;
+  letter-spacing: -0.1px;
+  color: #eef3ee;
+  text-overflow: ellipsis;
+  border-radius: 8px;
+}
+.app-shell[data-layout="compact"] .project-title input:focus {
+  background: #202a23;
+  border-color: #485d4e;
+}
+@media (min-width: 640px) {
+  .app-shell[data-layout="compact"] .brand {
+    gap: 9px;
+  }
+  .app-shell[data-layout="compact"] .brand > span:not(.alpha) {
+    display: inline;
+    font-size: 19px;
+  }
+  .app-shell[data-layout="compact"] .workspace-bar {
+    margin-left: calc(var(--inset-left) + 6px + 168px);
+    margin-right: calc(var(--inset-right) + 6px + 244px);
+  }
+  .app-shell[data-layout="compact"] .header-actions button {
+    width: auto;
+    min-width: 44px;
+    padding: 0 12px;
+    gap: 7px;
+    font-size: 12px;
+  }
+  .app-shell[data-layout="compact"] .header-actions button:last-child {
+    padding: 0;
+    width: 44px;
+  }
+  .app-shell[data-layout="compact"] .header-actions button svg {
+    width: 17px;
+    height: 17px;
+  }
+}
+
+/* ---- Workspace: the stage on top, one sheet at a time above the bottom bar ---- */
+.app-shell[data-layout="compact"] .workspace {
+  grid-area: 2 / 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
+}
+.app-shell[data-layout="compact"] .center-panel {
+  order: 1;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+}
+.app-shell[data-layout="compact"] .left-panel,
+.app-shell[data-layout="compact"] .right-panel {
+  order: 2;
+}
+.app-shell[data-layout="compact"]:not([data-sheet="layers"]):not(
+    [data-sheet="looks"]
+  )
+  .left-panel,
+.app-shell[data-layout="compact"]:not([data-sheet="adjust"]):not(
+    [data-sheet="audio"]
+  ):not([data-sheet="show"])
+  .right-panel {
+  display: none;
+}
+.app-shell[data-layout="compact"] .left-panel,
+.app-shell[data-layout="compact"] .right-panel {
+  flex: 0 0 auto;
+  height: var(--c-sheet-h);
+  min-height: 0;
+  padding: 0 var(--inset-right) 0 var(--inset-left);
+  border: 0;
+  border-top: 1px solid #3f5345;
+  border-radius: 16px 16px 0 0;
+  background: var(--c-sheet-bg);
+  box-shadow: 0 -12px 32px #0007;
+  overflow: hidden;
+  outline: none;
+  animation: c-sheet-in 0.18s ease-out;
+}
+.app-shell[data-layout="compact"][data-sheet="show"] .right-panel {
+  height: auto;
+  max-height: var(--c-sheet-h);
+}
+@keyframes c-sheet-in {
+  from {
+    transform: translateY(14px);
+    opacity: 0.5;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .app-shell[data-layout="compact"] .left-panel,
+  .app-shell[data-layout="compact"] .right-panel {
+    animation: none;
+  }
+}
+
+/* Sheet title row with its own close button. */
+.sheet-bar {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 54px;
+  padding: 12px 6px 0 16px;
+}
+.sheet-grip {
+  position: absolute;
+  top: 6px;
+  left: 50%;
+  width: 36px;
+  height: 4px;
+  margin-left: -18px;
+  border-radius: 2px;
+  background: #3b4a40;
+}
+.sheet-bar h2 {
+  flex: none;
+  font-size: 16px;
+  font-weight: 600;
+  color: #eef3ee;
+}
+.sheet-meta {
+  font-size: 10px;
+  letter-spacing: 1.2px;
+  color: #819a8b;
+  text-transform: uppercase;
+}
+.sheet-close {
+  margin-left: auto;
+  color: #9db3a3;
+}
+
+/* Each panel shows only the part its sheet is about. */
+.app-shell[data-layout="compact"] .left-panel > .panel-heading,
+.app-shell[data-layout="compact"] .library > .panel-heading,
+.app-shell[data-layout="compact"] .right-panel > .panel-heading,
+.app-shell[data-layout="compact"] .output-panel > .panel-heading,
+.app-shell[data-layout="compact"] .inspector-tabs,
+.app-shell[data-layout="compact"] .audio-shortcut {
+  display: none;
+}
+.app-shell[data-layout="compact"][data-sheet="layers"] .left-panel .library {
+  display: none;
+}
+.app-shell[data-layout="compact"][data-sheet="looks"]
+  .left-panel
+  > :not(.sheet-bar):not(.library) {
+  display: none;
+}
+.app-shell[data-layout="compact"][data-sheet="show"] .right-panel .inspector,
+.app-shell[data-layout="compact"][data-sheet="adjust"]
+  .right-panel
+  .output-panel,
+.app-shell[data-layout="compact"][data-sheet="audio"]
+  .right-panel
+  .output-panel {
+  display: none;
+}
+.app-shell[data-layout="compact"] .surface-list,
+.app-shell[data-layout="compact"] .generator-browser,
+.app-shell[data-layout="compact"] .media-library,
+.app-shell[data-layout="compact"] .inspector,
+.app-shell[data-layout="compact"] .output-panel {
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ---- Tool strip ---- */
+.app-shell[data-layout="compact"] .mapping-tools {
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 2px;
+  min-height: var(--c-strip);
+  padding: 4px calc(var(--inset-right) + 6px) 4px calc(var(--inset-left) + 6px);
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  touch-action: pan-x;
+}
+.app-shell[data-layout="compact"] .mapping-tools::-webkit-scrollbar {
+  display: none;
+}
+.app-shell[data-layout="compact"] .mapping-tools .separator,
+.app-shell[data-layout="compact"] .mapping-tool-options,
+.app-shell[data-layout="compact"]
+  .mapping-tools
+  > button[aria-label^="Add "]:not(.compact-extra),
+.app-shell[data-layout="compact"]
+  .mapping-tools
+  > button[aria-label="Draw cutout mask"] {
+  display: none;
+}
+.app-shell[data-layout="compact"] .mapping-tools > button {
+  flex: none;
+  min-width: 44px;
+  min-height: 44px;
+  flex-direction: column;
+  gap: 3px;
+  padding: 3px 6px;
+  font-size: 10px;
+  line-height: 1.1;
+  border-radius: 10px;
+}
+.app-shell[data-layout="compact"] .mapping-tools > button > span {
+  display: inline;
+}
+.app-shell[data-layout="compact"] .mapping-tools svg {
+  width: 18px;
+  height: 18px;
+}
+.app-shell[data-layout="compact"] .compact-extra.first-right {
+  margin-left: auto;
+}
+.app-shell[data-layout="compact"] .compact-extra.alert {
+  color: #e5d6a6;
+  background: #393425;
+  border-color: #a18d56;
+}
+.app-shell[data-layout="compact"] .compact-extra.add-point {
+  color: #ceffdf;
+}
+
+/* ---- Stage ---- */
+.app-shell[data-layout="compact"] .canvas-area {
+  padding: 8px calc(var(--inset-right) + 8px) 8px calc(var(--inset-left) + 8px);
+  background-size: 14px 14px;
+}
+.app-shell[data-layout="compact"] .stage,
+.app-shell[data-layout="compact"] .mapping-overlay,
+.app-shell[data-layout="compact"] .corner-handle,
+.app-shell[data-layout="compact"] .draft-handle,
+.present-root .stage,
+.present-root .corner-handle {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  touch-action: none;
+}
+.app-shell[data-layout="compact"] .stage {
+  box-shadow: 0 8px 24px #0007;
+}
+.app-shell[data-layout="compact"] .corner-handle span,
+.present-root .corner-handle span {
+  font-size: 11px;
+  padding: 1px 5px;
+}
+.app-shell[data-layout="compact"] .canvas-empty {
+  font-size: 13px;
+  text-align: center;
+  padding: 0 24px;
+}
+.app-shell[data-layout="compact"] .blackout-overlay {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .drawing-instructions,
+.app-shell[data-layout="compact"] .solo-notice {
+  min-height: 52px;
+  padding: 6px calc(var(--inset-right) + 10px) 6px
+    calc(var(--inset-left) + 10px);
+  gap: 8px;
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .drawing-instructions button,
+.app-shell[data-layout="compact"] .solo-notice button {
+  min-height: 44px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"]
+  .drawing-instructions
+  button[aria-label="Cancel drawing"] {
+  min-width: 44px;
+  padding: 0;
+}
+
+/* Larger invisible hit areas on touch screens, wherever the layout is used. */
+@media (pointer: coarse) {
+  .corner-handle::before {
+    content: "";
+    position: absolute;
+    inset: -15px;
+    border-radius: 50%;
+  }
+  .draft-handle.first-point::before {
+    content: "";
+    position: absolute;
+    inset: -13px;
+    border-radius: 50%;
+  }
+  .draft-handle:not(.first-point) {
+    pointer-events: none;
+  }
+}
+
+/* ---- Touch-sized controls inside the sheets ---- */
+.app-shell[data-layout="compact"]
+  button:not(.corner-handle):not(.draft-handle) {
+  min-height: 44px;
+  touch-action: manipulation;
+}
+.app-shell[data-layout="compact"] .icon-button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+}
+.app-shell[data-layout="compact"] input:not([type="range"]):not([type="color"]),
+.app-shell[data-layout="compact"] select {
+  min-height: 44px;
+  font-size: 16px;
+}
+.app-shell[data-layout="compact"] select {
+  height: 44px;
+  padding: 0 12px;
+  border-radius: 8px;
+}
+.app-shell[data-layout="compact"] input[type="range"] {
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  cursor: pointer;
+}
+.app-shell[data-layout="compact"]
+  input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #414d44;
+}
+.app-shell[data-layout="compact"] input[type="range"]::-webkit-slider-thumb {
+  width: 26px;
+  height: 26px;
+  margin-top: -11px;
+  border-width: 3px;
+}
+.app-shell[data-layout="compact"] input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #414d44;
+}
+.app-shell[data-layout="compact"] input[type="range"]::-moz-range-thumb {
+  width: 20px;
+  height: 20px;
+  background: var(--mint);
+  border: 3px solid #243229;
+  box-shadow: 0 0 0 1px #759984;
+}
+.app-shell[data-layout="compact"] summary {
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+}
+
+/* Layers */
+.app-shell[data-layout="compact"] .surface-list {
+  flex: 1 1 auto;
+  max-height: none;
+  min-height: 0;
+  padding: 0 12px 4px;
+  overflow-y: auto;
+}
+.app-shell[data-layout="compact"] .surface-row {
+  height: 64px;
+  margin-bottom: 6px;
+  padding: 4px 2px 4px 8px;
+  cursor: default;
+  background: #1f2922;
+  border-color: #2c382f;
+  border-radius: 10px;
+}
+.app-shell[data-layout="compact"] .surface-row.selected {
+  background: #2b3b2f;
+  border-color: #4c6553;
+}
+.app-shell[data-layout="compact"] .surface-row > .icon-button,
+.app-shell[data-layout="compact"] .layer-mini-tools {
+  position: static;
+}
+.app-shell[data-layout="compact"] .layer-mini-tools {
+  gap: 0;
+}
+.app-shell[data-layout="compact"] .layer-mini-tools .icon-button {
+  width: 44px;
+  height: 44px;
+}
+.app-shell[data-layout="compact"] .surface-select {
+  min-height: 52px;
+  gap: 12px;
+}
+.app-shell[data-layout="compact"] .surface-glyph {
+  width: 40px;
+  height: 36px;
+}
+.app-shell[data-layout="compact"] .surface-select strong,
+.app-shell[data-layout="compact"] .surface-select small {
+  max-width: none;
+}
+.app-shell[data-layout="compact"] .surface-select strong {
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .surface-select small {
+  font-size: 11px;
+  margin-top: 4px;
+}
+.app-shell[data-layout="compact"] .layer-add-row {
+  gap: 8px;
+  margin: 6px 12px 0;
+}
+.app-shell[data-layout="compact"] .layer-add-row .add-surface {
+  height: 44px;
+  margin: 0;
+  gap: 6px;
+  font-size: 13px;
+  border-radius: 10px;
+}
+.app-shell[data-layout="compact"] .layer-order-note {
+  font-size: 11px;
+  line-height: 1.4;
+  margin: 10px 16px 12px;
+}
+.app-shell[data-layout="compact"] .empty {
+  font-size: 13px;
+}
+
+/* Looks */
+.app-shell[data-layout="compact"] .library {
+  border-top: 0;
+}
+.app-shell[data-layout="compact"] .tabs {
+  margin: 2px 12px 10px;
+}
+.app-shell[data-layout="compact"] .tabs button {
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .generator-intro {
+  margin: 0 16px 4px;
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .generator-search {
+  height: 44px;
+  margin: 0 12px 10px;
+  padding: 0 4px 0 12px;
+}
+.app-shell[data-layout="compact"] .generator-search input {
+  height: 42px;
+  font-size: 16px;
+}
+.app-shell[data-layout="compact"] .generator-filters {
+  flex-wrap: nowrap;
+  gap: 6px;
+  margin: 0 12px 10px;
+  padding-bottom: 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.app-shell[data-layout="compact"] .generator-filters::-webkit-scrollbar {
+  display: none;
+}
+.app-shell[data-layout="compact"] .generator-filters button {
+  flex: none;
+  padding: 0 14px;
+  font-size: 12px;
+  border-radius: 22px;
+}
+.app-shell[data-layout="compact"] .mix-control {
+  margin: 0 12px 12px;
+}
+.app-shell[data-layout="compact"] .mix-control button {
+  padding: 0 14px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .mix-control > span {
+  font-size: 11px;
+}
+.app-shell[data-layout="compact"] .pattern-library {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px 8px;
+  padding: 0 12px 16px;
+}
+.app-shell[data-layout="compact"] .pattern-art {
+  height: 72px;
+}
+.app-shell[data-layout="compact"] .pattern-card > span:last-child {
+  font-size: 11px;
+}
+.app-shell[data-layout="compact"] .animated-badge {
+  width: 18px;
+  height: 18px;
+}
+.app-shell[data-layout="compact"] .media-library {
+  padding: 0 12px 12px;
+}
+.app-shell[data-layout="compact"] .media-row {
+  min-height: 48px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .import-area strong {
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .import-area span {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .import-area small,
+.app-shell[data-layout="compact"] .media-note {
+  font-size: 11px;
+}
+@media (min-width: 600px) {
+  .app-shell[data-layout="compact"] .pattern-library {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (min-width: 800px) {
+  .app-shell[data-layout="compact"] .pattern-library {
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+}
+
+/* Adjust: fine alignment dock above the scrolling inspector */
+.nudge-dock {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 2px 16px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.nudge-pad {
+  flex: none;
+  display: grid;
+  grid-template-columns: repeat(3, 44px);
+  grid-template-rows: repeat(3, 44px);
+  gap: 3px;
+}
+.nudge-pad button {
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border-radius: 10px;
+  background: #223028;
+  border-color: #3a5041;
+  color: #c8e6d2;
+}
+.nudge-pad button:active {
+  background: #35503d;
+  color: #fff;
+}
+.nudge-up {
+  grid-area: 1 / 2;
+}
+.nudge-left {
+  grid-area: 2 / 1;
+}
+.nudge-right {
+  grid-area: 2 / 3;
+}
+.nudge-down {
+  grid-area: 3 / 2;
+}
+.nudge-center {
+  grid-area: 2 / 2;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid #2f4236;
+  border-radius: 50%;
+  background: #121b15;
+  color: var(--mint);
+  font: 600 13px monospace;
+}
+.nudge-side {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.nudge-point {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border: 1px solid #2f4236;
+  border-radius: 10px;
+  background: #141e17;
+}
+.nudge-point span {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  white-space: nowrap;
+  font-size: 13px;
+  color: #d3e2d8;
+}
+.nudge-steps {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid #29352c;
+  border-radius: 10px;
+  background: #121914;
+}
+.nudge-steps button {
+  flex: 1;
+  font-size: 13px;
+  color: #8fa698;
+  background: transparent;
+  border: 0;
+  border-radius: 8px;
+}
+.nudge-steps button.active {
+  background: #35503d;
+  color: #e4fbe9;
+  box-shadow: 0 1px 3px #0005;
+}
+.nudge-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.nudge-readout {
+  font-size: 12px;
+  color: #7f9a89;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.nudge-readout b {
+  font-weight: 560;
+  color: #d3e2d8;
+  margin-right: 6px;
+}
+.snap-toggle {
+  gap: 6px;
+  padding: 0 12px;
+  font-size: 12px;
+  border-radius: 10px;
+  color: #8fa698;
+  background: transparent;
+}
+.snap-toggle.active {
+  color: #ceffdf;
+  border-color: #5e876b;
+  background: #304d3a;
+}
+
+/* Adjust and Audio: the inspector body */
+.app-shell[data-layout="compact"] .inspector {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 10px 16px 18px;
+  overflow-y: auto;
+}
+.app-shell[data-layout="compact"] .surface-name {
+  margin-bottom: 14px;
+}
+.app-shell[data-layout="compact"] .surface-name input {
+  height: 44px;
+  padding: 0 12px;
+  font-size: 16px;
+}
+.app-shell[data-layout="compact"] .layer-properties {
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+.app-shell[data-layout="compact"] .layer-properties label {
+  font-size: 12px;
+  gap: 6px;
+}
+.app-shell[data-layout="compact"] .layer-properties select {
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .field-label {
+  font-size: 11px;
+  letter-spacing: 1px;
+  margin-bottom: 8px;
+}
+.app-shell[data-layout="compact"] .field-label > span:not(.brightness-label) {
+  font-size: 11px;
+}
+.app-shell[data-layout="compact"] .field-help,
+.app-shell[data-layout="compact"] .animation-description,
+.app-shell[data-layout="compact"] .mask-explainer {
+  font-size: 12px;
+  line-height: 1.5;
+}
+.app-shell[data-layout="compact"] .field-help {
+  color: #7f9a89;
+}
+.app-shell[data-layout="compact"] .section-gap {
+  margin-top: 16px;
+}
+.app-shell[data-layout="compact"] .inspector-divider {
+  margin: 18px 0;
+}
+.app-shell[data-layout="compact"] .speed-presets button {
+  font-size: 13px;
+  padding: 0;
+}
+.app-shell[data-layout="compact"] .color-field {
+  min-height: 44px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .color-field input {
+  width: 64px;
+  height: 36px;
+}
+.app-shell[data-layout="compact"] .corner-selector button {
+  min-height: 52px;
+  font-size: 10px;
+}
+.app-shell[data-layout="compact"] .coordinates label {
+  min-height: 44px;
+  padding: 0 10px;
+}
+.app-shell[data-layout="compact"] .coordinates span {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .coordinates input {
+  font-size: 16px;
+}
+.app-shell[data-layout="compact"] .text-button {
+  justify-content: flex-start;
+  margin-top: 6px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .content-transform summary {
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .content-transform label {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .surface-tools {
+  gap: 6px;
+}
+.app-shell[data-layout="compact"] .surface-tools button:first-child {
+  padding: 0 14px;
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .surface-tools .icon-button {
+  width: 44px;
+  height: 44px;
+}
+.app-shell[data-layout="compact"] #audio-view .audio-panel,
+.app-shell[data-layout="compact"] .audio-panel {
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .audio-panel > summary > span:first-child {
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .audio-panel .audio-state {
+  font-size: 10px;
+}
+.app-shell[data-layout="compact"] .audio-field {
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .audio-field select {
+  height: 44px;
+  font-size: 15px;
+}
+.app-shell[data-layout="compact"] .audio-device-row .icon-button {
+  height: 44px;
+}
+.app-shell[data-layout="compact"] .audio-capture-button {
+  min-height: 48px;
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .audio-panel .audio-help {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .audio-meter-track {
+  height: 48px;
+}
+.app-shell[data-layout="compact"] .audio-react-toggle {
+  min-height: 44px;
+  font-size: 14px;
+}
+.app-shell[data-layout="compact"] .audio-react-toggle input {
+  width: 22px;
+  height: 22px;
+}
+.app-shell[data-layout="compact"] .audio-tuning > summary,
+.app-shell[data-layout="compact"] .audio-slider {
+  font-size: 13px;
+}
+
+/* Show: output, canvas size, brightness, blackout. Never collapsed. */
+.app-shell[data-layout="compact"] .output-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  padding: 2px 16px 16px;
+  border-top: 0;
+  background: transparent;
+  overflow-y: auto;
+}
+.app-shell[data-layout="compact"] .output-panel .output-settings {
+  display: block;
+}
+.app-shell[data-layout="compact"][data-runtime="web"] label[for="display"],
+.app-shell[data-layout="compact"][data-runtime="web"] #display,
+.app-shell[data-layout="compact"][data-runtime="web"] .display-meta {
+  display: none;
+}
+.app-shell[data-layout="compact"] .resolution-row {
+  margin-top: 4px;
+}
+.app-shell[data-layout="compact"] .resolution-row > span {
+  font-size: 13px;
+}
+.app-shell[data-layout="compact"] .resolution-row select {
+  height: 44px;
+  font-size: 15px;
+}
+.app-shell[data-layout="compact"] .display-meta,
+.app-shell[data-layout="compact"] .inline-note {
+  font-size: 12px;
+}
+.app-shell[data-layout="compact"] .output-button {
+  margin-top: 18px;
+  min-height: 52px;
+  font-size: 14px;
+  border-radius: 12px;
+}
+.app-shell[data-layout="compact"] .blackout-button {
+  margin-top: 10px;
+  min-height: 48px;
+  font-size: 14px;
+  border-radius: 12px;
+}
+.app-shell[data-layout="compact"] .blackout-button kbd,
+.app-shell[data-layout="compact"] .output-button > span {
+  display: none;
+}
+.app-shell[data-layout="compact"] .output-note {
+  margin-top: 12px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #7f9a89;
+}
+
+/* ---- Bottom navigation ---- */
+.bottom-nav {
+  grid-area: 3 / 1;
+  display: flex;
+  padding: 0 var(--inset-right) var(--inset-bottom) var(--inset-left);
+  border-top: 1px solid var(--border);
+  background: #161d18;
+  touch-action: manipulation;
+}
+.bottom-nav button {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: var(--c-nav);
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 2px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #8aa092;
+  font-size: 11px;
+  letter-spacing: 0.2px;
+}
+.bottom-nav button svg {
+  width: 21px;
+  height: 21px;
+}
+.bottom-nav button:active {
+  background: #202a23;
+}
+.bottom-nav button.active {
+  color: var(--mint);
+  background: #1d2820;
+}
+.bottom-nav button.active::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 22%;
+  right: 22%;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--mint);
+}
+
+/* ---- Short landscape (a phone on its side): a side drawer and a nav rail ---- */
+@media (orientation: landscape) and (max-height: 520px) {
+  .app-shell[data-layout="compact"] {
+    --c-hdr: 44px;
+    --c-strip: 48px;
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+  .app-shell[data-layout="compact"] .topbar,
+  .app-shell[data-layout="compact"] .workspace-bar {
+    grid-area: 1 / 1 / 2 / 3;
+  }
+  .app-shell[data-layout="compact"] .workspace {
+    grid-area: 2 / 1;
+    flex-direction: row;
+    /* The nav rail takes the right-hand safe area. */
+    --inset-right: 0px;
+  }
+  .app-shell[data-layout="compact"] .bottom-nav {
+    grid-area: 2 / 2;
+    flex-direction: column;
+    width: calc(66px + var(--inset-right));
+    padding: 0 var(--inset-right) var(--inset-bottom) 0;
+    border-top: 0;
+    border-left: 1px solid var(--border);
+  }
+  .bottom-nav button {
+    min-height: 44px;
+    gap: 2px;
+  }
+  .bottom-nav button.active::before {
+    top: 22%;
+    bottom: 22%;
+    left: 0;
+    right: auto;
+    width: 2px;
+    height: auto;
+    border-radius: 0 2px 2px 0;
+  }
+  .app-shell[data-layout="compact"] .left-panel,
+  .app-shell[data-layout="compact"] .right-panel,
+  .app-shell[data-layout="compact"][data-sheet="show"] .right-panel {
+    flex: 0 0 45%;
+    width: 45%;
+    height: auto;
+    max-height: none;
+    align-self: stretch;
+    padding: 0 0 var(--inset-bottom);
+    border-top: 0;
+    border-left: 1px solid #3f5345;
+    border-radius: 16px 0 0 16px;
+    box-shadow: -12px 0 32px #0007;
+    animation-name: c-drawer-in;
+  }
+  .sheet-grip {
+    display: none;
+  }
+  .sheet-bar {
+    min-height: 48px;
+    padding-top: 4px;
+  }
+  .app-shell[data-layout="compact"] .pattern-library {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+  .nudge-dock {
+    padding-bottom: 8px;
+  }
+}
+@keyframes c-drawer-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0.5;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+/* ---- Notices and the setup guide ---- */
+.app-shell[data-layout="compact"] .toast,
+.app-shell[data-layout="compact"] .error-toast {
+  top: calc(var(--inset-top) + 56px);
+  bottom: auto;
+  width: max-content;
+  max-width: calc(100vw - 24px - var(--inset-left) - var(--inset-right));
+  min-height: 48px;
+  padding: 4px 4px 4px 14px;
+  font-size: 13px;
+  z-index: 40;
+}
+.app-shell[data-layout="compact"] .error-toast {
+  top: calc(var(--inset-top) + 112px);
+}
+.app-shell[data-layout="compact"] .modal-backdrop {
+  align-items: flex-start;
+  overflow-y: auto;
+  padding: calc(var(--inset-top) + 12px) calc(var(--inset-right) + 12px)
+    calc(var(--inset-bottom) + 12px) calc(var(--inset-left) + 12px);
+}
+.app-shell[data-layout="compact"] .help-modal {
+  width: min(500px, 100%);
+  margin: auto 0;
+  padding: 56px 20px 22px;
+}
+.app-shell[data-layout="compact"] .help-modal h1 {
+  font-size: 28px;
+}
+.app-shell[data-layout="compact"] .close-modal {
+  top: 8px;
+  right: 8px;
+}
+.app-shell[data-layout="compact"] .help-modal .output-button {
+  margin-top: 18px;
+}
+
+/* ---- Present on this screen ---- */
+.app-shell[data-presenting="true"] > :not(.present-root) {
+  visibility: hidden !important;
+}
+.present-root {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: var(--inset-top) var(--inset-right) var(--inset-bottom)
+    var(--inset-left);
+  background: #000;
+  visibility: visible;
+  outline: none;
+  cursor: none;
+  overscroll-behavior: none;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.present-root.controls-on,
+.present-root.aligning {
+  cursor: default;
+}
+.present-stage {
+  flex: none;
+  width: auto;
+  box-shadow: none;
+  outline: 0;
+  background: #000;
+}
+.present-guides {
+  filter: drop-shadow(0 0 1.5px #000) drop-shadow(0 0 1px #000);
+}
+.present-guides .active-quad polygon {
+  stroke: #c4ffdb;
+  stroke-width: 2.5;
+}
+.present-guides .inactive-quad polygon {
+  stroke: #b7d6c3aa;
+  stroke-width: 1.5;
+}
+.present-root .corner-handle {
+  box-shadow: 0 0 0 2px #0009;
+}
+.present-root .corner-handle.active {
+  box-shadow:
+    0 0 0 2px #0009,
+    0 0 0 7px #b6f6ce44;
+}
+.present-controls {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--inset-bottom) + 16px);
+  transform: translateX(-50%);
+  width: max-content;
+  max-width: calc(100% - 24px - var(--inset-left) - var(--inset-right));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition:
+    opacity 0.2s,
+    visibility 0s 0.2s;
+}
+.present-controls.visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition: opacity 0.2s;
+}
+.present-buttons,
+.present-brightness,
+.present-hint {
+  border: 1px solid #3a4b40;
+  border-radius: 16px;
+  background: #0b110dd9;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  box-shadow: 0 8px 28px #000a;
+}
+.present-buttons {
+  display: flex;
+  gap: 4px;
+  padding: 6px;
+}
+.present-buttons button {
+  min-width: 64px;
+  min-height: 56px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 6px 8px;
+  border-color: transparent;
+  border-radius: 12px;
+  background: transparent;
+  color: #d2dbd5;
+  font-size: 11px;
+  touch-action: manipulation;
+}
+.present-buttons button:active {
+  background: #26332a;
+}
+.present-buttons button.active {
+  background: #2d4635;
+  color: var(--mint);
+}
+.present-buttons button.alert {
+  background: #393425;
+  color: #e5d6a6;
+}
+.present-brightness {
+  width: min(360px, 100%);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 16px;
+  color: #c4d2c9;
+}
+.present-brightness input[type="range"] {
+  flex: 1;
+  height: 44px;
+  margin: 0;
+  background: transparent;
+  touch-action: pan-y;
+}
+.present-brightness input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: #414d44;
+}
+.present-brightness input[type="range"]::-webkit-slider-thumb {
+  width: 26px;
+  height: 26px;
+  margin-top: -11px;
+  border-width: 3px;
+}
+.present-brightness output {
+  min-width: 38px;
+  text-align: right;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.present-hint {
+  padding: 8px 14px;
+  border-radius: 12px;
+  font-size: 12px;
+  line-height: 1.4;
+  text-align: center;
+  color: #c4d2c9;
+}
+@media (prefers-reduced-motion: reduce) {
+  .present-controls,
+  .present-controls.visible {
+    transition: none;
+  }
+}

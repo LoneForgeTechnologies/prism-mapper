@@ -10,9 +10,11 @@ import {
   createRepeatGuard,
   edgeMidpoint,
   fitAspect,
+  hitReach,
   isTap,
   nudgedPoint,
   toggleSheet,
+  TOUCH_DRAG_SLOP,
 } from "../src/compact-logic.ts";
 
 const near = (a: number, b: number, tolerance = 1e-9) =>
@@ -147,13 +149,32 @@ test("mouse and pen never count as double-taps", () => {
 });
 
 test("a synthesised double-click cannot insert a second point", () => {
-  const allow = createRepeatGuard();
-  assert.equal(allow({ x: 200, y: 120, time: 5000 }), true);
-  assert.equal(allow({ x: 203, y: 121, time: 5040 }), false);
-  assert.equal(allow({ x: 205, y: 118, time: 5400 }), false);
+  const guard = createRepeatGuard();
+  assert.equal(guard.seen({ x: 200, y: 120, time: 5000 }), false);
+  assert.equal(guard.claim({ x: 200, y: 120, time: 5000 }), true);
+  // The double-click that some browsers add after a double-tap.
+  assert.equal(guard.seen({ x: 203, y: 121, time: 5040 }), true);
+  assert.equal(guard.claim({ x: 205, y: 118, time: 5400 }), false);
   // A different place, or much later, is a deliberate new insertion.
-  assert.equal(allow({ x: 400, y: 120, time: 5450 }), true);
-  assert.equal(allow({ x: 400, y: 120, time: 6300 }), true);
+  assert.equal(guard.seen({ x: 400, y: 120, time: 5450 }), false);
+  assert.equal(guard.claim({ x: 400, y: 120, time: 5450 }), true);
+  assert.equal(guard.claim({ x: 400, y: 120, time: 6300 }), true);
+});
+
+test("a mouse double-click is never held back by the guard", () => {
+  // Only the touch path claims, so repeated mouse double-clicks stay untouched.
+  const guard = createRepeatGuard();
+  for (const time of [1000, 1100, 1200])
+    assert.equal(guard.seen({ x: 50, y: 50, time }), false);
+});
+
+test("fingers get wider edge reach than a mouse and a drag slop", () => {
+  assert.equal(hitReach("mouse"), 14);
+  assert.equal(hitReach("pen"), 14);
+  assert.equal(hitReach(undefined), 14);
+  assert.equal(hitReach("touch"), 22);
+  assert.ok(hitReach("touch") * 2 >= 44);
+  assert.ok(TOUCH_DRAG_SLOP > 0 && TOUCH_DRAG_SLOP < 10);
 });
 
 test("aspect fit never overflows its box", () => {
