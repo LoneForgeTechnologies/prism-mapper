@@ -1,4 +1,4 @@
-const { launchBrowser } = require("./browser.cjs");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -33,7 +33,7 @@ const delta = (a, b) =>
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto("http://127.0.0.1:5178/tests/advanced-harness.html");
+    await page.goto(`${baseUrl()}/tests/advanced-harness.html`);
     await page.waitForFunction(() => window.advancedHarness);
     const frames = [],
       hashes = new Set();

@@ -1,4 +1,4 @@
-const { launchBrowser } = require("./browser.cjs");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -9,7 +9,7 @@ const { createHash } = require("node:crypto");
     const page = await browser.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto("http://127.0.0.1:5178/tests/animation-harness.html");
+    await page.goto(`${baseUrl()}/tests/animation-harness.html`);
     await page.waitForFunction(() => window.animationHarness);
     const catalog = await page.evaluate(() => window.animationHarness.catalog);
     const expectedCatalog = require("../shared/patterns.json");
@@ -118,7 +118,7 @@ const { createHash } = require("node:crypto");
       path: path.resolve(__dirname, "../artifacts/animation-contact-sheet.png"),
     });
     await page.setViewportSize({ width: 1460, height: 940 });
-    await page.goto("http://127.0.0.1:5178");
+    await page.goto(baseUrl());
     await page.getByRole("button", { name: "Ocean", exact: true }).waitFor();
     assert.equal(await page.locator(".pattern-card").count(), catalog.length);
     await page.getByRole("button", { name: "Playful", exact: true }).click();

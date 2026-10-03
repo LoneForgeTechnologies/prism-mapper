@@ -1,4 +1,4 @@
-const { launchBrowser } = require("./browser.cjs");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -106,7 +106,7 @@ const path = require("node:path");
         ) > 20,
     );
   try {
-    await page.goto(process.env.PRISM_TEST_URL || "http://127.0.0.1:5178");
+    await page.goto(baseUrl());
     await page.waitForSelector("#audio-react-panel", { state: "attached" });
     await button("Open audio react controls").click();
     assert.equal(

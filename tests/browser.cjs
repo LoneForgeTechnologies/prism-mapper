@@ -35,4 +35,8 @@ async function launchBrowser(options = {}) {
   }
 }
 
-module.exports = { launchBrowser };
+// Dev server the checks talk to. Override with PRISM_TEST_URL to run several
+// servers side by side, for example http://127.0.0.1:5191.
+const baseUrl = () => process.env.PRISM_TEST_URL || "http://127.0.0.1:5178";
+
+module.exports = { launchBrowser, baseUrl };

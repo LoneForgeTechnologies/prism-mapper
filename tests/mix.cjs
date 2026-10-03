@@ -1,11 +1,11 @@
-const { launchBrowser } = require("./browser.cjs");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 (async () => {
   const browser = await launchBrowser();
   try {
     const p = await browser.newPage();
     await p.clock.install();
-    await p.goto("http://127.0.0.1:5178");
+    await p.goto(baseUrl());
     const source = p.getByRole("combobox", {
       name: "Surface source",
       exact: true,

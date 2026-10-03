@@ -1,4 +1,4 @@
-const { launchBrowser } = require("./browser.cjs");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -35,7 +35,7 @@ function near(actual, expected, message, tolerance = 3) {
     const page = await browser.newPage();
     const pageErrors = [];
     page.on("pageerror", (e) => pageErrors.push(e.message));
-    await page.goto("http://127.0.0.1:5178/tests/advanced-harness.html");
+    await page.goto(`${baseUrl()}/tests/advanced-harness.html`);
     await page.waitForFunction(() => window.advancedHarness);
     assert.deepEqual(
       await page.evaluate(() => window.advancedHarness.errors),
