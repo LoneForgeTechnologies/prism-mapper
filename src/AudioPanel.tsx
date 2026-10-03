@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AudioLines, Mic, RefreshCw, Square } from "lucide-react";
 import type { Surface } from "./model";
-import { AudioController } from "./audio";
+import { AudioController, audioUnavailableReason } from "./audio";
 import "./audio-panel.css";
 
 interface AudioPanelProps {
@@ -32,12 +32,15 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
   const [deviceId, setDeviceId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [deviceError, setDeviceError] = useState("");
+  // Browsers cannot capture what the computer is playing. Only the desktop app can.
+  const canCaptureSystem = typeof window !== "undefined" && !!window.prism;
+  const [unsupported] = useState(() => audioUnavailableReason());
   const response = surface?.audio || DEFAULT_RESPONSE;
   const canReact = !!surface && surface.kind !== "mask";
   const busy = snapshot.status === "starting";
   const listening = snapshot.status === "listening";
   const capturing = busy || listening;
-  const error = deviceError || snapshot.error;
+  const error = unsupported || deviceError || snapshot.error;
 
   const refresh = async () => {
     setRefreshing(true);
@@ -95,9 +98,19 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
             }
           >
             <option value="input">Microphone / audio input</option>
-            <option value="system">System output · current mix</option>
+            <option value="system" disabled={!canCaptureSystem}>
+              {canCaptureSystem
+                ? "System output · current mix"
+                : "System output · desktop app only"}
+            </option>
           </select>
         </label>
+        {!canCaptureSystem && (
+          <p className="audio-help">
+            Browsers cannot capture system sound, so choose a microphone or a
+            virtual audio input. System output works in the desktop app.
+          </p>
+        )}
         {source === "input" && (
           <div className="audio-device-row">
             <label className="audio-field">
@@ -142,6 +155,7 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
         <button
           className={`audio-capture-button ${capturing ? "listening" : ""}`}
           type="button"
+          disabled={!!unsupported && !capturing}
           onClick={() => {
             setDeviceError("");
             if (capturing) controller.stop();

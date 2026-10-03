@@ -60,6 +60,27 @@ function captureError(error: unknown, source: AudioSource): string {
     : "Audio capture could not start. Choose another source and try again.";
 }
 
+/**
+ * Why this page cannot listen to audio inputs, or undefined when it can.
+ * Browsers hide the microphone API on insecure (plain http) pages, and some
+ * older embedded web views do not have it at all.
+ */
+export function audioUnavailableReason(
+  env: {
+    navigator?: { mediaDevices?: { getUserMedia?: unknown } };
+    isSecureContext?: boolean;
+    AudioContext?: unknown;
+  } = globalThis,
+): string | undefined {
+  if (!env.navigator?.mediaDevices?.getUserMedia)
+    return env.isSecureContext === false
+      ? "Audio inputs need a secure page. Open Prism Mapper over https or from localhost, or use the installed app."
+      : "This browser or app view cannot reach audio inputs. Try a current Chrome, Edge or Safari, or the desktop app.";
+  if (typeof env.AudioContext === "undefined")
+    return "This browser does not support Web Audio, so Audio react is not available here.";
+  return undefined;
+}
+
 /** Capture is opt-in, local, and analyser-only: no speaker connection, recording, or network traffic. */
 export class AudioController {
   private snapshot: AudioSnapshot = {
@@ -118,9 +139,11 @@ export class AudioController {
   }
   async listInputs(): Promise<AudioInput[]> {
     const devices = this.devices();
-    if (!devices) {
+    const unavailable = audioUnavailableReason();
+    if (!devices || unavailable) {
       this.update({
         error:
+          unavailable ??
           "Audio inputs are unavailable in this browser. Open the desktop app or localhost preview.",
       });
       return [];
@@ -186,9 +209,11 @@ export class AudioController {
     let pending: MediaStream | undefined;
     try {
       const devices = this.devices();
-      if (!devices?.getUserMedia)
+      const unavailable = audioUnavailableReason();
+      if (!devices?.getUserMedia || unavailable)
         throw new Error(
-          "Audio capture is unavailable. Open the desktop app or localhost preview.",
+          unavailable ??
+            "Audio capture is unavailable. Open the desktop app or localhost preview.",
         );
       const bridge = this.bridge();
       if (source.kind === "system" && !bridge)
