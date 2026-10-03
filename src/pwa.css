@@ -1,0 +1,64 @@
+/* Installable web app: the "On this device" section of the setup guide.
+   Imported by main.tsx right after style.css so these rules win ties. */
+
+/* The setup guide gets taller with the device section and must still fit a phone. */
+.help-modal {
+  max-width: calc(100vw - 24px);
+  max-height: calc(100vh - 24px);
+  max-height: calc(100dvh - 24px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.device-section {
+  margin-top: 26px;
+  padding-top: 20px;
+  border-top: 1px solid #3a5043;
+  display: grid;
+  gap: 12px;
+}
+.device-section h2 {
+  font-size: 9px;
+  font-weight: 550;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
+  color: #a4c8af;
+}
+.device-block {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+}
+.device-note {
+  font-size: 11px;
+  line-height: 1.6;
+  color: #90b09b;
+}
+.device-note strong {
+  font-weight: 550;
+  color: #b6d8c1;
+}
+.device-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.device-section button {
+  min-height: 34px;
+  padding: 7px 12px;
+  font-size: 11px;
+}
+.device-section .device-danger {
+  border-color: #6d4a40;
+  background: #3a2824;
+  color: #f0c5b5;
+}
+.device-section .device-danger:hover {
+  background: #4b322c;
+  color: #ffe2d6;
+}
+@media (pointer: coarse) {
+  .device-section button {
+    min-height: 44px;
+  }
+}

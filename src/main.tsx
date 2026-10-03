@@ -55,7 +55,6 @@ import {
   type Surface,
   type DisplayInfo,
   type OutputStatus,
-  type Media,
   type Point,
 } from "./model";
 import { ProjectionRenderer } from "./renderer";
@@ -80,19 +79,19 @@ import {
 } from "./polygon";
 import type { MappingOverlay } from "./overlay";
 import { validateBrowserProject } from "./project-validation";
+import { readBootProject } from "./persistence";
+import { projectFileName, saveFile } from "./platform";
+import { usePersistence } from "./usePersistence";
+import { DeviceSection } from "./DeviceSection";
 import "./style.css";
+import "./pwa.css";
 
 const api = window.prism;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const corners = ["Top left", "Top right", "Bottom right", "Bottom left"];
 function safeDraft(): Project {
-  try {
-    const data = validateBrowserProject(
-      JSON.parse(localStorage.getItem("prism-draft") || "null"),
-    );
-    if (!data.media.length) return { ...data, blackout: false };
-  } catch {}
-  return createProject();
+  // Browsers rebuild draft media from IndexedDB; the desktop app still starts clean.
+  return readBootProject({ keepMedia: !api });
 }
 function useRenderer(
   canvas: React.RefObject<HTMLCanvasElement | null>,
@@ -395,13 +394,15 @@ function App() {
       }),
     [],
   );
+  const device = usePersistence({
+    project,
+    setProject,
+    notify: message,
+    fail,
+  });
   useEffect(() => {
     api?.updateProject(renderProject);
-    try {
-      if (!project.media.length)
-        localStorage.setItem("prism-draft", JSON.stringify(project));
-      else localStorage.removeItem("prism-draft");
-    } catch {}
+    device.saveDraft(project);
   }, [project, solo]);
   useEffect(() => {
     if (!project.surfaces.some((s) => s.id === selected))
@@ -569,6 +570,12 @@ function App() {
       setBusyOutput(false);
     }
   };
+  const importBrowserFiles = (files: File[]) => {
+    const media = device.importFiles(files);
+    if (!media.length) return;
+    commit({ ...project, media: [...project.media, ...media] });
+    setTab("media");
+  };
   const importMedia = async () => {
     if (!api) {
       mediaInput.current?.click();
@@ -602,20 +609,17 @@ function App() {
           ...project,
           media: project.media.map(({ url, ...m }) => ({ ...m, url: "" })),
         };
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(
-          new Blob([JSON.stringify(portable, null, 2)], {
-            type: "application/json",
-          }),
+        const outcome = await saveFile(
+          projectFileName(project.name),
+          JSON.stringify(portable, null, 2),
+          "application/json",
         );
-        a.download = project.name.replace(/[^a-z0-9 -]/gi, "") + ".prism.json";
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        message(
-          project.media.length
-            ? "Saved geometry. Browser media must be reimported after opening."
-            : "Project saved.",
-        );
+        if (outcome !== "cancelled")
+          message(
+            project.media.length
+              ? "Saved geometry. Browser media must be reimported after opening."
+              : "Project saved.",
+          );
       }
     } catch (e) {
       setError(String(e));
@@ -2405,6 +2409,7 @@ function App() {
             >
               Start with the calibration grid <Crosshair size={16} />
             </button>
+            <DeviceSection storage={device.storage} />
           </section>
         </div>
       )}
@@ -2415,15 +2420,7 @@ function App() {
         accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime"
         multiple
         onChange={(e) => {
-          const files = Array.from(e.target.files || []);
-          const media: Media[] = files.map((file) => ({
-            id: crypto.randomUUID(),
-            name: file.name,
-            kind: file.type.startsWith("video") ? "video" : "image",
-            url: URL.createObjectURL(file),
-          }));
-          commit({ ...project, media: [...project.media, ...media] });
-          setTab("media");
+          importBrowserFiles(Array.from(e.target.files || []));
           e.target.value = "";
         }}
       />

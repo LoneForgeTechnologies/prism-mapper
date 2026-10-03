@@ -555,6 +555,9 @@ export class ProjectionRenderer {
           );
           continue;
         }
+        // No file behind this entry yet (restoring after a reload, or waiting to be
+        // imported again). The layer stays dark without a misleading decode error.
+        if (!media.url) continue;
         try {
           if (!this.prepareAsset(this.getAsset(media), project.playing))
             continue;
