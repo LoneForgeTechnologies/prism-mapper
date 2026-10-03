@@ -1,11 +1,11 @@
-const { chromium } = require("playwright");
+const { launchBrowser } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
 // Isolated browser storage and no desktop bridge: this never changes a live projector session.
 (async () => {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   const context = await browser.newContext({
     viewport: { width: 1460, height: 940 },
   });

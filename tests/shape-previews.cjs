@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launchBrowser } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -41,7 +41,7 @@ const escapeHtml = (text) =>
     await fs.readFile(path.join(root, "shared/patterns.json"), "utf8"),
   ).filter((pattern) => pattern.category === "Shape");
   assert.equal(catalog.length, 8, "Expected eight shape animations");
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage({
       viewport: { width: 1320, height: 680 },

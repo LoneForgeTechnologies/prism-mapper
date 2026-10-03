@@ -1,13 +1,11 @@
-const { chromium } = require("playwright");
+const { launchBrowser } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
 // Run the real analyser against a synthetic MediaStream. Never opens an actual mic or speaker.
 (async () => {
-  const browser = await chromium.launch({
-    channel: "chrome",
-    headless: true,
+  const browser = await launchBrowser({
     args: ["--autoplay-policy=no-user-gesture-required"],
   });
   const context = await browser.newContext({

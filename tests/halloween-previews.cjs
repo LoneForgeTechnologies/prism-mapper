@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launchBrowser } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -25,7 +25,7 @@ const delta = (a, b) =>
     catalog.map((p) => p.shader),
     Array.from({ length: 12 }, (_, i) => 37 + i),
   );
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage({
       viewport: { width: 1440, height: 1040 },
