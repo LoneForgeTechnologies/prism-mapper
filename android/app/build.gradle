@@ -1,0 +1,108 @@
+import groovy.json.JsonSlurper
+
+apply plugin: 'com.android.application'
+
+// Version, taken from package.json so a release is one bump in one place:
+//   versionName = "version" in package.json, for example 0.4.1
+//   versionCode = major * 10000 + minor * 100 + patch, so 0.4.1 becomes 401
+// Google Play needs a higher versionCode for every upload, so the minor and
+// patch numbers must stay below 100. A pre-release suffix such as -beta.1 is
+// kept in versionName and ignored for versionCode.
+def packageVersion = new JsonSlurper().parse(file('../../package.json')).version as String
+def versionMatcher = packageVersion =~ /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/
+if (!versionMatcher.matches()) {
+    throw new GradleException("package.json version \"${packageVersion}\" must look like MAJOR.MINOR.PATCH")
+}
+int versionMajor = versionMatcher.group(1) as int
+int versionMinor = versionMatcher.group(2) as int
+int versionPatch = versionMatcher.group(3) as int
+if (versionMinor > 99 || versionPatch > 99) {
+    throw new GradleException("package.json version ${packageVersion}: minor and patch must be below 100 to build a unique Android versionCode")
+}
+def computedVersionCode = versionMajor * 10000 + versionMinor * 100 + versionPatch
+
+// Optional release signing. The keystore and its passwords are read only from
+// these environment variables, so no secret ever lives in the repository.
+//   ANDROID_KEYSTORE_FILE      path to the .jks or .keystore file
+//   ANDROID_KEYSTORE_PASSWORD  password of the keystore
+//   ANDROID_KEY_ALIAS          alias of the signing key
+//   ANDROID_KEY_PASSWORD       password of the signing key
+// Without them, assembleRelease and bundleRelease produce unsigned output.
+def releaseKeystorePath = System.getenv('ANDROID_KEYSTORE_FILE')
+def releaseStorePassword = System.getenv('ANDROID_KEYSTORE_PASSWORD')
+def releaseKeyAlias = System.getenv('ANDROID_KEY_ALIAS')
+def releaseKeyPassword = System.getenv('ANDROID_KEY_PASSWORD')
+def hasReleaseSigning = releaseKeystorePath && releaseStorePassword && releaseKeyAlias && releaseKeyPassword && file(releaseKeystorePath).isFile()
+
+android {
+    namespace = "org.prismmapper.mobile"
+    compileSdk = rootProject.ext.compileSdkVersion
+    defaultConfig {
+        applicationId "org.prismmapper.mobile"
+        minSdkVersion rootProject.ext.minSdkVersion
+        targetSdkVersion rootProject.ext.targetSdkVersion
+        versionCode computedVersionCode
+        versionName packageVersion
+        aaptOptions {
+             // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
+             // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
+            ignoreAssetsPattern = '!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~'
+        }
+    }
+    signingConfigs {
+        if (hasReleaseSigning) {
+            release {
+                storeFile file(releaseKeystorePath)
+                storePassword releaseStorePassword
+                keyAlias releaseKeyAlias
+                keyPassword releaseKeyPassword
+            }
+        }
+    }
+    buildTypes {
+        // The store build. Signed only when the four ANDROID_* variables above
+        // are set; otherwise the output is unsigned and cannot be installed.
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
+            if (hasReleaseSigning) {
+                signingConfig signingConfigs.release
+            }
+        }
+        // A release build signed with the standard Android debug key. It is not
+        // debuggable and needs no secret, so it is the APK to hand to testers
+        // (./gradlew assembleSideload). Android only installs an update when it
+        // carries the same signature, so moving to the properly signed release
+        // APK later means uninstalling this one first.
+        sideload {
+            initWith release
+            debuggable false
+            signingConfig signingConfigs.debug
+            matchingFallbacks = ['release']
+        }
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    def buildsRelease = graph.allTasks.any { it.name == 'assembleRelease' || it.name == 'bundleRelease' }
+    if (buildsRelease && !hasReleaseSigning) {
+        logger.warn('Prism Mapper: ANDROID_KEYSTORE_FILE, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS and ANDROID_KEY_PASSWORD are not all set, so the release build is NOT signed and cannot be installed.')
+    }
+}
+
+repositories {
+    flatDir{
+        dirs '../capacitor-cordova-android-plugins/src/main/libs', 'libs'
+    }
+}
+
+dependencies {
+    implementation fileTree(include: ['*.jar'], dir: 'libs')
+    implementation "androidx.appcompat:appcompat:$androidxAppCompatVersion"
+    implementation "androidx.coordinatorlayout:coordinatorlayout:$androidxCoordinatorLayoutVersion"
+    implementation "androidx.core:core-splashscreen:$coreSplashScreenVersion"
+    implementation project(':capacitor-android')
+    implementation project(':capacitor-cordova-android-plugins')
+}
+
+apply from: 'capacitor.build.gradle'

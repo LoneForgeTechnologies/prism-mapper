@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Background of the launch screen and of the area behind the system bars. -->
+    <color name="prism_background">#090D12</color>
+
+    <!-- Overrides of the Capacitor defaults that AppTheme references. -->
+    <color name="colorPrimary">#090D12</color>
+    <color name="colorPrimaryDark">#090D12</color>
+    <color name="colorAccent">#3BC2FF</color>
+</resources>
