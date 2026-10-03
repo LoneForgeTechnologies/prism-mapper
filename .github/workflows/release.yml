@@ -81,179 +81,42 @@ jobs:
           STAGE="release/distribution/$VERSION/$PRISM_TARGET_PLATFORM-$PRISM_TARGET_ARCH"
           if [ "$PRISM_TARGET_PLATFORM" = win32 ]; then
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-Windows-x64/Prism Mapper/Prism Mapper.exe" >> "$GITHUB_ENV"
+            echo "SETUP_EXE=release/distribution/Prism-Mapper-v$VERSION-Windows-x64-Setup.exe" >> "$GITHUB_ENV"
+            echo "INSTALL_WORK=$RUNNER_TEMP/installer-test" >> "$GITHUB_ENV"
+            echo "INSTALLED_EXE=$RUNNER_TEMP/installer-test/Prism Mapper/Prism Mapper.exe" >> "$GITHUB_ENV"
           else
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH/Prism Mapper.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
           fi
-      # TEMPORARY diagnostics, removed before the branch is finished. Job logs
-      # cannot be downloaded from the worker's network, so these steps publish
-      # their findings as workflow annotations, which the REST API returns.
-      - name: Windows diagnostics, environment (temporary)
+      # TEMPORARY, removed before the branch is finished: the job log cannot be
+      # downloaded from the worker's network, so findings are published as
+      # annotations, which the REST API returns.
+      - name: Windows diagnostics, unit test counts (temporary)
         if: matrix.platform == 'win32'
         shell: pwsh
         timeout-minutes: 8
         continue-on-error: true
         run: |
-          $ErrorActionPreference = 'Continue'
-          $out = Join-Path $env:RUNNER_TEMP 'diag-env.txt'
-          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
-          Log "--- os"
-          Log (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber)
-          Log "--- screens (process may be DPI virtualised)"
-          Add-Type -AssemblyName System.Windows.Forms
-          foreach ($s in [System.Windows.Forms.Screen]::AllScreens) { Log ("{0} bounds={1} working={2} primary={3}" -f $s.DeviceName, $s.Bounds, $s.WorkingArea, $s.Primary) }
-          Log "--- drives and paths"
-          Log (Get-PSDrive -PSProvider FileSystem | Select-Object Name, Root)
-          Log "workspace=$env:GITHUB_WORKSPACE temp=$env:RUNNER_TEMP nodeTmp=$(node -p 'require(\"os\").tmpdir()') hostname=$env:COMPUTERNAME user=$env:USERNAME"
-          Log "--- long paths enabled?"
-          Log (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled | Select-Object LongPathsEnabled)
-          Log "--- services"
-          Log (Get-Service LanmanServer, Audiosrv -ErrorAction SilentlyContinue | Select-Object Name, Status, StartType)
-          Log "--- sound devices"
-          Log (Get-CimInstance Win32_SoundDevice | Select-Object Name, Status)
-          Log "--- tools"
-          Log (Get-Command tar, 7z, choco, iscc -ErrorAction SilentlyContinue | Select-Object Name, Source)
-          Log "--- electron.exe before stamping"
-          $original = 'node_modules/electron/dist/electron.exe'
-          Log (Get-AuthenticodeSignature $original | Select-Object Status, StatusMessage)
-          Log ((Get-Item $original).VersionInfo | Select-Object FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright)
-          Log "--- Prism Mapper.exe after stamping"
-          Log (Get-AuthenticodeSignature $env:PACKAGED_EXE | Select-Object Status, StatusMessage)
-          Log ((Get-Item $env:PACKAGED_EXE).VersionInfo | Select-Object FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright, InternalName)
-          Log ("sizes: {0:N0} bytes original, {1:N0} bytes stamped" -f (Get-Item $original).Length, (Get-Item $env:PACKAGED_EXE).Length)
-      - name: Windows diagnostics, Inno Setup (temporary)
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        timeout-minutes: 12
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $out = Join-Path $env:RUNNER_TEMP 'diag-inno.txt'
-          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          Log "ISCC before install: $(Test-Path $iscc)"
-          Log "--- choco"
-          Log (choco --version)
-          Log (choco info innosetup --limit-output)
-          $clock = [Diagnostics.Stopwatch]::StartNew()
-          choco install innosetup --yes --no-progress --limit-output 2>&1 | ForEach-Object { Log $_ }
-          Log "install exit $LASTEXITCODE after $([int]$clock.Elapsed.TotalSeconds) s; ISCC present: $(Test-Path $iscc)"
-          Log ((Get-Item $iscc).VersionInfo | Select-Object ProductVersion, FileVersion)
-          $work = Join-Path $env:RUNNER_TEMP 'inno-trial'
-          New-Item -ItemType Directory -Force $work | Out-Null
-          Set-Content (Join-Path $work 'hello.txt') 'hello'
-          $icon = (Resolve-Path 'build/icon.ico').Path
-          $script = @"
-          [Setup]
-          AppId={{6F1A7D2E-5B0C-4A8E-9F3D-2C4B7E8A9D10}
-          AppName=Trial
-          AppVersion=1.0
-          DefaultDirName={autopf}\Trial
-          PrivilegesRequired=lowest
-          PrivilegesRequiredOverridesAllowed=dialog
-          OutputDir=$work
-          OutputBaseFilename=trial-setup
-          SetupIconFile=$icon
-          WizardStyle=modern
-          [Files]
-          Source: "$work\hello.txt"; DestDir: "{app}"
-          "@
-          Set-Content (Join-Path $work 'trial.iss') ($script -replace '(?m)^ {10}', '')
-          Log "--- compile with the PNG-compressed icon"
-          & $iscc (Join-Path $work 'trial.iss') 2>&1 | ForEach-Object { Log $_ }
-          Log "ISCC exit $LASTEXITCODE"
-          $setup = Join-Path $work 'trial-setup.exe'
-          if (Test-Path $setup) {
-            Log ("trial installer: {0:N0} bytes" -f (Get-Item $setup).Length)
-            $target = Join-Path $work 'installed'
-            $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target" -Wait -PassThru
-            Log "silent install exit $($proc.ExitCode); folder: $(Get-ChildItem $target -Name | Out-String)"
-            $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F1A7D2E-5B0C-4A8E-9F3D-2C4B7E8A9D10}_is1'
-            Log "HKCU uninstall key present: $(Test-Path $key)"
-            if (Test-Path $key) { Log (Get-ItemProperty $key | Select-Object DisplayName, DisplayVersion, UninstallString, InstallLocation) }
-            Log "HKLM uninstall key present: $(Test-Path ($key -replace 'HKCU','HKLM'))"
-            $uninstall = Join-Path $target 'unins000.exe'
-            $proc = Start-Process -FilePath $uninstall -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
-            $waited = 0
-            while ((Test-Path $target) -and $waited -lt 30) { Start-Sleep -Seconds 1; $waited++ }
-            Log "silent uninstall exit $($proc.ExitCode); folder gone after $waited s: $(-not (Test-Path $target)); key gone: $(-not (Test-Path $key))"
-          }
-      - name: Windows diagnostics, file association (temporary)
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        timeout-minutes: 4
-        continue-on-error: true
-        run: |
-          $ErrorActionPreference = 'Continue'
-          $out = Join-Path $env:RUNNER_TEMP 'diag-assoc.txt'
-          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
-          $dir = Join-Path $env:RUNNER_TEMP 'assoc'
-          New-Item -ItemType Directory -Force $dir | Out-Null
-          $marker = Join-Path $dir 'marker.txt'
-          $sample = Join-Path $dir 'sample.prism.json'
-          $plain = Join-Path $dir 'plain.json'
-          Set-Content $sample '{}'
-          Set-Content $plain '{}'
-          $choice = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.json\UserChoice'
-          Log "UserChoice for .json present: $(Test-Path $choice)"
-          if (Test-Path $choice) { Log (Get-ItemProperty $choice | Select-Object ProgId) }
-          Log "HKCR .json default: $((Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\.json' -ErrorAction SilentlyContinue).'(default)')"
-          $command = 'cmd.exe /c echo "%1" > "' + $marker + '"'
-          function Register($key, $name, $value) {
-            New-Item -Path $key -Force | Out-Null
-            Set-ItemProperty -Path $key -Name $name -Value $value
-          }
-          function Probe($label, $file, $verb) {
-            Remove-Item $marker -ErrorAction SilentlyContinue
-            $job = Start-Job -ScriptBlock {
-              param($file, $verb)
-              if ($verb) { Start-Process -FilePath $file -Verb $verb } else { Start-Process -FilePath $file }
-            } -ArgumentList $file, $verb
-            if (-not (Wait-Job $job -Timeout 12)) { Log "${label}: Start-Process did not return within 12 s" }
-            Stop-Job $job -ErrorAction SilentlyContinue
-            Remove-Job $job -Force -ErrorAction SilentlyContinue
-            Start-Sleep -Seconds 2
-            if (Test-Path $marker) { Log "${label}: handler used for $(Split-Path $file -Leaf)" } else { Log "${label}: handler NOT used for $(Split-Path $file -Leaf)" }
-            Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'OpenWith', 'notepad', 'Code', 'PickerHost' } | Stop-Process -Force -ErrorAction SilentlyContinue
-          }
-          Register 'HKCU:\Software\Classes\PrismTest.Project\shell\open\command' '(default)' $command
-          Register 'HKCU:\Software\Classes\.prism.json' '(default)' 'PrismTest.Project'
-          Log "V1 only .prism.json registered"
-          Probe 'V1' $sample $null
-          Register 'HKCU:\Software\Classes\.json' '(default)' 'PrismTest.Project'
-          Log "V2 .json registered as well"
-          Probe 'V2' $sample $null
-          Probe 'V2' $plain $null
-          Remove-Item 'HKCU:\Software\Classes\.json' -Recurse -Force
-          Remove-Item 'HKCU:\Software\Classes\.prism.json' -Recurse -Force
-          Register 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell\prismtest\command' '(default)' $command
-          Set-ItemProperty -Path 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell\prismtest' -Name 'AppliesTo' -Value 'System.FileName:"*.prism.json"'
-          Log "V3 SystemFileAssociations verb with AppliesTo, explicit verb"
-          Probe 'V3' $sample 'prismtest'
-          Remove-Item 'HKCU:\Software\Classes\SystemFileAssociations\.json' -Recurse -Force
-          Remove-Item 'HKCU:\Software\Classes\PrismTest.Project' -Recurse -Force
-      - name: Windows diagnostics, packaged application probe (temporary)
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        timeout-minutes: 12
-        continue-on-error: true
-        run: |
-          $file = Join-Path $env:RUNNER_TEMP 'diag-probe.txt'
-          node tests/windows-probe.cjs $env:PACKAGED_EXE 2>&1 | Tee-Object -FilePath $file
-      - name: Windows diagnostics, probe with long paths switched off (temporary)
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        timeout-minutes: 8
-        continue-on-error: true
-        run: |
-          $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
-          Set-ItemProperty -Path $key -Name LongPathsEnabled -Value 0
-          $file = Join-Path $env:RUNNER_TEMP 'diag-probe-long.txt'
-          "LongPathsEnabled is now $((Get-ItemProperty $key).LongPathsEnabled)" | Set-Content $file
-          node tests/windows-probe.cjs $env:PACKAGED_EXE media 2>&1 | Tee-Object -FilePath $file -Append
-          Set-ItemProperty -Path $key -Name LongPathsEnabled -Value 1
+          $lines = @()
+          $lines += 'tsx --test tests/*.test.ts'
+          $lines += (npx tsx --test "tests/*.test.ts" 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $lines += 'node --test electron/*.test.cjs'
+          $lines += (node --test "electron/*.test.cjs" 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $lines += 'npm test as the step runs it'
+          $lines += (npm test 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $text = ($lines -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+          Write-Host "::notice title=Unit test counts on Windows::$text"
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
+      - name: Test opening projects and the window size in the packaged application
+        shell: bash
+        timeout-minutes: 15
+        run: node tests/packaged-desktop.cjs "$PACKAGED_EXE"
+      - name: Test Windows paths in the packaged application
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 15
+        run: node tests/packaged-windows.cjs "$PACKAGED_EXE"
       - name: Smoke test the application unpacked from the ZIP
         if: matrix.platform == 'win32'
         shell: pwsh
@@ -264,53 +127,74 @@ jobs:
           Expand-Archive -LiteralPath "release/distribution/$folder.zip" -DestinationPath $target
           node tests/packaged-smoke.cjs (Join-Path $target "$folder/Prism Mapper/Prism Mapper.exe")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - name: Windows diagnostics, package contents (temporary)
+      # The installer is compiled with Inno Setup 6, which GitHub's Windows
+      # runners have installed; it is added when a runner image does not.
+      - name: Build the Windows installer
         if: matrix.platform == 'win32'
         shell: pwsh
-        continue-on-error: true
+        timeout-minutes: 20
         run: |
-          $version = node -p "require('./package.json').version"
-          node tests/windows-inspect.mjs "release/distribution/Prism-Mapper-v$version-Windows-x64.zip" 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'diag-package.txt')
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup --yes --no-progress --limit-output
+            if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          }
+          node scripts/build-windows-installer.mjs *>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'installer-build.txt')
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install with the Windows installer
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 15
+        run: node tests/packaged-installer.cjs install "$SETUP_EXE" "$INSTALL_WORK"
+      - name: Smoke test the installed application
+        if: matrix.platform == 'win32'
+        shell: bash
+        run: node tests/packaged-smoke.cjs "$INSTALLED_EXE"
+      - name: Test opening projects and the window size in the installed application
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 15
+        run: node tests/packaged-desktop.cjs "$INSTALLED_EXE"
+      - name: Open projects through the Windows commands of the installed application
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 10
+        run: node tests/packaged-installer.cjs integrate "$INSTALL_WORK"
+      - name: Update a running copy with a second Setup
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 15
+        run: node tests/packaged-installer.cjs upgrade "$SETUP_EXE" "$INSTALL_WORK"
+      - name: Uninstall
+        if: matrix.platform == 'win32'
+        shell: bash
+        timeout-minutes: 10
+        run: node tests/packaged-installer.cjs uninstall "$INSTALL_WORK"
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
             release/distribution/*.zip
+            release/distribution/*-Setup.exe
             release/distribution/*.sha256
+          # The macOS jobs have no installer; every job has its ZIP.
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-      - name: Publish diagnostics as annotations, 1 (temporary)
+      - name: Release files and installer build output as annotations (temporary)
         if: always() && matrix.platform == 'win32'
         shell: pwsh
         run: |
-          foreach ($name in 'diag-env', 'diag-inno', 'diag-assoc') {
-            $path = Join-Path $env:RUNNER_TEMP "$name.txt"
-            if (-not (Test-Path $path)) { continue }
+          $files = Get-ChildItem release/distribution -File | ForEach-Object { '{0,14:N0}  {1}' -f $_.Length, $_.Name }
+          $sums = Get-ChildItem release/distribution -Filter *.sha256 | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }
+          $text = (($files + '' + $sums) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+          Write-Host "::notice title=Release files::$text"
+          $path = Join-Path $env:RUNNER_TEMP 'installer-build.txt'
+          if (Test-Path $path) {
             $text = Get-Content $path -Raw
-            $size = 3800
-            $parts = [Math]::Ceiling($text.Length / $size)
-            for ($i = 0; $i -lt $parts; $i++) {
-              $chunk = $text.Substring($i * $size, [Math]::Min($size, $text.Length - $i * $size))
-              $escaped = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-              Write-Host "::notice title=$name part $($i + 1) of $parts::$escaped"
-            }
-          }
-      - name: Publish diagnostics as annotations, 2 (temporary)
-        if: always() && matrix.platform == 'win32'
-        shell: pwsh
-        run: |
-          foreach ($name in 'diag-probe', 'diag-probe-long', 'diag-package') {
-            $path = Join-Path $env:RUNNER_TEMP "$name.txt"
-            if (-not (Test-Path $path)) { continue }
-            $text = Get-Content $path -Raw
-            $size = 3800
-            $parts = [Math]::Ceiling($text.Length / $size)
-            for ($i = 0; $i -lt $parts; $i++) {
-              $chunk = $text.Substring($i * $size, [Math]::Min($size, $text.Length - $i * $size))
-              $escaped = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-              Write-Host "::warning title=$name part $($i + 1) of $parts::$escaped"
-            }
+            if ($text.Length -gt 3500) { $text = $text.Substring($text.Length - 3500) }
+            $escaped = $text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+            Write-Host "::notice title=Installer build output (end)::$escaped"
           }
 
   publish:
