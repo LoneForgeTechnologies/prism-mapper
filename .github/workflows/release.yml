@@ -98,27 +98,30 @@ jobs:
         run: |
           $lines = @()
           $lines += 'tsx --test tests/*.test.ts'
-          $lines += (npx tsx --test "tests/*.test.ts" 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $lines += (npx tsx --test "tests/*.test.ts" 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
           $lines += 'node --test electron/*.test.cjs'
-          $lines += (node --test "electron/*.test.cjs" 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $lines += (node --test "electron/*.test.cjs" 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
           $lines += 'npm test as the step runs it'
-          $lines += (npm test 2>&1 | Select-String -Pattern '^# (tests|pass|fail|cancelled|skipped)' | ForEach-Object { $_.Line })
+          $lines += (npm test 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
           $text = ($lines -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
           Write-Host "::notice title=Unit test counts on Windows::$text"
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
+      # TEMPORARY: the steps below also run after a failure, so one run shows
+      # every problem. Restored to the default before the branch is finished.
       - name: Test opening projects and the window size in the packaged application
+        if: ${{ !cancelled() }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-desktop.cjs "$PACKAGED_EXE"
       - name: Test Windows paths in the packaged application
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-windows.cjs "$PACKAGED_EXE"
       - name: Smoke test the application unpacked from the ZIP
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
@@ -130,7 +133,7 @@ jobs:
       # The installer is compiled with Inno Setup 6, which GitHub's Windows
       # runners have installed; it is added when a runner image does not.
       - name: Build the Windows installer
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: pwsh
         timeout-minutes: 20
         run: |
@@ -142,35 +145,36 @@ jobs:
           node scripts/build-windows-installer.mjs *>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'installer-build.txt')
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install with the Windows installer
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-installer.cjs install "$SETUP_EXE" "$INSTALL_WORK"
       - name: Smoke test the installed application
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         run: node tests/packaged-smoke.cjs "$INSTALLED_EXE"
       - name: Test opening projects and the window size in the installed application
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-desktop.cjs "$INSTALLED_EXE"
       - name: Open projects through the Windows commands of the installed application
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 10
         run: node tests/packaged-installer.cjs integrate "$INSTALL_WORK"
       - name: Update a running copy with a second Setup
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-installer.cjs upgrade "$SETUP_EXE" "$INSTALL_WORK"
       - name: Uninstall
-        if: matrix.platform == 'win32'
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 10
         run: node tests/packaged-installer.cjs uninstall "$INSTALL_WORK"
       - uses: actions/upload-artifact@v7
+        if: ${{ !cancelled() }}
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
