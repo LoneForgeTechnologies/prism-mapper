@@ -16,13 +16,17 @@ const path = require("node:path");
 const { randomUUID } = require("node:crypto");
 const {
   validateProject,
-  parseProject,
   serializeProject,
   mediaKind,
-  MAX_PROJECT_BYTES,
 } = require("./project.cjs");
 const { serveMediaFile } = require("./media.cjs");
 const { createAudioBridge } = require("./audio.cjs");
+const { loadProjectFile } = require("./load.cjs");
+const { defaultProjectFileName } = require("./paths.cjs");
+const { writeFileAtomic } = require("./files.cjs");
+const { projectPathFromArgv, createProjectOpener } = require("./launch.cjs");
+const { createWakeLock } = require("./wakelock.cjs");
+const { editorWindowGeometry } = require("./window-size.cjs");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -43,13 +47,17 @@ let outputDisplayId = null;
 let currentProject = null;
 let currentOverlay = null;
 let currentProjectPath = null;
-let wakeLock = null;
+const displayLock = createWakeLock(powerSaveBlocker);
 let audioBridge = null;
 const mediaPaths = new Map();
 const mediaTokens = new Map();
 const appHtml = path.join(__dirname, "..", "dist", "index.html");
 const devURL = process.env.PRISM_DEV_URL;
 app.setName("Prism Mapper");
+// Windows groups taskbar buttons, pinned shortcuts and notifications by this
+// id. The installer gives its shortcuts the same one.
+const APP_ID = "org.prismmapper.desktop";
+if (process.platform === "win32") app.setAppUserModelId(APP_ID);
 const profileDirectory = app.commandLine.getSwitchValue("user-data-dir");
 if (profileDirectory) app.setPath("userData", path.resolve(profileDirectory));
 
@@ -62,6 +70,12 @@ if (devURL) {
     throw new Error("PRISM_DEV_URL must point to a local development server");
   }
 }
+
+// One editor at a time. A second launch, such as a double-clicked project,
+// hands its request to the running copy and exits. The lock belongs to the
+// user data folder, so runs with their own --user-data-dir are independent.
+const primaryInstance = app.requestSingleInstanceLock();
+if (!primaryInstance) app.quit();
 
 function send(window, channel, value) {
   if (window && !window.isDestroyed() && !window.webContents.isDestroyed())
@@ -104,10 +118,24 @@ function secureWindow(window) {
     event.preventDefault(),
   );
 }
+// The window icon on Windows and Linux. A packaged Windows build also carries
+// the icon inside its executable; this is what a window shows when the program
+// was started from source, and on Linux. macOS takes its icon from the bundle.
+function windowIcon() {
+  if (process.platform === "darwin") return undefined;
+  return path.join(
+    __dirname,
+    "..",
+    "build",
+    process.platform === "win32" ? "icon.ico" : "icon.png",
+  );
+}
 function options(extra = {}) {
+  const icon = windowIcon();
   return {
     backgroundColor: "#090d12",
     show: false,
+    ...(icon ? { icon } : {}),
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -135,6 +163,32 @@ function registerMedia(filename) {
   }
   return { url: `media://local/${token}`, path: absolutePath };
 }
+// Open a project file and make it the current project. The Open button, a
+// double-clicked file, "Open with", a second launch and macOS open-file all use
+// this, so they share one set of checks and one way to hand out media.
+async function openProjectFile(filename) {
+  const result = await loadProjectFile(filename, { registerMedia });
+  currentProject = result.project;
+  currentProjectPath = filename;
+  send(output, "prism:project", currentProject);
+  return result;
+}
+// Requests from the operating system wait until the editor page has said it can
+// show a project (window.prism.onProjectOpened), then arrive one at a time.
+const projectOpener = createProjectOpener({
+  load: openProjectFile,
+  deliver: (payload) => send(editor, "prism:project-opened", payload),
+});
+function showEditor() {
+  if (!app.isReady()) return;
+  if (!editor || editor.isDestroyed()) {
+    createEditor();
+    return;
+  }
+  if (editor.isMinimized()) editor.restore();
+  editor.show();
+  editor.focus();
+}
 function runtimeProject(input) {
   return validateProject(input, (media) => {
     if (!media.url && media.path) return { url: "", path: media.path }; // Known missing media remains relinkable in a saved project.
@@ -159,17 +213,15 @@ function runtimeProject(input) {
   });
 }
 
-function stopWakeLock() {
-  if (wakeLock !== null && powerSaveBlocker.isStarted(wakeLock))
-    powerSaveBlocker.stop(wakeLock);
-  wakeLock = null;
-}
 function closeOutput() {
+  // The display may sleep again as soon as the output starts closing, not when
+  // the window finally reports closed: by then a new output on another display
+  // may already be open.
+  displayLock.stop();
   if (output && !output.isDestroyed()) output.close();
   else {
     output = null;
     outputDisplayId = null;
-    stopWakeLock();
   }
 }
 
@@ -217,7 +269,7 @@ async function openOutput(displayId) {
     if (output === projection) {
       output = null;
       outputDisplayId = null;
-      stopWakeLock();
+      displayLock.stop();
       broadcast("prism:output-status", status());
       if (editor && !editor.isDestroyed()) editor.focus();
     }
@@ -235,7 +287,7 @@ async function openOutput(displayId) {
     if (process.platform === "darwin") projection.setSimpleFullScreen(true);
     else projection.setFullScreen(true);
     projection.show();
-    wakeLock = powerSaveBlocker.start("prevent-display-sleep");
+    displayLock.start();
     if (currentProject) send(projection, "prism:project", currentProject);
     send(projection, "prism:overlay", currentOverlay);
     broadcast("prism:output-status", status());
@@ -369,26 +421,14 @@ function installIPC() {
       const project = runtimeProject(input);
       const selection = await dialog.showSaveDialog(editor, {
         title: "Save mapping project",
-        defaultPath:
-          currentProjectPath ||
-          `${project.name.replace(/[\\/:*?"<>|]/g, "-").slice(0, 100) || "Untitled mapping"}.prism.json`,
+        defaultPath: currentProjectPath || defaultProjectFileName(project.name),
         filters: [{ name: "Prism Mapper project", extensions: ["prism.json"] }],
       });
       if (selection.canceled || !selection.filePath) return { saved: false };
       const filename = selection.filePath.toLowerCase().endsWith(".prism.json")
         ? selection.filePath
         : `${selection.filePath}.prism.json`;
-      const contents = serializeProject(project, filename);
-      const temporary = `${filename}.${randomUUID()}.tmp`;
-      try {
-        await fs.writeFile(temporary, contents, {
-          encoding: "utf8",
-          flag: "wx",
-        });
-        await fs.rename(temporary, filename);
-      } finally {
-        await fs.rm(temporary, { force: true }).catch(() => {});
-      }
+      await writeFileAtomic(filename, serializeProject(project, filename));
       currentProjectPath = filename;
       return { saved: true, path: filename };
     } catch (error) {
@@ -404,59 +444,48 @@ function installIPC() {
         filters: [{ name: "Prism Mapper project", extensions: ["json"] }],
       });
       if (selection.canceled || !selection.filePaths[0]) return {};
-      const filename = selection.filePaths[0];
-      const stat = await fs.stat(filename);
-      if (!stat.isFile() || stat.size > MAX_PROJECT_BYTES)
-        throw new Error("Project files must be smaller than 5 MB");
-      const parsed = parseProject(await fs.readFile(filename, "utf8"));
-      const missing = [];
-      for (const media of parsed.media) {
-        if (!media.path || media.path.includes("\0"))
-          throw new Error("A media entry has no valid local path");
-        const resolvedPath = path.resolve(path.dirname(filename), media.path);
-        if (mediaKind(resolvedPath) !== media.kind)
-          throw new Error(`Unsupported media type: ${media.name}`);
-        media.path = resolvedPath;
-        try {
-          if (!(await fs.stat(resolvedPath)).isFile())
-            throw new Error("Not a file");
-          Object.assign(media, registerMedia(resolvedPath));
-        } catch {
-          media.url = "";
-          missing.push(media.name);
-        }
-      }
-      currentProject = parsed;
-      currentProjectPath = filename;
-      send(output, "prism:project", currentProject);
-      return { project: currentProject, missing };
+      return await openProjectFile(selection.filePaths[0]);
     } catch (error) {
       return { error: error.message };
+    }
+  });
+  // The page tells the main process when it can show a project that the
+  // operating system asked to open, and when it can no longer do so.
+  ipcMain.on("prism:project-listener", (event, active) => {
+    try {
+      trusted(event, true);
+      projectOpener.setReady(active === true);
+    } catch (error) {
+      console.warn("Project listener rejected:", error.message);
     }
   });
 }
 
 function createEditor() {
-  editor = new BrowserWindow(
-    options({
-      title: "Prism Mapper",
-      width: 1460,
-      height: 940,
-      minWidth: 1120,
-      minHeight: 740,
-    }),
+  // A page that has just been created has not subscribed to opened projects.
+  projectOpener.setReady(false);
+  const { maximize, ...size } = editorWindowGeometry(
+    screen.getPrimaryDisplay().workArea,
   );
+  editor = new BrowserWindow(options({ title: "Prism Mapper", ...size }));
   const window = editor;
   secureWindow(window);
-  window.once("ready-to-show", () => window.show());
+  window.once("ready-to-show", () => {
+    if (maximize) window.maximize();
+    window.show();
+  });
   window.webContents.on("render-process-gone", () => {
+    projectOpener.setReady(false);
     audioBridge?.clear();
     closeOutput();
   });
   window.webContents.on(
     "did-start-navigation",
     (_event, _url, isInPlace, isMainFrame) => {
-      if (isMainFrame && !isInPlace) audioBridge?.clear();
+      if (isMainFrame && !isInPlace) {
+        projectOpener.setReady(false);
+        audioBridge?.clear();
+      }
     },
   );
   window.on("closed", () => {
@@ -473,9 +502,34 @@ function createEditor() {
   );
 }
 
+// A project can be named on the command line (Windows and Linux start the
+// program with its path), arrive from a second launch, or come from macOS
+// open-file, which can fire before the app is ready.
+if (primaryInstance) {
+  const launched = projectPathFromArgv(process.argv, {
+    cwd: process.cwd(),
+    defaultApp: process.defaultApp,
+  });
+  if (launched) projectOpener.request(launched);
+  app.on("second-instance", (_event, argv, workingDirectory) => {
+    const requested = projectPathFromArgv(argv, {
+      cwd: workingDirectory,
+      defaultApp: process.defaultApp,
+    });
+    if (requested) projectOpener.request(requested);
+    showEditor();
+  });
+  app.on("open-file", (event, filename) => {
+    event.preventDefault();
+    projectOpener.request(path.resolve(filename));
+    showEditor();
+  });
+}
+
 app
   .whenReady()
   .then(() => {
+    if (!primaryInstance) return;
     audioBridge = createAudioBridge({
       ipcMain,
       session: session.defaultSession,
@@ -617,10 +671,10 @@ app
     app.quit();
   });
 app.on("window-all-closed", () => {
-  stopWakeLock();
+  displayLock.stop();
   if (process.platform !== "darwin") app.quit();
 });
 app.on("before-quit", () => {
   audioBridge?.dispose();
-  stopWakeLock();
+  displayLock.stop();
 });
