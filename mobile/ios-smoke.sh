@@ -3,7 +3,7 @@
 # checks that the app starts. Run by the "iOS simulator test" job in
 # .github/workflows/mobile.yml on a macOS runner.
 #
-#   bash mobile/ios-smoke.sh <path of App.app> <output-folder>
+#   bash mobile/ios-smoke.sh <path of App.app> <output-folder> [iPhone|iPad|both]
 #
 # For each simulator the script boots it, installs and launches the app,
 # waits, takes a screenshot, checks that the screenshot is not blank (the dark
@@ -16,6 +16,7 @@ set -u
 
 APP="${1:?path of the simulator App.app}"
 OUT="${2:?folder for screenshots and logs}"
+KINDS="${3:-both}"
 BUNDLE_ID="org.prismmapper.mobile"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
@@ -100,13 +101,22 @@ check_device() {
   note "$kind: waiting $SETTLE_SECONDS seconds for the first frames."
   sleep "$SETTLE_SECONDS"
 
-  with_timeout 60 xcrun simctl io "$udid" screenshot "$OUT/$kind.png" 2> /dev/null
+  # A simulator that has only just booted sometimes cannot take a screenshot
+  # yet, so try a few times and keep what simctl said.
+  local attempt
+  for attempt in 1 2 3 4; do
+    if with_timeout 90 xcrun simctl io "$udid" screenshot "$OUT/$kind.png" > "$OUT/screenshot-$kind.txt" 2>&1 && [ -s "$OUT/$kind.png" ]; then
+      break
+    fi
+    note "$kind: screenshot attempt $attempt failed: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
+    sleep 10
+  done
   local stats
   if stats="$(node "$HERE/png-stats.mjs" "$OUT/$kind.png" 2>&1)"; then
     note "$kind screenshot: $stats"
   else
     echo "$stats"
-    fail "$kind: the screenshot looks blank or is missing, so the app did not draw. $stats"
+    fail "$kind: the screenshot looks blank or is missing, so the app did not draw. $(echo "$stats" | tr '\n' ' ' | head -c 300) simctl said: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
   fi
 
   local pid
@@ -123,8 +133,15 @@ check_device() {
 }
 
 xcrun simctl list devices available > "$OUT/simulators.txt" 2>&1 || true
-check_device iPhone "iPhone 17"
-check_device iPad "iPad Pro 11-inch (M5)"
+case "$KINDS" in
+  iPhone) check_device iPhone "iPhone 17" ;;
+  iPad) check_device iPad "iPad Pro 11-inch (M5)" ;;
+  both)
+    check_device iPhone "iPhone 17"
+    check_device iPad "iPad Pro 11-inch (M5)"
+    ;;
+  *) fail "Unknown device kind '$KINDS', use iPhone, iPad or both." ;;
+esac
 
 # macOS writes a report next to the host's other logs when an app crashes in
 # a simulator. Any report that mentions the bundle id and is newer than this
@@ -146,4 +163,4 @@ if [ "$failures" -gt 0 ]; then
   echo "iOS smoke test: $failures problem(s)." | tee "$OUT/summary.txt"
   exit 1
 fi
-echo "iOS smoke test: the app started on the iPhone and iPad simulators, drew its interface and stayed alive." | tee "$OUT/summary.txt"
+echo "iOS smoke test ($KINDS): the app started, drew its interface and stayed alive." | tee "$OUT/summary.txt"

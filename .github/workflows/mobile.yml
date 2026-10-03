@@ -7,16 +7,16 @@ name: Mobile apps
 #   android-smoke  installs them on an emulator, opens them, takes screenshots
 #   ios            builds for the simulator and for devices, checks the app
 #                  bundle, packages an unsigned IPA
-#   ios-smoke      opens the simulator build on an iPhone and an iPad simulator
-#                  and takes screenshots
+#   ios-smoke      opens the simulator build on an iPhone and on an iPad
+#                  simulator and takes screenshots
 #
 # Artifacts (stable names, also when this workflow is called by another one):
 #   mobile-android  Prism-Mapper-v<version>-Android.apk and its .sha256
 #                   (plus -Android-release.apk and .aab when signing secrets exist)
 #   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and
 #                   Prism-Mapper-v<version>-iOS-Simulator.zip, with .sha256 files
-#   android-smoke   screenshots and logs of the emulator test
-#   ios-smoke       screenshots and logs of the simulator test
+#   android-smoke-<graphics mode>   screenshots and logs of the emulator test
+#   ios-smoke-<iPhone or iPad>      screenshots and logs of the simulator test
 #
 # Optional secrets, all skipped silently when they are not set. See
 # docs/building-mobile.md for how to create them.
@@ -255,11 +255,17 @@ jobs:
           retention-days: 14
 
   android-smoke:
-    name: Android emulator test
+    name: Android emulator test (${{ matrix.gpu }})
     needs: android
     if: ${{ !cancelled() && needs.android.outputs.apks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        gpu:
+          - swiftshader_indirect
+          - guest
     steps:
       - uses: actions/checkout@v7
         with:
@@ -278,17 +284,19 @@ jobs:
           sudo udevadm trigger --name-match=kvm
       - name: Install, open and inspect the apps on an emulator
         uses: reactivecircus/android-emulator-runner@v2
+        timeout-minutes: 25
         with:
           api-level: 34
           target: google_apis
           arch: x86_64
           profile: pixel_6
           cores: 4
+          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim
           script: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: android-smoke
+          name: android-smoke-${{ matrix.gpu }}
           path: android-smoke
           if-no-files-found: warn
           retention-days: 14
@@ -514,11 +522,17 @@ jobs:
           retention-days: 7
 
   ios-smoke:
-    name: iOS simulator test
+    name: iOS simulator test (${{ matrix.kind }})
     needs: ios
     if: ${{ !cancelled() && needs.ios.outputs.simulator == 'true' }}
     runs-on: macos-26
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kind:
+          - iPhone
+          - iPad
     steps:
       - uses: actions/checkout@v7
         with:
@@ -530,14 +544,14 @@ jobs:
         with:
           name: ios-smoke-app
           path: smoke
-      - name: Open the app on an iPhone and an iPad simulator
+      - name: Open the app on an ${{ matrix.kind }} simulator
         run: |
           ditto -x -k smoke/App-Simulator.zip smoke
-          bash mobile/ios-smoke.sh smoke/App.app ios-smoke
+          bash mobile/ios-smoke.sh smoke/App.app ios-smoke "${{ matrix.kind }}"
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: ios-smoke
+          name: ios-smoke-${{ matrix.kind }}
           path: ios-smoke
           if-no-files-found: warn
           retention-days: 14

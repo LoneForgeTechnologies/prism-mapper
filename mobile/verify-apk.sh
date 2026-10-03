@@ -50,7 +50,7 @@ attr_true() { has "android:$1\\([^)]*\\)=(true|\\(type 0x12\\)0xffffffff)( \\(Ra
 expect "package is org.prismmapper.mobile" has "package: name='org.prismmapper.mobile'" "$badging"
 expect "versionName is $EXPECTED_VERSION" has "versionName='$EXPECTED_VERSION'" "$badging"
 expect "versionCode is $EXPECTED_CODE" has "versionCode='$EXPECTED_CODE'" "$badging"
-expect "minSdkVersion is 24" has "sdkVersion:'24'" "$badging"
+expect "minSdkVersion is 24" has "(minSdkVersion|sdkVersion):'24'" "$badging"
 expect "targetSdkVersion is 36" has "targetSdkVersion:'36'" "$badging"
 expect "application label is Prism Mapper" has "application-label:'Prism Mapper'" "$badging"
 expect "backups are turned off" attr_false allowBackup
