@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # Installs the iOS simulator build on an iPhone and an iPad simulator and
-# checks that the app starts. Run by the iOS job in .github/workflows/mobile.yml
-# on a macOS runner, after xcodebuild has produced the simulator build.
+# checks that the app starts. Run by the "iOS simulator test" job in
+# .github/workflows/mobile.yml on a macOS runner.
 #
 #   bash mobile/ios-smoke.sh <path of App.app> <output-folder>
 #
 # For each simulator the script boots it, installs and launches the app,
 # waits, takes a screenshot, checks that the screenshot is not blank (the dark
 # launch screen alone counts as blank), checks that the app process is still
-# alive and that macOS wrote no crash report for it. Every failed check is
-# reported, then the script exits with 1.
+# alive and that macOS wrote no crash report for it. Every command has a time
+# limit, so a simulator that does not boot fails the check instead of hanging
+# the job. Every failed check is reported, then the script exits with 1.
 
 set -u
 
@@ -18,6 +19,7 @@ OUT="${2:?folder for screenshots and logs}"
 BUNDLE_ID="org.prismmapper.mobile"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+BOOT_SECONDS="${BOOT_SECONDS:-420}"
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
 
 mkdir -p "$OUT"
@@ -25,13 +27,23 @@ MARKER="$OUT/.started"
 touch "$MARKER"
 failures=0
 fail() {
-  echo "::error::$*"
+  echo "FAIL $*"
+  echo "::error title=iOS simulator test::$*"
   failures=$((failures + 1))
 }
 note() { echo "[ios-smoke] $*"; }
 
-# Prints the id of an iOS simulator of the newest runtime whose name is the
-# preferred one, or else starts with the given kind ("iPhone" or "iPad").
+# macOS has no timeout command, but perl is always there.
+#   with_timeout <seconds> <command> [arguments...]
+with_timeout() {
+  local seconds="$1"
+  shift
+  perl -e 'alarm shift @ARGV; exec @ARGV or die "cannot run $ARGV[0]: $!"' "$seconds" "$@"
+}
+
+# Prints "<id><TAB><name><TAB><runtime>" of an iOS simulator of the newest
+# runtime whose name is the preferred one, or else starts with the given kind
+# ("iPhone" or "iPad").
 pick_device() {
   xcrun simctl list devices available -j | node -e '
     const [kind, preferred] = process.argv.slice(1);
@@ -55,7 +67,7 @@ app_pid() {
 }
 
 check_device() {
-  local kind="$1" preferred="$2" picked udid name runtime
+  local kind="$1" preferred="$2" picked udid name runtime started=$SECONDS
   if ! picked="$(pick_device "$kind" "$preferred")"; then
     fail "$kind: no $kind simulator is installed on this runner."
     return
@@ -64,16 +76,22 @@ check_device() {
   note "$kind: using $name ($runtime), $udid."
 
   xcrun simctl boot "$udid" 2> /dev/null || true
-  xcrun simctl bootstatus "$udid" -b > "$OUT/boot-$kind.txt" 2>&1
+  if ! with_timeout "$BOOT_SECONDS" xcrun simctl bootstatus "$udid" -b > "$OUT/boot-$kind.txt" 2>&1; then
+    fail "$kind: $name did not finish booting within $BOOT_SECONDS seconds (see boot-$kind.txt)."
+    tail -n 5 "$OUT/boot-$kind.txt"
+    xcrun simctl shutdown "$udid" 2> /dev/null || true
+    return
+  fi
+  note "$kind: booted after $((SECONDS - started)) seconds."
   xcrun simctl status_bar "$udid" override --time "9:41" > /dev/null 2>&1 || true
 
-  if ! xcrun simctl install "$udid" "$APP"; then
+  if ! with_timeout 180 xcrun simctl install "$udid" "$APP"; then
     fail "$kind: the app could not be installed on $name."
     xcrun simctl shutdown "$udid" 2> /dev/null || true
     return
   fi
   local launched
-  if launched="$(xcrun simctl launch "$udid" "$BUNDLE_ID" 2>&1)"; then
+  if launched="$(with_timeout 120 xcrun simctl launch "$udid" "$BUNDLE_ID" 2>&1)"; then
     echo "$launched" | tee "$OUT/launch-$kind.txt"
   else
     echo "$launched" | tee "$OUT/launch-$kind.txt"
@@ -82,9 +100,13 @@ check_device() {
   note "$kind: waiting $SETTLE_SECONDS seconds for the first frames."
   sleep "$SETTLE_SECONDS"
 
-  xcrun simctl io "$udid" screenshot "$OUT/$kind.png" 2> /dev/null
-  if ! node "$HERE/png-stats.mjs" "$OUT/$kind.png"; then
-    fail "$kind: the screenshot looks blank, so the app did not draw (see $kind.png)."
+  with_timeout 60 xcrun simctl io "$udid" screenshot "$OUT/$kind.png" 2> /dev/null
+  local stats
+  if stats="$(node "$HERE/png-stats.mjs" "$OUT/$kind.png" 2>&1)"; then
+    note "$kind screenshot: $stats"
+  else
+    echo "$stats"
+    fail "$kind: the screenshot looks blank or is missing, so the app did not draw. $stats"
   fi
 
   local pid
@@ -97,8 +119,10 @@ check_device() {
 
   xcrun simctl spawn "$udid" launchctl list > "$OUT/launchctl-$kind.txt" 2>&1 || true
   xcrun simctl shutdown "$udid" 2> /dev/null || true
+  echo "::notice title=iOS simulator test::$kind ($name, $runtime): booted, installed, launched, process ${pid:-none}, $((SECONDS - started)) seconds in total. Screenshot: $(echo "$stats" | tr '\n' ' ' | head -c 400)"
 }
 
+xcrun simctl list devices available > "$OUT/simulators.txt" 2>&1 || true
 check_device iPhone "iPhone 17"
 check_device iPad "iPad Pro 11-inch (M5)"
 

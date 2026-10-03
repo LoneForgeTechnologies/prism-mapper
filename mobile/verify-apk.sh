@@ -32,6 +32,7 @@ expect() {
     echo "ok   $description"
   else
     echo "FAIL $description"
+    echo "::error title=APK check failed::$(basename "$APK"): $description"
     problems=$((problems + 1))
   fi
 }
@@ -78,6 +79,16 @@ fi
 
 echo "--- $(basename "$APK"): $(du -h "$APK" | cut -f1)"
 if [ "$problems" -gt 0 ]; then
+  # Show what aapt2 saw, so a failed check can be understood from the log.
+  echo "::group::aapt2 dump badging"
+  echo "$badging"
+  echo "::endgroup::"
+  echo "::group::aapt2 dump permissions"
+  echo "$permissions"
+  echo "::endgroup::"
+  echo "::group::aapt2 dump xmltree AndroidManifest.xml"
+  echo "$manifest"
+  echo "::endgroup::"
   echo "::error::$(basename "$APK") failed $problems check(s)."
   exit 1
 fi

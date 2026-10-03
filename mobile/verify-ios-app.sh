@@ -27,6 +27,7 @@ expect_equal() {
     echo "ok   $1"
   else
     echo "FAIL $1 (found: '$2', wanted: '$3')"
+    echo "::error title=iOS app check failed::$1 (found: '$2', wanted: '$3')"
     problems=$((problems + 1))
   fi
 }
@@ -36,6 +37,7 @@ expect_contains() {
     echo "ok   $1"
   else
     echo "FAIL $1 (missing: '$3')"
+    echo "::error title=iOS app check failed::$1 (missing: '$3')"
     problems=$((problems + 1))
   fi
 }
@@ -44,6 +46,7 @@ expect_file() {
     echo "ok   the bundle holds $1"
   else
     echo "FAIL the bundle is missing $1"
+    echo "::error title=iOS app check failed::the bundle is missing $1"
     problems=$((problems + 1))
   fi
 }

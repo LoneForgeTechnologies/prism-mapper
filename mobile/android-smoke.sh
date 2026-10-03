@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Installs the Android builds on the emulator that is already running and
-# checks that each one starts. Run by the "Android emulator" job in
+# checks that each one starts. Run by the "Android emulator test" job in
 # .github/workflows/mobile.yml, inside the emulator runner.
 #
 #   bash mobile/android-smoke.sh <debug.apk> <sideload.apk> <output-folder>
@@ -10,6 +10,9 @@
 # it only gets the outside checks: it starts, stays alive, shows something and
 # survives a rotation. Both get a screenshot and a filtered system log.
 # Every check that fails is reported, then the script exits with 1.
+#
+# Results are also written as GitHub annotations (::notice and ::error), so
+# they can be read from the run page and from the API without opening logs.
 
 set -u
 
@@ -21,23 +24,27 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
 EXPECTED_CODE="$(node -p 'const [a,b,c]=require("./package.json").version.split(/[-+]/)[0].split(".").map(Number); a*10000+b*100+c')"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+TITLE="Android emulator test"
 
 mkdir -p "$OUT"
 failures=0
 fail() {
-  echo "::error::$*"
+  echo "FAIL $*"
+  echo "::error title=$TITLE::$*"
   failures=$((failures + 1))
 }
 note() { echo "[android-smoke] $*"; }
+notice() { echo "::notice title=$TITLE::$(echo "$*" | tr '\n' ' ' | head -c 1500)"; }
 
-app_pid() { adb shell pidof -s "$PACKAGE" 2>/dev/null | tr -d '\r' || true; }
+app_pid() { adb shell pidof -s "$PACKAGE" 2> /dev/null | tr -d '\r'; }
 
 device_report() {
   {
     echo "Android $(adb shell getprop ro.build.version.release | tr -d '\r') (API $(adb shell getprop ro.build.version.sdk | tr -d '\r')), $(adb shell getprop ro.product.cpu.abi | tr -d '\r')"
     echo "Screen: $(adb shell wm size | tr -d '\r' | tail -1), $(adb shell wm density | tr -d '\r' | tail -1)"
-    adb shell dumpsys webviewupdate | tr -d '\r' | grep -E "Current WebView package|Minimum WebView version" || true
+    adb shell dumpsys webviewupdate | tr -d '\r' | grep -E "Current WebView package" || true
   } | tee "$OUT/device.txt"
+  notice "Device: $(cat "$OUT/device.txt")"
 }
 
 install_apk() {
@@ -47,7 +54,7 @@ install_apk() {
   result="$(adb install -r "$apk" 2>&1 | tr -d '\r')"
   echo "$result" | tee "$OUT/install-$label.txt"
   if ! grep -q "Success" <<< "$result"; then
-    fail "$label: adb install failed (see install-$label.txt)."
+    fail "$label: adb install failed: $(echo "$result" | tail -n 2)"
     return 1
   fi
   local info
@@ -69,16 +76,22 @@ launch() {
   adb logcat -c
   adb shell am start -W -n "$PACKAGE/.MainActivity" 2>&1 | tr -d '\r' | tee "$OUT/am-start-$label.txt"
   if ! grep -q "Status: ok" "$OUT/am-start-$label.txt"; then
-    fail "$label: the activity did not start (see am-start-$label.txt)."
+    fail "$label: the activity did not start: $(tr '\n' ' ' < "$OUT/am-start-$label.txt" | head -c 300)"
   fi
   note "$label: waiting $SETTLE_SECONDS seconds for the first frames."
   sleep "$SETTLE_SECONDS"
 }
 
+# Takes a screenshot into <name>.png, checks that it is not blank and leaves
+# the numbers in $SHOT_STATS.
+SHOT_STATS=""
 screenshot() {
   adb exec-out screencap -p > "$OUT/$1.png"
-  if ! node "$HERE/png-stats.mjs" "$OUT/$1.png"; then
-    fail "$1: the screenshot looks blank, so the app did not draw (see $1.png)."
+  if SHOT_STATS="$(node "$HERE/png-stats.mjs" "$OUT/$1.png" 2>&1)"; then
+    note "$1: $(echo "$SHOT_STATS" | tr '\n' ' ')"
+  else
+    echo "$SHOT_STATS"
+    fail "$1: the screenshot looks blank or is missing, so the app did not draw. $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 400)"
   fi
 }
 
@@ -97,25 +110,21 @@ check_run() {
     note "$label: still running as process $pid."
   fi
   if grep -A3 "FATAL EXCEPTION" "$log" | grep -q "Process: $PACKAGE"; then
-    fail "$label: Java crash in the app (FATAL EXCEPTION in logcat-$label.txt)."
-    grep -A12 "FATAL EXCEPTION" "$log" | head -30
+    fail "$label: Java crash in the app: $(grep -A6 "FATAL EXCEPTION" "$log" | tr '\n' ' ' | head -c 600)"
   fi
   if grep -q "ANR in $PACKAGE" "$log"; then
     fail "$label: the app did not respond (ANR in logcat-$label.txt)."
   fi
   if [ -n "$before_pid" ] && grep -E "Fatal signal [0-9]+ .*pid ($before_pid|$pid) " "$log" | head -3 | grep -q .; then
-    fail "$label: native crash in the app (Fatal signal in logcat-$label.txt)."
+    fail "$label: native crash in the app: $(grep -E "Fatal signal" "$log" | head -2 | tr '\n' ' ' | head -c 400)"
   fi
   if ! adb shell dumpsys activity activities | tr -d '\r' | grep -E "topResumedActivity|mResumedActivity" | grep -q "$PACKAGE"; then
     fail "$label: the app is not the foreground activity (a crash or error dialog may cover it)."
   fi
   # Capacitor copies web console output and native plugin errors to logcat,
   # in debuggable builds only.
-  if [ "$debuggable" = "yes" ]; then
-    if grep -E " E Capacitor" "$log" | head -10 | grep -q .; then
-      fail "$label: Capacitor logged errors:"
-      grep -E " E Capacitor" "$log" | head -10
-    fi
+  if [ "$debuggable" = "yes" ] && grep -E " E Capacitor" "$log" | head -10 | grep -q .; then
+    fail "$label: Capacitor logged errors: $(grep -E " E Capacitor" "$log" | head -3 | tr '\n' ' ' | head -c 600)"
   fi
   grep -E "FATAL EXCEPTION|AndroidRuntime|ANR in|Fatal signal| E Capacitor| E chromium|$PACKAGE.*(died|crash)" "$log" > "$OUT/problems-$label.txt" || true
 }
@@ -137,10 +146,12 @@ if install_apk "$DEBUG_APK" debug; then
   before="$(app_pid)"
   [ -n "$before" ] || fail "debug: no process after launch."
   screenshot debug-screen
+  debug_stats="$SHOT_STATS"
   if ! node "$HERE/android-smoke.mjs" --native --package "$PACKAGE" --out "$OUT"; then
     fail "debug: the page check inside the WebView failed (see webview-probe.json)."
   fi
   check_run debug "$before" yes
+  notice "Debug build: version $EXPECTED_VERSION installed, process ${before:-none}, screenshot: $(echo "$debug_stats" | tr '\n' ' ' | head -c 500)"
 fi
 
 # --- Sideload build: the APK people install --------------------------------
@@ -151,17 +162,21 @@ if install_apk "$SIDELOAD_APK" sideload; then
   before="$(app_pid)"
   [ -n "$before" ] || fail "sideload: no process after launch."
   screenshot sideload-screen
+  sideload_stats="$SHOT_STATS"
   # The app must cope with rotation. Rotation is a device setting, so a
   # failure to change it is only a warning.
+  landscape_stats="not tried"
   if adb shell settings put system accelerometer_rotation 0 && adb shell settings put system user_rotation 1; then
     sleep 5
     screenshot sideload-landscape
+    landscape_stats="$SHOT_STATS"
     adb shell settings put system user_rotation 0 || true
     sleep 3
   else
     note "Could not rotate the emulator, skipping the landscape screenshot."
   fi
   check_run sideload "$before" no
+  notice "Sideload build: version $EXPECTED_VERSION installed, process ${before:-none}, portrait: $(echo "$sideload_stats" | tr '\n' ' ' | head -c 450) landscape: $(echo "$landscape_stats" | tr '\n' ' ' | head -c 450)"
 fi
 
 if [ "$failures" -gt 0 ]; then

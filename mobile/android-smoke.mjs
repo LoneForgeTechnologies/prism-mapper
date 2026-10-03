@@ -156,21 +156,24 @@ async function main() {
 
   const facts = probe?.facts;
   if (facts) {
-    log(
+    const lines = [
       `${facts.title}: ${facts.origin}, secure context ${facts.isSecureContext}, Capacitor ${JSON.stringify(facts.capacitor)}`,
-    );
-    log(`WebView: ${facts.userAgent}`);
-    log(`WebGL: ${facts.webgl?.renderer} (${facts.webgl?.version})`);
-    log(
+      `WebView: ${facts.userAgent}`,
+      `WebGL: ${facts.webgl?.renderer} (${facts.webgl?.version})`,
       `Canvas ${facts.pixels.width}x${facts.pixels.height}: ${(facts.pixels.litFraction * 100).toFixed(1)}% lit, ${facts.pixels.distinctColors} colours`,
-    );
-    log(
-      `Safe area insets: ${JSON.stringify(facts.safeArea)}; page ${facts.scroll.width}x${facts.scroll.height} in a ${facts.inner.width}x${facts.inner.height} window`,
-    );
+      `Safe area insets: ${JSON.stringify(facts.safeArea)}; page ${facts.scroll.width}x${facts.scroll.height} in a ${facts.inner.width}x${facts.inner.height} window at ${facts.devicePixelRatio}x; getUserMedia is ${facts.getUserMedia}`,
+    ];
+    for (const line of lines) log(line);
+    // The same facts as one annotation, readable from the run page.
+    console.log(`::notice title=WebView probe::${lines.join(" | ")}`);
   }
   if (problems.length) {
-    for (const problem of problems)
+    for (const problem of problems) {
       console.error(`[webview] PROBLEM: ${problem}`);
+      console.log(
+        `::error title=WebView probe::${problem.replace(/\s+/g, " ").slice(0, 500)}`,
+      );
+    }
     process.exitCode = 1;
   } else {
     log("The app started, drew its preview and logged no errors.");
@@ -178,6 +181,10 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(`[webview] PROBLEM: ${error?.message ?? error}`);
+  const text = String(error?.message ?? error)
+    .replace(/\s+/g, " ")
+    .slice(0, 500);
+  console.error(`[webview] PROBLEM: ${text}`);
+  console.log(`::error title=WebView probe::${text}`);
   process.exitCode = 1;
 });

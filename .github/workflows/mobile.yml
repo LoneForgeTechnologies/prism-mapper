@@ -2,10 +2,13 @@ name: Mobile apps
 
 # Builds the Android and iOS/iPadOS apps and checks that they start.
 #
-#   android        builds the APKs (and the AAB when signing secrets exist)
+#   android        builds and checks the APKs (and the AAB when signing
+#                  secrets exist)
 #   android-smoke  installs them on an emulator, opens them, takes screenshots
-#   ios            builds for the simulator and for devices, opens the app on
-#                  an iPhone and an iPad simulator, packages an unsigned IPA
+#   ios            builds for the simulator and for devices, checks the app
+#                  bundle, packages an unsigned IPA
+#   ios-smoke      opens the simulator build on an iPhone and an iPad simulator
+#                  and takes screenshots
 #
 # Artifacts (stable names, also when this workflow is called by another one):
 #   mobile-android  Prism-Mapper-v<version>-Android.apk and its .sha256
@@ -119,6 +122,8 @@ jobs:
     name: Android build
     runs-on: ubuntu-24.04
     timeout-minutes: 45
+    outputs:
+      apks: ${{ steps.apks.outputs.ready }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -159,6 +164,23 @@ jobs:
       - name: Build the debug and sideload APKs
         working-directory: android
         run: ./gradlew assembleDebug assembleSideload
+      # The emulator job starts as soon as the APKs exist, in parallel with the
+      # checks below.
+      - name: Keep the APKs for the emulator test
+        run: |
+          mkdir -p smoke
+          cp android/app/build/outputs/apk/debug/app-debug.apk smoke/debug.apk
+          cp android/app/build/outputs/apk/sideload/app-sideload.apk smoke/sideload.apk
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-smoke-apks
+          path: smoke/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Tell the emulator job that the APKs are ready
+        id: apks
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
       - name: Check the APKs
         run: |
           bash mobile/verify-apk.sh android/app/build/outputs/apk/debug/app-debug.apk debuggable signed
@@ -216,16 +238,14 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           SIGNED: ${{ steps.signing.outputs.available }}
         run: |
-          mkdir -p out smoke
+          mkdir -p out
           cp android/app/build/outputs/apk/sideload/app-sideload.apk "out/Prism-Mapper-v$VERSION-Android.apk"
           if [ "$SIGNED" = "true" ]; then
             cp android/app/build/outputs/apk/release/app-release.apk "out/Prism-Mapper-v$VERSION-Android-release.apk"
             cp android/app/build/outputs/bundle/release/app-release.aab "out/Prism-Mapper-v$VERSION-Android-release.aab"
           fi
           (cd out && for file in *; do sha256sum "$file" > "$file.sha256"; done)
-          cp android/app/build/outputs/apk/debug/app-debug.apk smoke/debug.apk
-          cp android/app/build/outputs/apk/sideload/app-sideload.apk smoke/sideload.apk
-          ls -l out smoke
+          ls -l out
       - uses: actions/upload-artifact@v7
         with:
           name: mobile-android
@@ -233,17 +253,11 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-      - uses: actions/upload-artifact@v7
-        with:
-          name: android-smoke-apks
-          path: smoke/*
-          if-no-files-found: error
-          compression-level: 0
-          retention-days: 1
 
   android-smoke:
     name: Android emulator test
     needs: android
+    if: ${{ !cancelled() && needs.android.outputs.apks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
     steps:
@@ -282,7 +296,9 @@ jobs:
   ios:
     name: iOS and iPadOS build
     runs-on: macos-26
-    timeout-minutes: 60
+    timeout-minutes: 45
+    outputs:
+      simulator: ${{ steps.simulator.outputs.ready }}
     env:
       PROJECT: ios/App/App.xcodeproj
       DERIVED_DATA: ${{ github.workspace }}/ios/App/build/DerivedData
@@ -378,10 +394,21 @@ jobs:
           ditto -c -k --sequesterRsrc --keepParent \
             "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip"
           (cd out && shasum -a 256 "Prism-Mapper-v$VERSION-iOS-Simulator.zip" > "Prism-Mapper-v$VERSION-iOS-Simulator.zip.sha256")
+          mkdir -p smoke
+          cp "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip" smoke/App-Simulator.zip
           ls -l out
-
-      - name: Open the app on an iPhone and an iPad simulator
-        run: bash mobile/ios-smoke.sh "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" ios-smoke
+      # The simulator job starts as soon as the app exists, in parallel with
+      # the signing steps below.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-smoke-app
+          path: smoke/App-Simulator.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Tell the simulator job that the app is ready
+        id: simulator
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
 
       - name: Look for the Apple signing secrets
         id: apple
@@ -481,9 +508,36 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: always()
         with:
+          name: ios-build-logs
+          path: ios-logs
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-smoke:
+    name: iOS simulator test
+    needs: ios
+    if: ${{ !cancelled() && needs.ios.outputs.simulator == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-smoke-app
+          path: smoke
+      - name: Open the app on an iPhone and an iPad simulator
+        run: |
+          ditto -x -k smoke/App-Simulator.zip smoke
+          bash mobile/ios-smoke.sh smoke/App.app ios-smoke
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
           name: ios-smoke
-          path: |
-            ios-smoke
-            ios-logs
+          path: ios-smoke
           if-no-files-found: warn
           retention-days: 14
