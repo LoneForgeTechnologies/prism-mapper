@@ -84,62 +84,161 @@ jobs:
           else
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH/Prism Mapper.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
           fi
-      # TEMPORARY diagnostics, removed before the branch is finished.
-      - name: Windows diagnostics (temporary)
+      # TEMPORARY diagnostics, removed before the branch is finished. Job logs
+      # cannot be downloaded from the worker's network, so these steps publish
+      # their findings as workflow annotations, which the REST API returns.
+      - name: Windows diagnostics, environment (temporary)
         if: matrix.platform == 'win32'
         shell: pwsh
+        timeout-minutes: 8
         continue-on-error: true
         run: |
           $ErrorActionPreference = 'Continue'
-          "--- screen"
+          $out = Join-Path $env:RUNNER_TEMP 'diag-env.txt'
+          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
+          Log "--- os"
+          Log (Get-CimInstance Win32_OperatingSystem | Select-Object Caption, Version, BuildNumber)
+          Log "--- screens (process may be DPI virtualised)"
           Add-Type -AssemblyName System.Windows.Forms
-          [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "{0} bounds={1} working={2}" -f $_.DeviceName, $_.Bounds, $_.WorkingArea }
-          "--- tools"
-          Get-Command tar, 7z, choco -ErrorAction SilentlyContinue | Format-Table Name, Source
-          "--- signatures and version info"
+          foreach ($s in [System.Windows.Forms.Screen]::AllScreens) { Log ("{0} bounds={1} working={2} primary={3}" -f $s.DeviceName, $s.Bounds, $s.WorkingArea, $s.Primary) }
+          Log "--- drives and paths"
+          Log (Get-PSDrive -PSProvider FileSystem | Select-Object Name, Root)
+          Log "workspace=$env:GITHUB_WORKSPACE temp=$env:RUNNER_TEMP nodeTmp=$(node -p 'require(\"os\").tmpdir()') hostname=$env:COMPUTERNAME user=$env:USERNAME"
+          Log "--- long paths enabled?"
+          Log (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem' -Name LongPathsEnabled | Select-Object LongPathsEnabled)
+          Log "--- services"
+          Log (Get-Service LanmanServer, Audiosrv -ErrorAction SilentlyContinue | Select-Object Name, Status, StartType)
+          Log "--- sound devices"
+          Log (Get-CimInstance Win32_SoundDevice | Select-Object Name, Status)
+          Log "--- tools"
+          Log (Get-Command tar, 7z, choco, iscc -ErrorAction SilentlyContinue | Select-Object Name, Source)
+          Log "--- electron.exe before stamping"
           $original = 'node_modules/electron/dist/electron.exe'
-          Get-AuthenticodeSignature $original | Format-List Status, StatusMessage
-          (Get-Item $original).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright
-          $stamped = $env:PACKAGED_EXE
-          Get-AuthenticodeSignature $stamped | Format-List Status, StatusMessage
-          (Get-Item $stamped).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright, InternalName
-          "--- sizes"
-          "{0:N0} bytes original, {1:N0} bytes stamped" -f (Get-Item $original).Length, (Get-Item $stamped).Length
-          "--- Inno Setup"
-          choco search innosetup --exact --all-versions --limit-output
-          choco install innosetup --yes --no-progress --limit-output
+          Log (Get-AuthenticodeSignature $original | Select-Object Status, StatusMessage)
+          Log ((Get-Item $original).VersionInfo | Select-Object FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright)
+          Log "--- Prism Mapper.exe after stamping"
+          Log (Get-AuthenticodeSignature $env:PACKAGED_EXE | Select-Object Status, StatusMessage)
+          Log ((Get-Item $env:PACKAGED_EXE).VersionInfo | Select-Object FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright, InternalName)
+          Log ("sizes: {0:N0} bytes original, {1:N0} bytes stamped" -f (Get-Item $original).Length, (Get-Item $env:PACKAGED_EXE).Length)
+      - name: Windows diagnostics, Inno Setup (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        timeout-minutes: 12
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $out = Join-Path $env:RUNNER_TEMP 'diag-inno.txt'
+          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
           $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          "ISCC present: $(Test-Path $iscc)"
-          if (Test-Path $iscc) { (Get-Item $iscc).VersionInfo | Format-List ProductVersion, FileVersion }
-          "--- double-extension association experiment"
-          $dir = Join-Path $env:RUNNER_TEMP 'assoc-experiment'
+          Log "ISCC before install: $(Test-Path $iscc)"
+          Log "--- choco"
+          Log (choco --version)
+          Log (choco info innosetup --limit-output)
+          $clock = [Diagnostics.Stopwatch]::StartNew()
+          choco install innosetup --yes --no-progress --limit-output 2>&1 | ForEach-Object { Log $_ }
+          Log "install exit $LASTEXITCODE after $([int]$clock.Elapsed.TotalSeconds) s; ISCC present: $(Test-Path $iscc)"
+          Log ((Get-Item $iscc).VersionInfo | Select-Object ProductVersion, FileVersion)
+          $work = Join-Path $env:RUNNER_TEMP 'inno-trial'
+          New-Item -ItemType Directory -Force $work | Out-Null
+          Set-Content (Join-Path $work 'hello.txt') 'hello'
+          $icon = (Resolve-Path 'build/icon.ico').Path
+          $script = @"
+          [Setup]
+          AppId={{6F1A7D2E-5B0C-4A8E-9F3D-2C4B7E8A9D10}
+          AppName=Trial
+          AppVersion=1.0
+          DefaultDirName={autopf}\Trial
+          PrivilegesRequired=lowest
+          PrivilegesRequiredOverridesAllowed=dialog
+          OutputDir=$work
+          OutputBaseFilename=trial-setup
+          SetupIconFile=$icon
+          WizardStyle=modern
+          [Files]
+          Source: "$work\hello.txt"; DestDir: "{app}"
+          "@
+          Set-Content (Join-Path $work 'trial.iss') ($script -replace '(?m)^ {10}', '')
+          Log "--- compile with the PNG-compressed icon"
+          & $iscc (Join-Path $work 'trial.iss') 2>&1 | ForEach-Object { Log $_ }
+          Log "ISCC exit $LASTEXITCODE"
+          $setup = Join-Path $work 'trial-setup.exe'
+          if (Test-Path $setup) {
+            Log ("trial installer: {0:N0} bytes" -f (Get-Item $setup).Length)
+            $target = Join-Path $work 'installed'
+            $proc = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=$target" -Wait -PassThru
+            Log "silent install exit $($proc.ExitCode); folder: $(Get-ChildItem $target -Name | Out-String)"
+            $key = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{6F1A7D2E-5B0C-4A8E-9F3D-2C4B7E8A9D10}_is1'
+            Log "HKCU uninstall key present: $(Test-Path $key)"
+            if (Test-Path $key) { Log (Get-ItemProperty $key | Select-Object DisplayName, DisplayVersion, UninstallString, InstallLocation) }
+            Log "HKLM uninstall key present: $(Test-Path ($key -replace 'HKCU','HKLM'))"
+            $uninstall = Join-Path $target 'unins000.exe'
+            $proc = Start-Process -FilePath $uninstall -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
+            $waited = 0
+            while ((Test-Path $target) -and $waited -lt 30) { Start-Sleep -Seconds 1; $waited++ }
+            Log "silent uninstall exit $($proc.ExitCode); folder gone after $waited s: $(-not (Test-Path $target)); key gone: $(-not (Test-Path $key))"
+          }
+      - name: Windows diagnostics, file association (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        timeout-minutes: 6
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          $out = Join-Path $env:RUNNER_TEMP 'diag-assoc.txt'
+          function Log($value) { ($value | Out-String -Width 220).TrimEnd() | Add-Content -Path $out -Encoding utf8 }
+          $dir = Join-Path $env:RUNNER_TEMP 'assoc'
           New-Item -ItemType Directory -Force $dir | Out-Null
           $marker = Join-Path $dir 'marker.txt'
           $sample = Join-Path $dir 'sample.prism.json'
           $plain = Join-Path $dir 'plain.json'
           Set-Content $sample '{}'
           Set-Content $plain '{}'
-          $handler = 'cmd.exe /c echo %1> "' + $marker + '"'
-          function Register($key, $value) {
+          $command = 'cmd.exe /c echo "%1" > "' + $marker + '"'
+          function Register($key, $name, $value) {
             New-Item -Path $key -Force | Out-Null
-            Set-ItemProperty -Path $key -Name '(default)' -Value $value
+            Set-ItemProperty -Path $key -Name $name -Value $value
           }
-          Register 'HKCU:\Software\Classes\PrismTest.Project\shell\open\command' $handler
-          Register 'HKCU:\Software\Classes\.prism.json' 'PrismTest.Project'
-          "assoc says: $(cmd /c assoc .prism.json 2>&1)"
-          function TryOpen($file) {
+          function Probe($label, $file, $verb) {
             Remove-Item $marker -ErrorAction SilentlyContinue
-            try { Start-Process -FilePath $file } catch { "Start-Process failed: $($_.Exception.Message)" }
-            Start-Sleep -Seconds 6
-            if (Test-Path $marker) { "opened by handler: $((Get-Content $marker -Raw).Trim())" } else { "handler NOT used for $file" }
-            Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'OpenWith', 'notepad', 'Code' } | Stop-Process -Force -ErrorAction SilentlyContinue
+            try {
+              if ($verb) { Start-Process -FilePath $file -Verb $verb } else { Start-Process -FilePath $file }
+            } catch { Log "${label}: Start-Process failed: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 4
+            if (Test-Path $marker) { Log "${label}: handler used for $(Split-Path $file -Leaf)" } else { Log "${label}: handler NOT used for $(Split-Path $file -Leaf)" }
+            Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'OpenWith', 'notepad', 'Code', 'PickerHost' } | Stop-Process -Force -ErrorAction SilentlyContinue
           }
-          "case 1: only .prism.json registered"
-          TryOpen $sample
-          Register 'HKCU:\Software\Classes\.json' 'PrismTest.Project'
-          "case 2: .json registered as well"
-          TryOpen $sample
-          TryOpen $plain
+          Log "HKCR .json default before: $((Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\.json' -ErrorAction SilentlyContinue).'(default)')"
+          Register 'HKCU:\Software\Classes\PrismTest.Project\shell\open\command' '(default)' $command
+          Register 'HKCU:\Software\Classes\.prism.json' '(default)' 'PrismTest.Project'
+          Log "V1 only .prism.json registered"
+          Probe 'V1' $sample $null
+          Register 'HKCU:\Software\Classes\.json' '(default)' 'PrismTest.Project'
+          Log "V2 .json registered as well"
+          Probe 'V2' $sample $null
+          Probe 'V2' $plain $null
+          Remove-Item 'HKCU:\Software\Classes\.json' -Recurse -Force
+          Remove-Item 'HKCU:\Software\Classes\.prism.json' -Recurse -Force
+          Register 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell\prismtest\command' '(default)' $command
+          Set-ItemProperty -Path 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell\prismtest' -Name 'AppliesTo' -Value 'System.FileName:"*.prism.json"'
+          Log "V3 SystemFileAssociations verb with AppliesTo, explicit verb"
+          Probe 'V3' $sample 'prismtest'
+          Probe 'V3 plain' $plain 'prismtest'
+          Log "V4 same key, default verb (no verb named)"
+          Probe 'V4' $sample $null
+          Set-ItemProperty -Path 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell' -Name '(default)' -Value 'prismtest'
+          Log "V5 SystemFileAssociations shell default value names the verb"
+          Probe 'V5' $sample $null
+          Probe 'V5 plain' $plain $null
+          Remove-Item 'HKCU:\Software\Classes\SystemFileAssociations\.json' -Recurse -Force
+          Remove-Item 'HKCU:\Software\Classes\PrismTest.Project' -Recurse -Force
+      - name: Windows diagnostics, packaged application probe (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        timeout-minutes: 15
+        continue-on-error: true
+        run: |
+          $file = Join-Path $env:RUNNER_TEMP 'diag-probe.txt'
+          node tests/windows-probe.cjs $env:PACKAGED_EXE 2>&1 | Tee-Object -FilePath $file
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
@@ -153,6 +252,13 @@ jobs:
           Expand-Archive -LiteralPath "release/distribution/$folder.zip" -DestinationPath $target
           node tests/packaged-smoke.cjs (Join-Path $target "$folder/Prism Mapper/Prism Mapper.exe")
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Windows diagnostics, package contents (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $version = node -p "require('./package.json').version"
+          node tests/windows-inspect.mjs "release/distribution/Prism-Mapper-v$version-Windows-x64.zip" 2>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'diag-package.txt')
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -162,6 +268,21 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Publish diagnostics as annotations (temporary)
+        if: always() && matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          foreach ($file in Get-ChildItem $env:RUNNER_TEMP -Filter 'diag-*.txt') {
+            $text = Get-Content $file.FullName -Raw
+            if (-not $text) { continue }
+            $size = 28000
+            $parts = [Math]::Ceiling($text.Length / $size)
+            for ($i = 0; $i -lt $parts; $i++) {
+              $chunk = $text.Substring($i * $size, [Math]::Min($size, $text.Length - $i * $size))
+              $escaped = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::notice title=$($file.BaseName) part $($i + 1) of $parts::$escaped"
+            }
+          }
 
   publish:
     needs: build
