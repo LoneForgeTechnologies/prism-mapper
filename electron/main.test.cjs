@@ -40,7 +40,11 @@ function createFakeElectron({ primary = true, workArea, displays } = {}) {
   let markReady;
   const ready = new Promise((resolve) => (markReady = resolve));
   const dialogs = { open: null, save: null };
-  const behaviour = { failOutputLoad: false };
+  const behaviour = {
+    failOutputLoad: false,
+    // Windows 10 and 11 at 100%: title bar, menu bar and borders.
+    frame: { width: 16, height: 65 },
+  };
 
   class FakeBrowserWindow extends EventEmitter {
     constructor(options) {
@@ -73,6 +77,28 @@ function createFakeElectron({ primary = true, workArea, displays } = {}) {
     }
     maximize() {
       this.record("maximize");
+    }
+    // A window with a title bar and menu bar around its page, as on Windows.
+    getBounds() {
+      return { x: 0, y: 0, width: 1500, height: 1000 };
+    }
+    getContentBounds() {
+      const frame = behaviour.frame;
+      const bounds = this.getBounds();
+      return {
+        x: frame.width / 2,
+        y: frame.height - frame.width / 2,
+        width: bounds.width - frame.width,
+        height: bounds.height - frame.height,
+      };
+    }
+    setMinimumSize(width, height) {
+      this.minimumSize = [width, height];
+      this.record("setMinimumSize");
+    }
+    setSize(width, height) {
+      this.size = [width, height];
+      this.record("setSize");
     }
     restore() {
       this.minimized = false;
@@ -297,7 +323,10 @@ test("the editor window has the app icon and room for the page", async () => {
       const options = fake.editor().options;
       assert.equal(fake.windows.length, 1, platform);
       assert.equal(options.icon && path.basename(options.icon), icon, platform);
-      assert.equal(options.useContentSize, true, platform);
+      // Plain window sizes, not content sizes: Electron leaves the menu bar out
+      // of a content-size minimum on Windows.
+      assert.equal(options.useContentSize, undefined, platform);
+      // Until the real frame is measured, the page minimum plus an allowance.
       assert.ok(options.minWidth >= 1050 && options.minHeight >= 700, platform);
       assert.ok(options.width >= options.minWidth, platform);
       assert.ok(options.height >= options.minHeight, platform);
@@ -314,6 +343,36 @@ test("the editor window has the app icon and room for the page", async () => {
   }
 });
 
+test("the minimum size is made exact from the frame the window really has", async () => {
+  for (const frame of [
+    { width: 16, height: 65 },
+    { width: 10, height: 52 },
+    { width: 0, height: 28 },
+  ]) {
+    const fake = startMain({
+      workArea: { x: 0, y: 0, width: 2560, height: 1400 },
+    });
+    try {
+      fake.behaviour.frame = frame;
+      await fake.becomeReady();
+      const window = fake.editor();
+      window.emit("ready-to-show");
+      // The page is never given less than 1080 x 700 (and 1460 x 912 to start with).
+      assert.deepEqual(window.minimumSize, [
+        1080 + frame.width,
+        700 + frame.height,
+      ]);
+      assert.deepEqual(window.size, [1460 + frame.width, 912 + frame.height]);
+      assert.deepEqual(
+        window.calls.filter((call) => call !== "loadFile"),
+        ["setMinimumSize", "setSize", "show"],
+      );
+    } finally {
+      fake.restorePlatform();
+    }
+  }
+});
+
 test("a laptop screen starts maximised, a large screen does not", async () => {
   const small = startMain({
     workArea: { x: 0, y: 0, width: 1366, height: 728 },
@@ -322,8 +381,11 @@ test("a laptop screen starts maximised, a large screen does not", async () => {
   small.editor().emit("ready-to-show");
   assert.deepEqual(
     small.editor().calls.filter((call) => call !== "loadFile"),
-    ["maximize", "show"],
+    ["setMinimumSize", "maximize", "show"],
   );
+  // The smallest window still fits the screen it was made for.
+  assert.ok(small.editor().minimumSize[0] <= 1366);
+  assert.ok(small.editor().minimumSize[1] <= 728);
   small.restorePlatform();
 
   const large = startMain({
@@ -333,9 +395,9 @@ test("a laptop screen starts maximised, a large screen does not", async () => {
   large.editor().emit("ready-to-show");
   assert.deepEqual(
     large.editor().calls.filter((call) => call !== "loadFile"),
-    ["show"],
+    ["setMinimumSize", "setSize", "show"],
   );
-  assert.equal(large.editor().options.width, 1460);
+  assert.equal(large.editor().options.width, 1460 + 24);
   large.restorePlatform();
 });
 

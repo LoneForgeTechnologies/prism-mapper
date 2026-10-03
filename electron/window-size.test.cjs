@@ -4,6 +4,8 @@ const fs = require("node:fs");
 const path = require("node:path");
 const {
   editorWindowGeometry,
+  windowSizes,
+  measureFrame,
   PAGE_MINIMUM,
   MINIMUM,
   FRAME,
@@ -25,7 +27,6 @@ const screens = {
 test("a screen that can hold the page gets a window that keeps it whole", () => {
   for (const [name, workArea] of Object.entries(screens)) {
     const geometry = editorWindowGeometry(workArea);
-    assert.equal(geometry.useContentSize, true, name);
     assert.ok(geometry.width >= geometry.minWidth, name);
     assert.ok(geometry.height >= geometry.minHeight, name);
     if (workArea.width - FRAME.width >= PAGE_MINIMUM.width)
@@ -57,7 +58,6 @@ test("a 1366 pixel laptop at 125% scaling holds the window and the page's full w
 
 test("a large screen gets the preferred size, a laptop starts maximised", () => {
   assert.deepEqual(editorWindowGeometry(screens["1920x1080 at 100%"]), {
-    useContentSize: true,
     width: 1460,
     height: 912,
     minWidth: 1080,
@@ -81,7 +81,6 @@ test("a large screen gets the preferred size, a laptop starts maximised", () => 
 
 test("small screens shrink the minimum to what they can hold", () => {
   assert.deepEqual(editorWindowGeometry(screens["1366x768 at 150%"]), {
-    useContentSize: true,
     width: 887,
     height: 400,
     minWidth: 887,
@@ -110,5 +109,81 @@ test("the window minimum is never below what the stylesheet requires", () => {
   assert.ok(
     MINIMUM.height >= height,
     `window minimum height ${MINIMUM.height} < page ${height}`,
+  );
+});
+
+test("window sizes are the page sizes plus the frame around the page", () => {
+  const geometry = editorWindowGeometry(screens["1920x1080 at 100%"]);
+  assert.deepEqual(windowSizes(geometry), {
+    width: 1460 + FRAME.width,
+    height: 912 + FRAME.height,
+    minWidth: 1080 + FRAME.width,
+    minHeight: 700 + FRAME.height,
+  });
+  // With the frame measured on Windows at 100% (16 x 65, menu bar included).
+  assert.deepEqual(windowSizes(geometry, { width: 16, height: 65 }), {
+    width: 1476,
+    height: 977,
+    minWidth: 1096,
+    minHeight: 765,
+  });
+  // The window never needs more than the screen has.
+  for (const [name, workArea] of Object.entries(screens)) {
+    const sizes = windowSizes(editorWindowGeometry(workArea));
+    assert.ok(sizes.minWidth <= workArea.width, name);
+    assert.ok(sizes.minHeight <= workArea.height, name);
+    assert.ok(sizes.width <= workArea.width, name);
+    assert.ok(sizes.height <= workArea.height, name);
+  }
+});
+
+test("the frame is measured from the window and its page area", () => {
+  // Windows 10 and 11 with a menu bar, measured on a runner at 100%, 125%, 150%.
+  assert.deepEqual(
+    measureFrame(
+      { x: 0, y: 0, width: 1120, height: 740 },
+      { x: 8, y: 57, width: 1104, height: 675 },
+    ),
+    { width: 16, height: 65 },
+  );
+  assert.deepEqual(
+    measureFrame(
+      { x: 0, y: 0, width: 1120, height: 740 },
+      { x: 5, y: 47, width: 1110, height: 688 },
+    ),
+    { width: 10, height: 52 },
+  );
+  // A title bar only (macOS).
+  assert.deepEqual(
+    measureFrame(
+      { x: 0, y: 0, width: 1200, height: 800 },
+      { x: 0, y: 28, width: 1200, height: 772 },
+    ),
+    { width: 0, height: 28 },
+  );
+  // Nothing that cannot be a frame is believed.
+  for (const [bounds, content] of [
+    [
+      { width: 1000, height: 700 },
+      { width: 1200, height: 800 },
+    ],
+    [
+      { width: 1000, height: 700 },
+      { width: 100, height: 100 },
+    ],
+    [
+      { width: NaN, height: 700 },
+      { width: 1000, height: 700 },
+    ],
+    [{ width: 1000, height: 700 }, {}],
+  ])
+    assert.deepEqual(measureFrame(bounds, content), FRAME);
+  assert.deepEqual(
+    measureFrame(
+      { width: 1, height: 1 },
+      { width: 5, height: 5 },
+      { width: 3, height: 4 },
+    ),
+    { width: 3, height: 4 },
   );
 });

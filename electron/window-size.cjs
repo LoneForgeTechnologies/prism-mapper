@@ -1,7 +1,14 @@
-// Size of the editor window, in the page area (the window without its title bar,
-// borders and menu bar) so that Windows, macOS and Linux give the page the same
-// room. The page itself (.app-shell in src/style.css) wants at least 1050 x 700
-// and scrolls when it has less.
+// Size of the editor window, worked out for the page area (the window without
+// its title bar, borders and menu bar) so that Windows, macOS and Linux give the
+// page the same room. The page itself (.app-shell in src/style.css) wants at
+// least 1050 x 700 and scrolls when it has less.
+//
+// Electron's useContentSize option cannot be used for the minimum: on Windows it
+// leaves the menu bar out of the minimum size, so the page ended up 26 pixels
+// shorter than asked at the smallest size (measured on a Windows runner). The
+// window is instead given plain window sizes, which are the page sizes plus the
+// frame around the page. The frame is estimated at first and measured as soon as
+// the window exists.
 const PAGE_MINIMUM = Object.freeze({ width: 1050, height: 700 });
 const PREFERRED = Object.freeze({ width: 1460, height: 912 });
 // A little wider than the page minimum, and narrow enough for a 1366 pixel
@@ -10,7 +17,8 @@ const MINIMUM = Object.freeze({ width: 1080, height: 700 });
 // Windows 10 and 11 put 16 x 65 logical pixels of title bar, menu bar and
 // borders around the page (measured on a release build at 100%, 125% and 150%
 // scaling; less at higher scaling). This is a little more, and also covers
-// macOS and Linux title bars.
+// macOS and Linux title bars. It is the estimate used until the real frame can
+// be measured.
 const FRAME = Object.freeze({ width: 24, height: 72 });
 const FLOOR = Object.freeze({ width: 600, height: 400 });
 
@@ -32,7 +40,6 @@ function editorWindowGeometry(workArea, frame = FRAME) {
     FLOOR.height,
   );
   return {
-    useContentSize: true,
     width: Math.max(Math.min(PREFERRED.width, room.width), minWidth),
     height: Math.max(Math.min(PREFERRED.height, room.height), minHeight),
     minWidth,
@@ -43,8 +50,38 @@ function editorWindowGeometry(workArea, frame = FRAME) {
   };
 }
 
+// Window sizes (outside the frame) for sizes of the page area.
+function windowSizes(geometry, frame = FRAME) {
+  return {
+    width: geometry.width + frame.width,
+    height: geometry.height + frame.height,
+    minWidth: geometry.minWidth + frame.width,
+    minHeight: geometry.minHeight + frame.height,
+  };
+}
+
+// The frame around the page of a window that exists: its outer size minus the
+// size of its page area. A window that reports something that cannot be a
+// frame (no layout yet, or a placeholder) gets the estimate instead.
+function measureFrame(bounds, contentBounds, estimate = FRAME) {
+  const width = bounds.width - contentBounds.width;
+  const height = bounds.height - contentBounds.height;
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width < 0 ||
+    height < 0 ||
+    width > 120 ||
+    height > 200
+  )
+    return estimate;
+  return { width, height };
+}
+
 module.exports = {
   editorWindowGeometry,
+  windowSizes,
+  measureFrame,
   PAGE_MINIMUM,
   PREFERRED,
   MINIMUM,

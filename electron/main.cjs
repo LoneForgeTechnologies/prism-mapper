@@ -26,7 +26,11 @@ const { defaultProjectFileName } = require("./paths.cjs");
 const { writeFileAtomic } = require("./files.cjs");
 const { projectPathFromArgv, createProjectOpener } = require("./launch.cjs");
 const { createWakeLock } = require("./wakelock.cjs");
-const { editorWindowGeometry } = require("./window-size.cjs");
+const {
+  editorWindowGeometry,
+  windowSizes,
+  measureFrame,
+} = require("./window-size.cjs");
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -464,14 +468,26 @@ function installIPC() {
 function createEditor() {
   // A page that has just been created has not subscribed to opened projects.
   projectOpener.setReady(false);
-  const { maximize, ...size } = editorWindowGeometry(
-    screen.getPrimaryDisplay().workArea,
+  const geometry = editorWindowGeometry(screen.getPrimaryDisplay().workArea);
+  editor = new BrowserWindow(
+    options({ title: "Prism Mapper", ...windowSizes(geometry) }),
   );
-  editor = new BrowserWindow(options({ title: "Prism Mapper", ...size }));
   const window = editor;
   secureWindow(window);
   window.once("ready-to-show", () => {
-    if (maximize) window.maximize();
+    // The title bar, menu bar and borders exist now, so the minimum can be
+    // exact: the page never gets less room than geometry says.
+    const frame = measureFrame(window.getBounds(), window.getContentBounds());
+    window.setMinimumSize(
+      geometry.minWidth + frame.width,
+      geometry.minHeight + frame.height,
+    );
+    if (geometry.maximize) window.maximize();
+    else
+      window.setSize(
+        geometry.width + frame.width,
+        geometry.height + frame.height,
+      );
     window.show();
   });
   window.webContents.on("render-process-gone", () => {
