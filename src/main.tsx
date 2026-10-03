@@ -536,8 +536,11 @@ function App() {
         Math.floor(
           Math.min(
             entry.contentRect.width,
-            // The caption and hint lines are hidden in the compact layout.
-            (entry.contentRect.height - (compact ? 0 : 67)) * ratio,
+            // Below the stage: the caption and hint on desktop, one hint line
+            // in the compact layout while no sheet is open.
+            (entry.contentRect.height -
+              (compact ? (activeSheet ? 0 : 30) : 67)) *
+              ratio,
           ),
         ),
       );
@@ -545,7 +548,7 @@ function App() {
     });
     observer.observe(canvasArea.current);
     return () => observer.disconnect();
-  }, [project.width, project.height, compact]);
+  }, [project.width, project.height, compact, activeSheet]);
   const blackout = () => setProject((p) => ({ ...p, blackout: !p.blackout }));
   const cancelDrawing = () => {
     setDraft([]);
@@ -1904,9 +1907,11 @@ function App() {
                 <span>
                   <Move size={13} />
                   {tool !== "select"
-                    ? "Shift: straight angles · Backspace: undo point · Esc: cancel"
+                    ? compact
+                      ? "Undo takes back the last point"
+                      : "Shift: straight angles · Backspace: undo point · Esc: cancel"
                     : surface?.polygon
-                      ? "Drag points · Double-click an edge to add a point"
+                      ? `Drag points · Double-${compact ? "tap" : "click"} an edge to add a point`
                       : "Drag a layer or its corners"}
                 </span>
                 <span>

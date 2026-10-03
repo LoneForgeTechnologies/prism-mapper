@@ -54,6 +54,16 @@ function leaveFullscreen() {
   } catch {}
 }
 
+function keyboardFocusInside(container: HTMLElement | null) {
+  const active = document.activeElement;
+  if (!container || !active || !container.contains(active)) return false;
+  try {
+    return active.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 const HIDE_AFTER_MS = 3500;
 const IDLE_FRAME_MS = 250;
 
@@ -65,6 +75,7 @@ const IDLE_FRAME_MS = 250;
 export function PresentMode(props: PresentProps) {
   const { project } = props;
   const rootRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const [box, setBox] = useState({ width: 0, height: 0 });
   const [shown, setShown] = useState(true);
@@ -82,8 +93,9 @@ export function PresentMode(props: PresentProps) {
     setShown(true);
     window.clearTimeout(hideTimer.current);
     hideTimer.current = window.setTimeout(() => {
-      const root = rootRef.current;
-      if (sticky.current || root?.contains(document.activeElement)) return;
+      // Align and Brightness keep the bar open, and so does keyboard focus on
+      // a button. A tap leaves focus on a button too, so that must not count.
+      if (sticky.current || keyboardFocusInside(controlsRef.current)) return;
       setShown(false);
     }, HIDE_AFTER_MS);
   }, []);
@@ -323,6 +335,7 @@ export function PresentMode(props: PresentProps) {
       </div>
       {error && <div className="output-error">Output unavailable: {error}</div>}
       <div
+        ref={controlsRef}
         className={`present-controls ${visible ? "visible" : ""}`}
         role="toolbar"
         aria-label="Presentation controls"
