@@ -265,18 +265,21 @@ async function install([setup, work]) {
     "files: program, uninstaller, application, licenses, example projects",
   );
 
+  // 0.4.1 (or 0.5.0-rc.1) is 0.4.1.0 (0.5.0.0) in the file properties.
+  const numeric = `${/^\d+\.\d+\.\d+/.exec(pkg.version)[0]}.0`;
   const exe = versionInfo(where.executable);
   assert.equal(exe.product, "Prism Mapper");
-  assert.equal(exe.fileVersion, `${/^\d+\.\d+\.\d+/.exec(pkg.version)[0]}.0`);
+  assert.equal(exe.fileVersion, numeric);
   assert.equal(exe.company, "Prism Mapper contributors");
   const installer = versionInfo(path.resolve(setup));
   assert.equal(installer.product, "Prism Mapper");
-  assert.equal(installer.productVersion, pkg.version);
+  assert.equal(installer.productVersion, numeric);
+  assert.equal(installer.fileVersion, numeric);
   assert.equal(installer.description, "Prism Mapper Setup");
   assert.equal(installer.company, "Prism Mapper contributors");
   assert.match(installer.copyright, /^Copyright \(c\) \d{4} /);
   lines.push(
-    `Setup.exe properties: ${installer.description}, ${installer.productVersion}, ${installer.company}`,
+    `Setup.exe properties: ${installer.description}, ${installer.fileVersion}, ${installer.company}`,
   );
 
   const entry = registry("HKCU", UNINSTALL);

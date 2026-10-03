@@ -154,6 +154,7 @@ test("the installer installs for the current user without administrator rights",
   assert.equal(directive("SetupIconFile"), "{#RepoDir}\\build\\icon.ico");
   assert.equal(directive("UninstallDisplayIcon"), "{app}\\{#AppExe}");
   assert.equal(directive("VersionInfoVersion"), "{#AppNumericVersion}");
+  assert.equal(directive("VersionInfoProductVersion"), "{#AppNumericVersion}");
   assert.equal(directive("AppVersion"), "{#AppVersion}");
   assert.equal(directive("AppCopyright"), "{#AppCopyright}");
   // Nothing in the script pins the installer to administrator mode.
