@@ -676,46 +676,60 @@ test("activation removes earlier versions of this app folder and nothing else", 
   assert.equal(worker.claimed, 1);
 });
 
-test("two copies on one origin never clear each other's cache", async () => {
-  const storage = new FakeCacheStorage();
-  const network = new FakeNetwork();
-  const workers: Worker[] = [];
-  for (const scope of ["https://app.example/a/", "https://app.example/b/"]) {
-    network.serve(`${scope}index.html`, `shell ${scope}`);
-    network.serve(`${scope}assets/app.js`, "app");
-    network.serve(`${scope}manifest.webmanifest`, "{}");
-    const name = "prism-mapper-v1.0.0-aaaaaaaaaaaa";
-    const source = renderServiceWorker(template, {
-      cacheName: name,
-      precache: PRECACHE,
-    });
-    workers.push(
-      startWorker({ source, cacheName: name, scope, storage, network }),
+for (const [first, second] of [
+  ["https://app.example/a/", "https://app.example/b/"],
+  // One folder name ends exactly like the other: neither may mistake the other's cache for its own.
+  [
+    "https://app.example/prism-mapper/",
+    "https://app.example/other/prism-mapper/",
+  ],
+  ["https://app.example/", "https://app.example/prism-mapper/"],
+]) {
+  test(`two copies on one origin (${new URL(first).pathname} and ${new URL(second).pathname}) never clear each other's cache`, async () => {
+    const storage = new FakeCacheStorage();
+    const network = new FakeNetwork();
+    const workers: Worker[] = [];
+    for (const scope of [first, second]) {
+      network.serve(`${scope}index.html`, `shell ${scope}`);
+      network.serve(`${scope}assets/app.js`, "app");
+      network.serve(`${scope}manifest.webmanifest`, "{}");
+      const name = "prism-mapper-v1.0.0-aaaaaaaaaaaa";
+      const source = renderServiceWorker(template, {
+        cacheName: name,
+        precache: PRECACHE,
+      });
+      workers.push(
+        startWorker({ source, cacheName: name, scope, storage, network }),
+      );
+    }
+    for (const worker of workers) await install(worker);
+    assert.deepEqual(
+      [...storage.stores.keys()].sort(),
+      workers.map((w) => w.cache).sort(),
     );
-  }
-  for (const worker of workers) await install(worker);
-  assert.deepEqual(
-    [...storage.stores.keys()].sort(),
-    workers.map((w) => w.cache).sort(),
-  );
-  // A new version of copy a replaces only copy a's cache.
-  const name = "prism-mapper-v1.1.0-bbbbbbbbbbbb";
-  const next = startWorker({
-    source: renderServiceWorker(template, {
-      cacheName: name,
-      precache: PRECACHE,
-    }),
-    cacheName: name,
-    scope: "https://app.example/a/",
-    storage,
-    network,
+    // A new version of either copy replaces only that copy's cache.
+    for (const [index, scope] of [first, second].entries()) {
+      const name = `prism-mapper-v1.${index + 1}.0-bbbbbbbbbbbb`;
+      const next = startWorker({
+        source: renderServiceWorker(template, {
+          cacheName: name,
+          precache: PRECACHE,
+        }),
+        cacheName: name,
+        scope,
+        storage,
+        network,
+      });
+      await install(next);
+      workers[index] = next;
+      assert.deepEqual(
+        [...storage.stores.keys()].sort(),
+        workers.map((w) => w.cache).sort(),
+        `after updating ${scope}`,
+      );
+    }
   });
-  await install(next);
-  assert.deepEqual(
-    [...storage.stores.keys()].sort(),
-    [workers[1].cache, next.cache].sort(),
-  );
-});
+}
 
 test("a version bump builds a new cache, switches to it and deletes the old one", async () => {
   const scope = SCOPES[0];

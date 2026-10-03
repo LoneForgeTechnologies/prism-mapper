@@ -50,10 +50,16 @@ export function DeviceSection({ storage }: { storage: DeviceStorage }) {
         </div>
       )}
       {mode === "ios" && (
-        <p className="device-note">
-          <strong>Install on iPhone or iPad:</strong> tap Share, then Add to
-          Home Screen.
-        </p>
+        <>
+          <p className="device-note">
+            <strong>Install on iPhone or iPad:</strong> tap Share, then Add to
+            Home Screen.
+          </p>
+          <p className="device-note">
+            Safari may clear a website&rsquo;s saved data after about a week
+            without a visit. An app added to the Home Screen is kept.
+          </p>
+        </>
       )}
       {pwa.offlineReady && (
         <p className="device-note">

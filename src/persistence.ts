@@ -380,6 +380,7 @@ export class SavedMedia {
       const createUrl =
         this.options.createUrl ?? ((blob: Blob) => URL.createObjectURL(blob));
       const found = new Set<string>();
+      let unavailable = false;
       await Promise.all(
         wanted.map(async (m) => {
           try {
@@ -388,15 +389,19 @@ export class SavedMedia {
               urls.set(m.id, createUrl(blob));
               found.add(m.id);
             }
-          } catch {
-            // An unreadable Blob is handled like a missing one.
+          } catch (error) {
+            // An unreadable Blob is handled like a missing one. The database
+            // connects on first use, so a browser that blocks storage shows up
+            // here and is reported as blocked rather than as lost files.
+            if (classifyStorageError(error) === "unavailable")
+              unavailable = true;
           }
         }),
       );
       return {
         urls,
         missing: wanted.filter((m) => !found.has(m.id)),
-        unavailable: false,
+        unavailable,
       };
     });
   }

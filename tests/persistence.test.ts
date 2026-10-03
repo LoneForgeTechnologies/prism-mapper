@@ -450,6 +450,38 @@ test("restoring rebuilds URLs only for Blobs that still exist", async () => {
   assert.equal(nothing.missing.length, 0);
 });
 
+test("a store that opens lazily but refuses every read is reported as blocked, not as lost files", async () => {
+  const { backend, saved } = library();
+  await saved.save([request("a", 11), request("b", 22)]);
+  const media: Media[] = [
+    { id: "a", name: "a.png", kind: "image", url: "" },
+    { id: "b", name: "b.png", kind: "image", url: "" },
+  ];
+  backend.failGet = () =>
+    domError("The operation is insecure.", "SecurityError");
+  const blocked = await saved.restore(media);
+  assert.equal(blocked.unavailable, true);
+  assert.deepEqual(
+    blocked.missing.map((m) => m.id),
+    ["a", "b"],
+  );
+  assert.match(
+    describeMissing(blocked.missing, blocked.unavailable),
+    /blocking site storage/,
+  );
+  // A read that merely fails for another reason is still just a missing file.
+  backend.failGet = () => new Error("corrupt record");
+  const corrupt = await saved.restore(media);
+  assert.equal(corrupt.unavailable, false);
+  assert.equal(corrupt.missing.length, 2);
+  // And one blocked read among good ones keeps the good ones.
+  backend.failGet = (id) =>
+    id === "b" ? domError("denied", "NotAllowedError") : undefined;
+  const mixed = await saved.restore(media);
+  assert.deepEqual([...mixed.urls], [["a", "blob:test/11"]]);
+  assert.equal(mixed.unavailable, true);
+});
+
 test("cleanup removes only Blobs that no project refers to", async () => {
   const { backend, saved } = library();
   await saved.save([
