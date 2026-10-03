@@ -180,7 +180,7 @@ jobs:
       - name: Windows diagnostics, file association (temporary)
         if: matrix.platform == 'win32'
         shell: pwsh
-        timeout-minutes: 6
+        timeout-minutes: 4
         continue-on-error: true
         run: |
           $ErrorActionPreference = 'Continue'
@@ -193,6 +193,10 @@ jobs:
           $plain = Join-Path $dir 'plain.json'
           Set-Content $sample '{}'
           Set-Content $plain '{}'
+          $choice = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\FileExts\.json\UserChoice'
+          Log "UserChoice for .json present: $(Test-Path $choice)"
+          if (Test-Path $choice) { Log (Get-ItemProperty $choice | Select-Object ProgId) }
+          Log "HKCR .json default: $((Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\.json' -ErrorAction SilentlyContinue).'(default)')"
           $command = 'cmd.exe /c echo "%1" > "' + $marker + '"'
           function Register($key, $name, $value) {
             New-Item -Path $key -Force | Out-Null
@@ -200,14 +204,17 @@ jobs:
           }
           function Probe($label, $file, $verb) {
             Remove-Item $marker -ErrorAction SilentlyContinue
-            try {
+            $job = Start-Job -ScriptBlock {
+              param($file, $verb)
               if ($verb) { Start-Process -FilePath $file -Verb $verb } else { Start-Process -FilePath $file }
-            } catch { Log "${label}: Start-Process failed: $($_.Exception.Message)" }
-            Start-Sleep -Seconds 4
+            } -ArgumentList $file, $verb
+            if (-not (Wait-Job $job -Timeout 12)) { Log "${label}: Start-Process did not return within 12 s" }
+            Stop-Job $job -ErrorAction SilentlyContinue
+            Remove-Job $job -Force -ErrorAction SilentlyContinue
+            Start-Sleep -Seconds 2
             if (Test-Path $marker) { Log "${label}: handler used for $(Split-Path $file -Leaf)" } else { Log "${label}: handler NOT used for $(Split-Path $file -Leaf)" }
             Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'OpenWith', 'notepad', 'Code', 'PickerHost' } | Stop-Process -Force -ErrorAction SilentlyContinue
           }
-          Log "HKCR .json default before: $((Get-ItemProperty 'Registry::HKEY_CLASSES_ROOT\.json' -ErrorAction SilentlyContinue).'(default)')"
           Register 'HKCU:\Software\Classes\PrismTest.Project\shell\open\command' '(default)' $command
           Register 'HKCU:\Software\Classes\.prism.json' '(default)' 'PrismTest.Project'
           Log "V1 only .prism.json registered"
@@ -222,23 +229,28 @@ jobs:
           Set-ItemProperty -Path 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell\prismtest' -Name 'AppliesTo' -Value 'System.FileName:"*.prism.json"'
           Log "V3 SystemFileAssociations verb with AppliesTo, explicit verb"
           Probe 'V3' $sample 'prismtest'
-          Probe 'V3 plain' $plain 'prismtest'
-          Log "V4 same key, default verb (no verb named)"
-          Probe 'V4' $sample $null
-          Set-ItemProperty -Path 'HKCU:\Software\Classes\SystemFileAssociations\.json\shell' -Name '(default)' -Value 'prismtest'
-          Log "V5 SystemFileAssociations shell default value names the verb"
-          Probe 'V5' $sample $null
-          Probe 'V5 plain' $plain $null
           Remove-Item 'HKCU:\Software\Classes\SystemFileAssociations\.json' -Recurse -Force
           Remove-Item 'HKCU:\Software\Classes\PrismTest.Project' -Recurse -Force
       - name: Windows diagnostics, packaged application probe (temporary)
         if: matrix.platform == 'win32'
         shell: pwsh
-        timeout-minutes: 15
+        timeout-minutes: 12
         continue-on-error: true
         run: |
           $file = Join-Path $env:RUNNER_TEMP 'diag-probe.txt'
           node tests/windows-probe.cjs $env:PACKAGED_EXE 2>&1 | Tee-Object -FilePath $file
+      - name: Windows diagnostics, probe with long paths switched off (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        timeout-minutes: 8
+        continue-on-error: true
+        run: |
+          $key = 'HKLM:\SYSTEM\CurrentControlSet\Control\FileSystem'
+          Set-ItemProperty -Path $key -Name LongPathsEnabled -Value 0
+          $file = Join-Path $env:RUNNER_TEMP 'diag-probe-long.txt'
+          "LongPathsEnabled is now $((Get-ItemProperty $key).LongPathsEnabled)" | Set-Content $file
+          node tests/windows-probe.cjs $env:PACKAGED_EXE media 2>&1 | Tee-Object -FilePath $file -Append
+          Set-ItemProperty -Path $key -Name LongPathsEnabled -Value 1
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
@@ -268,19 +280,36 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-      - name: Publish diagnostics as annotations (temporary)
+      - name: Publish diagnostics as annotations, 1 (temporary)
         if: always() && matrix.platform == 'win32'
         shell: pwsh
         run: |
-          foreach ($file in Get-ChildItem $env:RUNNER_TEMP -Filter 'diag-*.txt') {
-            $text = Get-Content $file.FullName -Raw
-            if (-not $text) { continue }
-            $size = 28000
+          foreach ($name in 'diag-env', 'diag-inno', 'diag-assoc') {
+            $path = Join-Path $env:RUNNER_TEMP "$name.txt"
+            if (-not (Test-Path $path)) { continue }
+            $text = Get-Content $path -Raw
+            $size = 3800
             $parts = [Math]::Ceiling($text.Length / $size)
             for ($i = 0; $i -lt $parts; $i++) {
               $chunk = $text.Substring($i * $size, [Math]::Min($size, $text.Length - $i * $size))
               $escaped = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-              Write-Host "::notice title=$($file.BaseName) part $($i + 1) of $parts::$escaped"
+              Write-Host "::notice title=$name part $($i + 1) of $parts::$escaped"
+            }
+          }
+      - name: Publish diagnostics as annotations, 2 (temporary)
+        if: always() && matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          foreach ($name in 'diag-probe', 'diag-probe-long', 'diag-package') {
+            $path = Join-Path $env:RUNNER_TEMP "$name.txt"
+            if (-not (Test-Path $path)) { continue }
+            $text = Get-Content $path -Raw
+            $size = 3800
+            $parts = [Math]::Ceiling($text.Length / $size)
+            for ($i = 0; $i -lt $parts; $i++) {
+              $chunk = $text.Substring($i * $size, [Math]::Min($size, $text.Length - $i * $size))
+              $escaped = $chunk.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
+              Write-Host "::warning title=$name part $($i + 1) of $parts::$escaped"
             }
           }
 

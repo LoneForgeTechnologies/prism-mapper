@@ -193,10 +193,20 @@ async function media() {
       ["unc-localhost", `\\\\localhost\\${shareName}\\probe.png`],
       ["unc-forward-slashes", `//127.0.0.1/${shareName}/probe.png`],
       ["unc-extended", `\\\\?\\UNC\\${host}\\${shareName}\\probe.png`],
+      ["unc-relative-from-share", "probe.png", "share"],
     ];
-    for (const [label, mediaPath] of cases) {
-      const projectFile = path.join(projectDirectory, `${label}.prism.json`);
-      await fs.writeFile(projectFile, JSON.stringify(projectJson(mediaPath)));
+    for (const [label, mediaPath, where] of cases) {
+      const projectFile =
+        where === "share"
+          ? `\\\\127.0.0.1\\${shareName}\\${label}.prism.json`
+          : path.join(projectDirectory, `${label}.prism.json`);
+      if (where === "share")
+        await fs.writeFile(
+          path.join(shareDirectory, `${label}.prism.json`),
+          JSON.stringify(projectJson(mediaPath)),
+        );
+      else
+        await fs.writeFile(projectFile, JSON.stringify(projectJson(mediaPath)));
       await app.evaluate(({ dialog }, file) => {
         dialog.showOpenDialog = async () => ({
           canceled: false,
@@ -332,6 +342,42 @@ async function systemAudio() {
   }
 }
 
+function lines() {
+  const out = [report.platform];
+  const geometry = Array.isArray(report.geometry) ? report.geometry : [];
+  for (const g of geometry) {
+    const n = g.native;
+    const c = n.initial.contentBounds;
+    const m = n.atMinimum.contentBounds;
+    out.push(
+      `geometry scale=${g.scale} screen=${n.display.bounds.width}x${n.display.bounds.height} work=${n.display.workArea.width}x${n.display.workArea.height} menuBar=${n.menuBar} initial=${n.initial.bounds.width}x${n.initial.bounds.height} content=${c.width}x${c.height}@${c.x},${c.y} maximized=${n.initial.maximized} min=${n.initial.minimum} atMinimumContent=${m.width}x${m.height} page=${g.view.innerWidth}x${g.view.innerHeight} pageScroll=${g.view.scrollWidth}x${g.view.scrollHeight}`,
+    );
+  }
+  if (report.geometry && report.geometry.failed)
+    out.push(`geometry FAILED ${report.geometry.failed}`);
+  const m = report.media;
+  if (m && m.failed) out.push(`media FAILED ${m.failed}`);
+  if (m && m.results) {
+    out.push(`share: ${String(m.share).replace(/\s+/g, " ")} host=${m.host}`);
+    for (const r of m.results) {
+      const f = r.fetched;
+      out.push(
+        `media ${r.label} load=${r.loadMs}ms error=${r.error || "-"} missing=${(r.missing || []).length} registered=${r.registered} fetch=${f ? `${f.status ?? f.error} ${f.bytes ?? ""} type=${f.type} range=${f.rangeStatus ?? f.rangeError}` : "-"} resolved=${r.resolved}`,
+      );
+    }
+    for (const r of m.saves)
+      out.push(
+        `save ${r.label}: ${JSON.stringify(r.saved)} wrote=${r.writtenPath}`,
+      );
+    out.push(`bom: ${JSON.stringify(m.bom)}`);
+  }
+  if (report.systemAudio)
+    out.push(`systemAudio ${JSON.stringify(report.systemAudio)}`);
+  for (const key of Object.keys(report))
+    if (key.endsWith("Seconds")) out.push(`${key}=${report[key]}`);
+  return out;
+}
+
 (async () => {
   report.platform = `${process.platform} ${os.release()} node ${process.version}`;
   await section("geometry", async () => {
@@ -341,9 +387,9 @@ async function systemAudio() {
   });
   await section("media", media);
   await section("systemAudio", systemAudio);
-  console.log(JSON.stringify(report, null, 2));
+  console.log(lines().join("\n"));
 })().catch((error) => {
   console.error(error);
-  console.log(JSON.stringify(report, null, 2));
+  console.log(lines().join("\n"));
   process.exitCode = 1;
 });

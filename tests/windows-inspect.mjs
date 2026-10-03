@@ -10,8 +10,15 @@ const entries = readZipEntries(archive);
 console.log(
   `${process.argv[2]}: ${entries.length} entries, ${archive.length} bytes`,
 );
+const locales = entries.filter((entry) =>
+  /\/locales\/.+\.pak$/.test(entry.name),
+);
 for (const entry of entries)
-  console.log(`${String(entry.size).padStart(10)} ${entry.name}`);
+  if (!locales.includes(entry))
+    console.log(`${String(entry.size).padStart(10)} ${entry.name}`);
+console.log(
+  `${locales.length} locale files, ${locales.reduce((sum, entry) => sum + entry.size, 0)} bytes`,
+);
 const exe = entries.find((entry) => entry.name.endsWith("Prism Mapper.exe"));
 if (exe) {
   const start =
