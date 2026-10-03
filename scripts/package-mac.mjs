@@ -43,6 +43,11 @@ await writeFile(
     main: pkg.main,
   }),
 );
+// Brand icon in place of Electron's (Info.plist already names electron.icns).
+await cp(
+  path.join(root, "build", "icon.icns"),
+  path.join(target, "Contents", "Resources", "electron.icns"),
+);
 const plist = path.join(target, "Contents", "Info.plist");
 for (const [key, value] of Object.entries({
   CFBundleName: "Prism Mapper",
