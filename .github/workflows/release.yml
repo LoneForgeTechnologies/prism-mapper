@@ -7,36 +7,58 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing version tag to release, for example v0.4.1"
+        description: "Version tag, for example v0.4.1. It must equal v plus the version in package.json."
         required: true
         type: string
+      dry_run:
+        description: "Build, test and upload workflow artifacts but do not publish a release. Untick to publish a release for the existing tag."
+        required: true
+        type: boolean
+        default: true
 
 permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.tag || github.ref_name }}
+  group: release-${{ inputs.tag || github.ref_name }}-${{ inputs.dry_run && 'dry-run' || 'publish' }}
   cancel-in-progress: false
 
 jobs:
   build:
+    name: build (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
         include:
-          - runner: macos-15
+          - label: Windows x64
+            runner: windows-latest
+            platform: win32
+            arch: x64
+          - label: macOS arm64
+            runner: macos-15
             platform: darwin
             arch: arm64
+          - label: macOS x64
+            runner: macos-15-intel
+            platform: darwin
+            arch: x64
     runs-on: ${{ matrix.runner }}
-    timeout-minutes: 30
+    timeout-minutes: 45
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       PRISM_TARGET_PLATFORM: ${{ matrix.platform }}
       PRISM_TARGET_ARCH: ${{ matrix.arch }}
     steps:
+      # Keep LF line endings on Windows so the format check and the packaged
+      # files are identical on every platform.
+      - name: Keep LF line endings
+        shell: bash
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         with:
-          ref: ${{ inputs.tag || github.ref }}
+          # A real release builds the tag. A dry run builds the branch it was
+          # started from, so changes to the release process can be tested.
+          ref: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && format('refs/tags/{0}', inputs.tag) || github.sha }}
           persist-credentials: false
       - uses: actions/setup-node@v7
         with:
@@ -52,11 +74,85 @@ jobs:
       - run: npm test
       - run: npm run build
       - run: node scripts/package-release.mjs
-      - name: Smoke test the packaged application
+      - name: Locate the packaged application
         shell: bash
         run: |
           VERSION="$(node -p 'require("./package.json").version')"
-          node tests/packaged-smoke.cjs "release/distribution/$VERSION/darwin-arm64/Prism-Mapper-v$VERSION-macOS-arm64/Prism Mapper.app/Contents/MacOS/Electron"
+          STAGE="release/distribution/$VERSION/$PRISM_TARGET_PLATFORM-$PRISM_TARGET_ARCH"
+          if [ "$PRISM_TARGET_PLATFORM" = win32 ]; then
+            echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-Windows-x64/Prism Mapper/Prism Mapper.exe" >> "$GITHUB_ENV"
+          else
+            echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH/Prism Mapper.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
+          fi
+      # TEMPORARY diagnostics, removed before the branch is finished.
+      - name: Windows diagnostics (temporary)
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        continue-on-error: true
+        run: |
+          $ErrorActionPreference = 'Continue'
+          "--- screen"
+          Add-Type -AssemblyName System.Windows.Forms
+          [System.Windows.Forms.Screen]::AllScreens | ForEach-Object { "{0} bounds={1} working={2}" -f $_.DeviceName, $_.Bounds, $_.WorkingArea }
+          "--- tools"
+          Get-Command tar, 7z, choco -ErrorAction SilentlyContinue | Format-Table Name, Source
+          "--- signatures and version info"
+          $original = 'node_modules/electron/dist/electron.exe'
+          Get-AuthenticodeSignature $original | Format-List Status, StatusMessage
+          (Get-Item $original).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright
+          $stamped = $env:PACKAGED_EXE
+          Get-AuthenticodeSignature $stamped | Format-List Status, StatusMessage
+          (Get-Item $stamped).VersionInfo | Format-List FileDescription, ProductName, ProductVersion, FileVersion, CompanyName, OriginalFilename, LegalCopyright, InternalName
+          "--- sizes"
+          "{0:N0} bytes original, {1:N0} bytes stamped" -f (Get-Item $original).Length, (Get-Item $stamped).Length
+          "--- Inno Setup"
+          choco search innosetup --exact --all-versions --limit-output
+          choco install innosetup --yes --no-progress --limit-output
+          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
+          "ISCC present: $(Test-Path $iscc)"
+          if (Test-Path $iscc) { (Get-Item $iscc).VersionInfo | Format-List ProductVersion, FileVersion }
+          "--- double-extension association experiment"
+          $dir = Join-Path $env:RUNNER_TEMP 'assoc-experiment'
+          New-Item -ItemType Directory -Force $dir | Out-Null
+          $marker = Join-Path $dir 'marker.txt'
+          $sample = Join-Path $dir 'sample.prism.json'
+          $plain = Join-Path $dir 'plain.json'
+          Set-Content $sample '{}'
+          Set-Content $plain '{}'
+          $handler = 'cmd.exe /c echo %1> "' + $marker + '"'
+          function Register($key, $value) {
+            New-Item -Path $key -Force | Out-Null
+            Set-ItemProperty -Path $key -Name '(default)' -Value $value
+          }
+          Register 'HKCU:\Software\Classes\PrismTest.Project\shell\open\command' $handler
+          Register 'HKCU:\Software\Classes\.prism.json' 'PrismTest.Project'
+          "assoc says: $(cmd /c assoc .prism.json 2>&1)"
+          function TryOpen($file) {
+            Remove-Item $marker -ErrorAction SilentlyContinue
+            try { Start-Process -FilePath $file } catch { "Start-Process failed: $($_.Exception.Message)" }
+            Start-Sleep -Seconds 6
+            if (Test-Path $marker) { "opened by handler: $((Get-Content $marker -Raw).Trim())" } else { "handler NOT used for $file" }
+            Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.ProcessName -in 'OpenWith', 'notepad', 'Code' } | Stop-Process -Force -ErrorAction SilentlyContinue
+          }
+          "case 1: only .prism.json registered"
+          TryOpen $sample
+          Register 'HKCU:\Software\Classes\.json' 'PrismTest.Project'
+          "case 2: .json registered as well"
+          TryOpen $sample
+          TryOpen $plain
+      - name: Smoke test the packaged application
+        shell: bash
+        run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
+      - name: Smoke test the application unpacked from the ZIP
+        if: matrix.platform == 'win32'
+        shell: pwsh
+        run: |
+          $version = node -p "require('./package.json').version"
+          $folder = "Prism-Mapper-v$version-Windows-x64"
+          $target = Join-Path $env:RUNNER_TEMP 'portable'
+          Expand-Archive -LiteralPath "release/distribution/$folder.zip" -DestinationPath $target
+          node tests/packaged-smoke.cjs (Join-Path $target "$folder/Prism Mapper/Prism Mapper.exe")
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
@@ -69,6 +165,9 @@ jobs:
 
   publish:
     needs: build
+    # A dry run stops after the builds; only a tag push or an explicit
+    # non-dry run publishes a release.
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -78,9 +177,11 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
+      # Desktop builds come from the jobs above. Mobile builds, added by a
+      # later change, upload artifacts named mobile-* in the same way.
       - uses: actions/download-artifact@v8
         with:
-          pattern: desktop-*
+          pattern: "{desktop,mobile}-*"
           merge-multiple: true
           path: downloads
       - name: Verify and publish downloads
@@ -88,9 +189,35 @@ jobs:
         working-directory: downloads
         run: |
           set -euo pipefail
-          for checksum in *.sha256; do sha256sum --check "$checksum"; done
-          test "$(find . -maxdepth 1 -name '*.zip' | wc -l)" -eq 1
-          cat *.sha256 > SHA256SUMS.txt
+          shopt -s nullglob
+          export LC_ALL=C
+          VERSION="${RELEASE_TAG#v}"
+          has() { local item; for item in "${files[@]}"; do [ "$item" = "$1" ] && return 0; done; return 1; }
+          # Every release file must carry a SHA-256 file made by the job that
+          # built it, naming that file, and it must still match after the
+          # transfer between jobs.
+          files=()
+          for file in *; do
+            case "$file" in *.sha256|SHA256SUMS.txt) continue ;; esac
+            test -f "$file.sha256" || { echo "No checksum file for $file"; exit 1; }
+            test "$(awk '{print $2}' "$file.sha256")" = "$file" || { echo "$file.sha256 does not name $file"; exit 1; }
+            sha256sum --check "$file.sha256"
+            files+=("$file")
+          done
+          for checksum in *.sha256; do
+            test -f "${checksum%.sha256}" || { echo "$checksum has no matching file"; exit 1; }
+          done
+          # The desktop downloads that every release carries.
+          for required in \
+            "Prism-Mapper-v$VERSION-macOS-arm64.zip" \
+            "Prism-Mapper-v$VERSION-macOS-x64.zip" \
+            "Prism-Mapper-v$VERSION-Windows-x64.zip" \
+            "Prism-Mapper-v$VERSION-Windows-x64-Setup.exe"; do
+            has "$required" || { echo "Missing $required"; exit 1; }
+          done
+          for file in "${files[@]}"; do cat "$file.sha256"; done | sort -k2 > SHA256SUMS.txt
+          sha256sum --check SHA256SUMS.txt
+          cat SHA256SUMS.txt
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
             if [ "$(cat release-state.txt)" != true ]; then
               echo "This version is already published. Create a new version to update downloads."
@@ -99,5 +226,5 @@ jobs:
           else
             gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prism Mapper $RELEASE_TAG" --generate-notes
           fi
-          gh release upload "$RELEASE_TAG" ./*.zip SHA256SUMS.txt --clobber
+          gh release upload "$RELEASE_TAG" "${files[@]}" SHA256SUMS.txt --clobber
           gh release edit "$RELEASE_TAG" --draft=false
