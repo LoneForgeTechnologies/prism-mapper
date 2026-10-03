@@ -80,7 +80,33 @@ import {
 } from "./polygon";
 import type { MappingOverlay } from "./overlay";
 import { validateBrowserProject } from "./project-validation";
+import {
+  BottomNav,
+  CompactToolExtras,
+  NudgeDock,
+  SHEET_META,
+  ShapeRow,
+  SheetBar,
+  useCompactLayout,
+  useMediaQuery,
+  useSheetBehaviour,
+  useStageTouch,
+} from "./compact";
+import {
+  bufferLongSide,
+  capBufferSize,
+  createRepeatGuard,
+  edgeMidpoint,
+  hitReach,
+  nudgedPoint,
+  toggleSheet,
+  TOUCH_DRAG_SLOP,
+  type NudgeStep,
+  type SheetId,
+} from "./compact-logic";
+import { PresentMode, requestPresentFullscreen } from "./present";
 import "./style.css";
+import "./compact.css";
 
 const api = window.prism;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -94,14 +120,25 @@ function safeDraft(): Project {
   } catch {}
   return createProject();
 }
+/**
+ * Both options are opt-in: the projector window keeps the plain loop. `paused`
+ * stops drawing (Present mode owns the GPU meanwhile) and `pauseWhenHidden`
+ * stops while the page is hidden. The renderer itself is never re-created.
+ */
 function useRenderer(
   canvas: React.RefObject<HTMLCanvasElement | null>,
   project: Project,
   onError: (message: string) => void,
+  options?: { paused?: boolean; pauseWhenHidden?: boolean },
 ) {
   const current = useRef(project);
   current.current = project;
   const [fps, setFps] = useState(0);
+  const paused = options?.paused ?? false;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const pauseWhenHidden = options?.pauseWhenHidden ?? false;
+  const gate = useRef<{ start: () => void; pause: () => void } | null>(null);
   useEffect(() => {
     if (!canvas.current) return;
     let renderer: ProjectionRenderer;
@@ -128,12 +165,40 @@ function useRenderer(
       }
       frame = requestAnimationFrame(loop);
     };
-    frame = requestAnimationFrame(loop);
-    return () => {
+    const start = () => {
+      if (frame || pausedRef.current || (pauseWhenHidden && document.hidden))
+        return;
+      previous = last = performance.now();
+      count = 0;
+      frame = requestAnimationFrame(loop);
+    };
+    const stop = () => {
       cancelAnimationFrame(frame);
+      frame = 0;
+    };
+    const visibility = () => (document.hidden ? stop() : start());
+    if (pauseWhenHidden)
+      document.addEventListener("visibilitychange", visibility);
+    gate.current = {
+      start,
+      pause: () => {
+        stop();
+        // One last frame with playback off lets video textures pause too.
+        renderer.render({ ...current.current, playing: false }, elapsed);
+      },
+    };
+    start();
+    return () => {
+      gate.current = null;
+      document.removeEventListener("visibilitychange", visibility);
+      stop();
       renderer.destroy();
     };
-  }, [canvas, onError]);
+  }, [canvas, onError, pauseWhenHidden]);
+  useEffect(() => {
+    if (paused) gate.current?.pause();
+    else gate.current?.start();
+  }, [paused]);
   return fps;
 }
 function Output() {
@@ -261,8 +326,16 @@ function App() {
   const [audioFocus, setAudioFocus] = useState(false);
   const [outputSettings, setOutputSettings] = useState(true);
   const [previewSize, setPreviewSize] = useState({ width: 960, height: 540 });
+  const compact = useCompactLayout();
+  const [sheet, setSheet] = useState<SheetId | null>(null);
+  const [presenting, setPresenting] = useState(false);
+  const [nudgeStep, setNudgeStep] = useState<NudgeStep>(1);
+  const activeSheet = compact ? sheet : null;
   const canvas = useRef<HTMLCanvasElement>(null);
   const stage = useRef<HTMLDivElement>(null);
+  const presentStage = useRef<HTMLDivElement>(null);
+  const presentOpener = useRef<HTMLElement | null>(null);
+  const insertGuard = useRef(createRepeatGuard());
   const canvasArea = useRef<HTMLDivElement>(null);
   const mediaInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -273,6 +346,11 @@ function App() {
     start: { x: number; y: number };
     surface: Surface;
     project: Project;
+    pointerId?: number;
+    /** Touch drags wait for a few pixels of travel, so a tap never nudges anything. */
+    pending?: { x: number; y: number };
+    /** Touch point drags keep the offset between the finger and the point. */
+    grab?: Point;
   } | null>(null);
   const surface = project.surfaces.find((s) => s.id === selected);
   const selectedPoints = surface ? surfacePoints(surface) : [];
@@ -294,8 +372,16 @@ function App() {
         .includes(search.toLowerCase()),
   );
   const fail = useCallback((m: string) => setError(m), []);
-  const fps = useRenderer(canvas, renderProject, fail);
+  const fps = useRenderer(canvas, renderProject, fail, {
+    paused: presenting,
+    pauseWhenHidden: true,
+  });
   const message = (m: string) => setNotice(m);
+  const closeSheet = useCallback(() => setSheet(null), []);
+  useSheetBehaviour(activeSheet, closeSheet, help || presenting);
+  useEffect(() => {
+    if (!compact) setSheet(null);
+  }, [compact]);
   const commit = useCallback((next: Project) => {
     setHistory((h) => ({
       past: [...h.past, clone(current.current)].slice(-60),
@@ -450,7 +536,8 @@ function App() {
         Math.floor(
           Math.min(
             entry.contentRect.width,
-            (entry.contentRect.height - 67) * ratio,
+            // The caption and hint lines are hidden in the compact layout.
+            (entry.contentRect.height - (compact ? 0 : 67)) * ratio,
           ),
         ),
       );
@@ -458,7 +545,7 @@ function App() {
     });
     observer.observe(canvasArea.current);
     return () => observer.disconnect();
-  }, [project.width, project.height]);
+  }, [project.width, project.height, compact]);
   const blackout = () => setProject((p) => ({ ...p, blackout: !p.blackout }));
   const cancelDrawing = () => {
     setDraft([]);
@@ -469,6 +556,7 @@ function App() {
     setMix(false);
     setDraft([]);
     setDraftCursor(null);
+    setSheet(null);
     setTool(next);
   };
   const finishDrawing = () => {
@@ -647,8 +735,81 @@ function App() {
       setError(String(e));
     }
   };
+  /**
+   * Moves the selected point by whole output pixels. The arrow keys and the
+   * touch nudge pad both come through here, so they cannot disagree. Held
+   * repeats fold into the history entry of the first press.
+   */
+  const nudge = (dx: number, dy: number, step: number, repeat = false) => {
+    if (!surface || surface.locked) return;
+    const p = selectedPoints[corner];
+    if (!p) return;
+    if (!repeat) {
+      updateSurface(
+        moveSurfacePoint(
+          surface,
+          corner,
+          nudgedPoint(p, dx, dy, step, project.width, project.height),
+        ),
+      );
+      return;
+    }
+    setProject((previous) => ({
+      ...previous,
+      surfaces: previous.surfaces.map((s) => {
+        const q = s.id === selected && !s.locked && surfacePoints(s)[corner];
+        return q
+          ? moveSurfacePoint(
+              s,
+              corner,
+              nudgedPoint(q, dx, dy, step, previous.width, previous.height),
+            )
+          : s;
+      }),
+    }));
+  };
+  /** Touch version of a double-click on an edge: split the edge after the selected point. */
+  const addPointAfterSelected = () => {
+    if (tool !== "select" || !surface?.polygon || surface.locked) return;
+    const middle = edgeMidpoint(selectedPoints, corner);
+    const next = middle && insertSurfacePoint(surface, corner, middle);
+    if (!next || next === surface) {
+      message("This outline can't take another point there.");
+      return;
+    }
+    updateSurface(next);
+    setCorner(corner + 1);
+    message("Point added. Drag it or use the arrows to place it.");
+  };
+  const selectSheet = (id: SheetId) => {
+    if (id === "audio") {
+      setAudioFocus(true);
+      setOutputSettings(false);
+    } else if (id === "adjust") {
+      setAudioFocus(false);
+      setOutputSettings(true);
+    }
+    setSheet((open) => toggleSheet(open, id));
+  };
+  const startPresent = () => {
+    // Fullscreen is only allowed from inside the click that asks for it.
+    requestPresentFullscreen();
+    presentOpener.current = document.activeElement as HTMLElement | null;
+    cancelDrawing();
+    setPresenting(true);
+  };
+  const exitPresent = useCallback(() => {
+    setPresenting(false);
+    requestAnimationFrame(() => {
+      const opener = presentOpener.current;
+      presentOpener.current = null;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    });
+  }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      // Present mode listens for its own keys.
+      if (presenting) return;
       if (help) {
         if (e.key === "Escape") setHelp(false);
         if (e.key === "Tab") {
@@ -729,43 +890,42 @@ function App() {
       }
       if (e.key.startsWith("Arrow") && surface && !surface.locked) {
         e.preventDefault();
-        const amount = e.shiftKey ? 10 : 1;
-        const p = selectedPoints[corner];
-        if (!p) return;
-        const next = moveSurfacePoint(surface, corner, {
-          x:
-            p.x +
-            (e.key === "ArrowRight"
-              ? amount
-              : e.key === "ArrowLeft"
-                ? -amount
-                : 0) /
-              project.width,
-          y:
-            p.y +
-            (e.key === "ArrowDown"
-              ? amount
-              : e.key === "ArrowUp"
-                ? -amount
-                : 0) /
-              project.height,
-        });
-        updateSurface(next);
+        nudge(
+          e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0,
+          e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0,
+          e.shiftKey ? 10 : 1,
+        );
       }
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   });
-  const getPoint = (e: {
-    clientX: number;
-    clientY: number;
-    shiftKey?: boolean;
-  }): Point => {
-    const rect = stage.current!.getBoundingClientRect();
+  /** Present mode with Align on measures its own stage; otherwise the editor's. */
+  const stageRect = () =>
+    (presenting && presentStage.current
+      ? presentStage.current
+      : stage.current!
+    ).getBoundingClientRect();
+  /**
+   * Stage position of a pointer, 0 to 1. Touch drags pass `offset` to keep the
+   * finger a fixed distance from the point it grabbed, and `raw` to skip
+   * snapping when they only need to know where the finger is.
+   */
+  const getPoint = (
+    e: { clientX: number; clientY: number; shiftKey?: boolean },
+    hold?: { offset?: Point; raw?: boolean },
+  ): Point => {
+    const rect = stageRect();
     let p = {
       x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
     };
+    if (hold?.offset)
+      p = {
+        x: Math.max(0, Math.min(1, p.x + hold.offset.x)),
+        y: Math.max(0, Math.min(1, p.y + hold.offset.y)),
+      };
+    if (hold?.raw) return p;
     if (e.shiftKey && tool !== "select" && draft.length) {
       const last = draft.at(-1)!;
       const dx = (p.x - last.x) * rect.width,
@@ -807,7 +967,7 @@ function App() {
   };
   const nearestOutlineEdge = (p: Point) => {
     if (!surface?.polygon) return null;
-    const rect = stage.current!.getBoundingClientRect();
+    const rect = stageRect();
     let closest: { edge: number; point: Point; distance: number } | null = null;
     selectedPoints.forEach((a, i) => {
       const b = selectedPoints[(i + 1) % selectedPoints.length];
@@ -832,17 +992,19 @@ function App() {
     return closest as { edge: number; point: Point; distance: number } | null;
   };
   const stagePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    // The first finger owns the gesture. A second one never starts anything.
+    if (e.button !== 0 || !e.isPrimary) return;
     const p = getPoint(e);
+    const reach = hitReach(e.pointerType);
     if (tool !== "select") {
       e.preventDefault();
-      const rect = stage.current!.getBoundingClientRect();
+      const rect = stageRect();
       if (
         draft.length >= 3 &&
         Math.hypot(
           (p.x - draft[0].x) * rect.width,
           (p.y - draft[0].y) * rect.height,
-        ) < 14
+        ) < reach
       ) {
         finishDrawing();
         return;
@@ -870,7 +1032,7 @@ function App() {
       !surface.locked &&
       (!solo || solo === surface.id) &&
       edge &&
-      edge.distance < 14
+      edge.distance < reach
     ) {
       beginDrag(e, null, surface.id);
       return;
@@ -890,20 +1052,28 @@ function App() {
     point: number | null,
     id = selected,
   ) => {
-    if (tool !== "select") return;
+    if (tool !== "select" || !e.isPrimary) return;
     const s = project.surfaces.find((s) => s.id === id);
     if (!s) return;
     setSelected(id);
     if (s.locked) return;
     e.preventDefault();
     e.stopPropagation();
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    try {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    } catch {}
     if (point !== null) setCorner(point);
     drag.current = {
       point,
       start: getPoint(e),
       surface: clone(s),
       project: clone(project),
+      pointerId: e.pointerId,
+      // A finger needs a little travel before it counts as a drag, so a tap
+      // that wobbles never nudges a point.
+      ...(e.pointerType === "touch"
+        ? { pending: { x: e.clientX, y: e.clientY } }
+        : {}),
     };
   };
   const onMove = (e: React.PointerEvent) => {
@@ -912,8 +1082,24 @@ function App() {
       return;
     }
     const d = drag.current;
-    if (!d) return;
-    const p = getPoint(e);
+    if (!d || (d.pointerId !== undefined && e.pointerId !== d.pointerId))
+      return;
+    if (d.pending) {
+      if (
+        Math.hypot(e.clientX - d.pending.x, e.clientY - d.pending.y) <
+        TOUCH_DRAG_SLOP
+      )
+        return;
+      // Past the slop: anchor here so the layer or point does not jump.
+      d.pending = undefined;
+      d.start = getPoint(e);
+      if (d.point !== null) {
+        const held = surfacePoints(d.surface)[d.point];
+        const finger = getPoint(e, { raw: true });
+        d.grab = { x: held.x - finger.x, y: held.y - finger.y };
+      }
+    }
+    const p = getPoint(e, d.grab ? { offset: d.grab } : undefined);
     setProject((current) => ({
       ...current,
       surfaces: current.surfaces.map((s) =>
@@ -928,10 +1114,10 @@ function App() {
       ),
     }));
   };
-  const insertPoint = (e: React.MouseEvent) => {
+  const insertPoint = (e: { clientX: number; clientY: number }, reach = 14) => {
     if (tool !== "select" || !surface?.polygon || surface.locked) return;
     const match = nearestOutlineEdge(getPoint(e));
-    if (match && match.distance < 14) {
+    if (match && match.distance < reach) {
       const next = insertSurfacePoint(surface, match.edge, match.point);
       if (next !== surface) {
         updateSurface(next);
@@ -940,15 +1126,41 @@ function App() {
       }
     }
   };
-  const endDrag = () => {
+  const endDrag = (e?: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    // Another finger lifting must not end the drag of the first one.
+    if (e && d.pointerId !== undefined && e.pointerId !== d.pointerId) return;
     drag.current = null;
     if (JSON.stringify(d.project) !== JSON.stringify(current.current))
       setHistory((h) => ({
         past: [...h.past, d.project].slice(-60),
         future: [],
       }));
+  };
+  const stageTouch = useStageTouch((x, y) => {
+    if (!insertGuard.current.claim({ x, y, time: performance.now() })) return;
+    insertPoint({ clientX: x, clientY: y }, hitReach("touch"));
+  });
+  /** The editor stage and, with Align on, the Present stage share these handlers. */
+  const stageHandlers = {
+    onPointerDownCapture: stageTouch.onPointerDownCapture,
+    onPointerMove: onMove,
+    onPointerUp: (e: React.PointerEvent) => {
+      stageTouch.onPointerUp(e);
+      endDrag(e);
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      stageTouch.onPointerCancel();
+      endDrag(e);
+    },
+    onLostPointerCapture: endDrag,
+    onContextMenu: stageTouch.onContextMenu,
+    onDoubleClick: (e: React.MouseEvent) => {
+      // After a touch double-tap some browsers also send a double-click.
+      const at = { x: e.clientX, y: e.clientY, time: performance.now() };
+      if (!insertGuard.current.seen(at)) insertPoint(e);
+    },
   };
   const point = selectedPoints[corner];
   const display = displays.find((d) => d.id === displayId);
@@ -960,8 +1172,38 @@ function App() {
     [items[index], items[next]] = [items[next], items[index]];
     update({ surfaces: items });
   };
+  const coarse = useMediaQuery("(pointer: coarse)");
+  // Phones and tablets draw into a smaller buffer. Desktop keeps one pixel per CSS pixel.
+  const buffer = compact
+    ? capBufferSize(
+        previewSize.width,
+        previewSize.height,
+        window.devicePixelRatio,
+        bufferLongSide(coarse, Math.min(innerWidth, innerHeight) <= 600),
+      )
+    : previewSize;
+  const sheetPanel = (side: "left" | "right") => {
+    if (!compact) return {};
+    const open = activeSheet !== null && SHEET_META[activeSheet].panel === side;
+    return {
+      id: `sheet-${side}`,
+      ...(open
+        ? {
+            role: "region",
+            "aria-labelledby": `nav-${activeSheet}`,
+            tabIndex: -1,
+          }
+        : {}),
+    };
+  };
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-layout={compact ? "compact" : "desktop"}
+      data-runtime={api ? "desktop" : "web"}
+      data-sheet={activeSheet ?? undefined}
+      data-presenting={presenting ? "true" : undefined}
+    >
       <header className="topbar">
         <div className="brand">
           <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
@@ -1020,7 +1262,19 @@ function App() {
         </div>
       </div>
       <main className="workspace">
-        <aside className="left-panel">
+        <aside className="left-panel" {...sheetPanel("left")}>
+          <SheetBar
+            panel="left"
+            sheet={activeSheet}
+            onClose={closeSheet}
+            meta={
+              activeSheet === "layers"
+                ? `${project.surfaces.length} ${project.surfaces.length === 1 ? "layer" : "layers"}`
+                : surface
+                  ? `For ${surface.name}`
+                  : ""
+            }
+          />
           <div className="panel-heading">
             <h2>
               <Layers size={15} />
@@ -1148,8 +1402,16 @@ function App() {
               Draw outline
             </button>
           </div>
+          <ShapeRow
+            active={activeSheet === "layers"}
+            onAdd={(shape) =>
+              shape === "mask" ? startDrawing("mask") : addPreset(shape)
+            }
+          />
           <p className="layer-order-note">
-            Top layer appears in front · drag to reorder
+            {compact
+              ? "Top layer appears in front. Change the order in Adjust."
+              : "Top layer appears in front · drag to reorder"}
           </p>
           <div className="library">
             <div className="panel-heading">
@@ -1446,6 +1708,28 @@ function App() {
                 <ScanLine size={14} />
               </button>
             </div>
+            <CompactToolExtras
+              active={compact}
+              canAddPoint={
+                tool === "select" && !!surface?.polygon && !surface.locked
+              }
+              onAddPoint={addPointAfterSelected}
+              // While drawing, undo takes back the last point, like the keyboard.
+              canUndo={
+                tool === "select" ? history.past.length > 0 : draft.length > 0
+              }
+              canRedo={tool === "select" && history.future.length > 0}
+              onUndo={
+                tool === "select" ? undo : () => setDraft((p) => p.slice(0, -1))
+              }
+              onRedo={redo}
+              playing={project.playing}
+              onTogglePlay={() =>
+                setProject((p) => ({ ...p, playing: !p.playing }))
+              }
+              blackout={project.blackout}
+              onBlackout={blackout}
+            />
           </div>
           {tool !== "select" && (
             <div
@@ -1455,11 +1739,11 @@ function App() {
               <span className="status-dot" />
               <span>
                 {draft.length
-                  ? `${draft.length} points · Click the first point to close`
-                  : `${tool === "mask" ? "Cutout mask" : "Line tool"} · Click to place the first point`}
+                  ? `${draft.length} points · ${compact ? "Tap" : "Click"} the first point to close`
+                  : `${tool === "mask" ? "Cutout mask" : "Line tool"} · ${compact ? "Tap" : "Click"} to place the first point`}
               </span>
               <button onClick={finishDrawing} disabled={draft.length < 3}>
-                Close outline ↵
+                {compact ? "Close outline" : "Close outline ↵"}
               </button>
               <button aria-label="Cancel drawing" onClick={cancelDrawing}>
                 <X size={13} />
@@ -1472,7 +1756,14 @@ function App() {
               <button onClick={() => setSolo(null)}>Show all layers</button>
             </div>
           )}
-          <div className="canvas-area" ref={canvasArea}>
+          <div
+            className="canvas-area"
+            ref={canvasArea}
+            // Tapping the backdrop around the stage puts the open sheet away.
+            onClick={(e) => {
+              if (activeSheet && e.target === e.currentTarget) setSheet(null);
+            }}
+          >
             <div className="stage-frame" style={{ width: previewSize.width }}>
               <div className="stage-caption">
                 <span>OUTPUT CANVAS</span>
@@ -1484,15 +1775,12 @@ function App() {
                 className={`stage ${tool !== "select" ? "drawing-stage" : ""}`}
                 ref={stage}
                 style={{ height: previewSize.height }}
-                onPointerMove={onMove}
-                onPointerUp={endDrag}
-                onPointerCancel={endDrag}
-                onDoubleClick={insertPoint}
+                {...stageHandlers}
               >
                 <canvas
                   ref={canvas}
-                  width={previewSize.width}
-                  height={previewSize.height}
+                  width={buffer.width}
+                  height={buffer.height}
                 />
                 <svg
                   className="mapping-overlay"
@@ -1675,7 +1963,42 @@ function App() {
             </button>
           </div>
         </section>
-        <aside className="right-panel">
+        <aside className="right-panel" {...sheetPanel("right")}>
+          <SheetBar
+            panel="right"
+            sheet={activeSheet}
+            onClose={closeSheet}
+            meta={
+              activeSheet === "adjust"
+                ? surface?.kind === "mask"
+                  ? "Cutout"
+                  : surface?.polygon
+                    ? `${selectedPoints.length} points`
+                    : surface
+                      ? "Quad"
+                      : ""
+                : ""
+            }
+          />
+          <NudgeDock
+            active={activeSheet === "adjust" && !!surface && tool === "select"}
+            disabled={!surface || surface.locked || !point}
+            step={nudgeStep}
+            onStep={setNudgeStep}
+            onNudge={nudge}
+            label={
+              surface?.polygon
+                ? `Point ${corner + 1} of ${selectedPoints.length}`
+                : (corners[corner] ?? "")
+            }
+            index={corner}
+            count={selectedPoints.length}
+            onPoint={setCorner}
+            x={Math.round((point?.x || 0) * project.width)}
+            y={Math.round((point?.y || 0) * project.height)}
+            snap={snap}
+            onSnap={() => setSnap(!snap)}
+          />
           <div className="panel-heading">
             <h2>
               <SlidersHorizontal size={15} />
@@ -2003,7 +2326,9 @@ function App() {
                   <p className="field-help">
                     {surface.locked
                       ? "Unlock this surface to adjust its corners."
-                      : "Arrow keys move 1 px. Hold Shift for 10 px."}
+                      : compact
+                        ? "The arrows above move 1 px or 10 px at a time."
+                        : "Arrow keys move 1 px. Hold Shift for 10 px."}
                   </p>
                   {surface.polygon ? (
                     <button
@@ -2177,7 +2502,9 @@ function App() {
               <AudioPanel surface={surface} onChange={updateSurface} />
             </div>
           </div>
-          <div className={`output-panel ${outputSettings ? "" : "compact"}`}>
+          <div
+            className={`output-panel ${outputSettings || compact ? "" : "compact"}`}
+          >
             <div className="panel-heading">
               <h2>
                 <Monitor size={15} />
@@ -2195,7 +2522,10 @@ function App() {
                 <ChevronDown size={13} />
               </button>
             </div>
-            <div className="output-settings" hidden={!outputSettings}>
+            <div
+              className="output-settings"
+              hidden={!outputSettings && !compact}
+            >
               <label className="field-label" htmlFor="display">
                 TARGET DISPLAY
               </label>
@@ -2269,22 +2599,36 @@ function App() {
                 }
               />
             </div>
-            <button
-              aria-label={
-                output.open ? "Close projector output" : "Open projector output"
-              }
-              className={`output-button ${output.open ? "running" : ""}`}
-              disabled={!api || displayId === undefined || busyOutput}
-              onClick={toggleOutput}
-            >
-              <Monitor size={16} />
-              {busyOutput
-                ? "Connecting…"
-                : output.open
-                  ? "Close projector output"
-                  : "Open projector output"}
-              <span>↗</span>
-            </button>
+            {api ? (
+              <button
+                aria-label={
+                  output.open
+                    ? "Close projector output"
+                    : "Open projector output"
+                }
+                className={`output-button ${output.open ? "running" : ""}`}
+                disabled={!api || displayId === undefined || busyOutput}
+                onClick={toggleOutput}
+              >
+                <Monitor size={16} />
+                {busyOutput
+                  ? "Connecting…"
+                  : output.open
+                    ? "Close projector output"
+                    : "Open projector output"}
+                <span>↗</span>
+              </button>
+            ) : (
+              // Without the desktop app there is no second window, so this
+              // screen becomes the output.
+              <button className="output-button" onClick={startPresent}>
+                <Monitor size={16} />
+                Present on this screen
+                <span aria-hidden="true">
+                  <Maximize size={14} />
+                </span>
+              </button>
+            )}
             <button
               aria-label={project.blackout ? "Restore light" : "Blackout"}
               className={`blackout-button ${project.blackout ? "active" : ""}`}
@@ -2297,7 +2641,9 @@ function App() {
             <p className="output-note">
               {output.open
                 ? "Output is live. Press Esc to close it."
-                : "A clean, fullscreen window on your projector."}
+                : api
+                  ? "A clean, fullscreen window on your projector."
+                  : "Fills this screen with only your mapped light. Tap for controls, Esc or Exit to leave."}
             </p>
           </div>
         </aside>
@@ -2314,6 +2660,7 @@ function App() {
         </span>
         <span>Made for light.</span>
       </footer>
+      <BottomNav active={compact} sheet={activeSheet} onSelect={selectSheet} />
       {notice && (
         <div className="toast" role="status">
           <Check size={16} />
@@ -2407,6 +2754,36 @@ function App() {
             </button>
           </section>
         </div>
+      )}
+      {presenting && (
+        <PresentMode
+          project={renderProject}
+          stageRef={presentStage}
+          stageHandlers={stageHandlers}
+          guides={renderProject.surfaces
+            .filter((s) => s.visible)
+            .map((s) => ({
+              id: s.id,
+              points: surfacePoints(s),
+              selected: s.id === selected,
+              mask: s.kind === "mask",
+            }))}
+          points={surface?.visible ? selectedPoints : []}
+          corner={corner}
+          locked={!!surface?.locked}
+          onOverlayDown={stagePointerDown}
+          onHandleDown={(e, index) => beginDrag(e, index)}
+          onSelectCorner={setCorner}
+          onNudge={nudge}
+          onBlackout={blackout}
+          onTogglePlay={() =>
+            setProject((p) => ({ ...p, playing: !p.playing }))
+          }
+          onBrightness={(brightness) =>
+            setProject((p) => ({ ...p, brightness }))
+          }
+          onExit={exitPresent}
+        />
       )}
       <input
         hidden
