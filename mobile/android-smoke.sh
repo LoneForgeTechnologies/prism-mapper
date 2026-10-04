@@ -47,6 +47,9 @@ failures=0
 # "error" when a failure is final, "warning" while the check can still be
 # repeated. Annotations use it as their level.
 LEVEL="error"
+# 0 when a failure of the current attempt is not worth repeating, because it
+# was caused on purpose and would happen again (see play_services_aftermath).
+RETRY_OK=1
 
 # Annotation messages are one line, so newlines and percent signs are escaped.
 escape() { sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN { ORS = "%0A" } { print }' | head -c 6000; }
@@ -386,11 +389,16 @@ play_services_aftermath() {
   local label="$1" before="$2" what="$3" after killed
   after="$(app_pid)"
   killed="$(adbt 60 logcat -b events,system -d -v brief 2> /dev/null | tr -d '\r' | grep -E "am_kill|Killing" | grep "$PACKAGE" | tail -n 3 | cut -c1-300)"
-  if [ -z "$after" ]; then
-    fail "$label: the app was stopped when $what. ${killed:-No kill was logged.}"
-    return 1
-  elif [ "$after" != "$before" ]; then
-    fail "$label: the app process changed from $before to $after when $what. ${killed:-No kill was logged.}"
+  if [ -z "$after" ] || [ "$after" != "$before" ]; then
+    # Play services were crashed on purpose, so this is not a flaky emulator:
+    # the same thing would happen again, and the build is not given a second try.
+    LEVEL="error"
+    RETRY_OK=0
+    if [ -z "$after" ]; then
+      fail "$label: the app was stopped when $what. ${killed:-No kill was logged.}"
+    else
+      fail "$label: the app process changed from $before to $after when $what. ${killed:-No kill was logged.}"
+    fi
     return 1
   fi
   note "$label: the app stayed alive (process $after) when $what."
@@ -480,6 +488,12 @@ check_sideload() {
   if is_debuggable; then fail "sideload: the shared APK must not be debuggable."; fi
   stage "sideload: launch"
   launch sideload crash
+  if [ "$RETRY_OK" = 0 ]; then
+    # Play services were crashed on purpose while the app was starting, and the
+    # app did not live through it. The rest of the checks would only repeat that.
+    diagnose sideload
+    return
+  fi
   before="$(app_pid)"
   if [ -z "$before" ]; then
     fail "sideload: no process after launch."
@@ -572,9 +586,10 @@ for variant in $VARIANTS; do
   while true; do
     # Failures of an attempt that can be repeated are only warnings.
     if [ "$attempt" -lt "$ATTEMPTS" ]; then LEVEL="warning"; else LEVEL="error"; fi
+    RETRY_OK=1
     failures_before=$failures
     run_variant "$variant"
-    if [ "$failures" -eq "$failures_before" ] || [ "$attempt" -ge "$ATTEMPTS" ]; then break; fi
+    if [ "$failures" -eq "$failures_before" ] || [ "$attempt" -ge "$ATTEMPTS" ] || [ "$RETRY_OK" = 0 ]; then break; fi
     keep_attempt "$variant" "$attempt"
     failures=$failures_before
     LEVEL="error"

@@ -36,10 +36,14 @@ while :; do
   samples=$((samples + 1))
 
   # One line per connection: the provider, then the stable and unstable counts.
-  # The age at the end of the line is left out so that only real changes print.
+  # The system prints a connection as
+  #   - 1ce4fd0/com.google.android.gms/.fonts.provider.FontsProvider->7571:<package>/u0a193 s1/2 u0/11 +3s424ms
+  # (older versions as - ContentProviderRecord{1ce4fd0 u0 <provider>}->7571:... ),
+  # so the part before "->" and after the age are cut off. The age is left out so
+  # that only real changes print.
   lines="$(dumpsys activity processes "$pkg" 2> /dev/null \
-    | grep -E "ContentProviderRecord.*->[0-9]+:$pkg/" \
-    | sed -e 's/^.*ContentProviderRecord{[0-9a-f]* u[0-9]* //' -e 's/}->[0-9]*:[^ ]* / /' -e 's/ [+][0-9a-z]*$//')"
+    | grep -E -- "->[0-9]+:$pkg/" \
+    | sed -e 's/^.*ContentProviderRecord{[0-9a-f]* u[0-9]* //' -e 's/^ *- [0-9a-f]*\///' -e 's/}*->[0-9]*:[^ ]* / /' -e 's/ [+][0-9a-z]*$//')"
   if [ "$lines" != "$last" ]; then
     echo "t=$t $(echo "$lines" | tr '\n' ';')"
     last="$lines"
