@@ -80,7 +80,8 @@ Compression=lzma2/max
 SolidCompression=yes
 LZMANumBlockThreads=4
 ChangesAssociations=yes
-; A running copy is closed before its files are replaced, also in silent mode.
+; A running copy is closed before its files are replaced, also in silent mode:
+; by the [Code] below, and by Windows (Restart Manager) for anything it missed.
 CloseApplications=yes
 RestartApplications=no
 VersionInfoVersion={#AppNumericVersion}
@@ -138,3 +139,111 @@ Root: HKA; Subkey: "Software\Classes\SystemFileAssociations\.json\shell\{#OpenVe
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+
+[Code]
+// Setup can ask Windows (Restart Manager) to close a program that uses files
+// about to be replaced, but Windows cannot close an Electron program and reports
+// that it was unable to. So a copy that runs from the install folder is closed
+// here first: its window is asked to close, the way the close button does, and
+// the program is ended only if that has not worked after 20 seconds. Copies that
+// run from other folders, such as the portable ZIP, are left alone.
+//
+// PowerShell does the looking and closing. The commands are given to it as text
+// (no script file, so the execution policy does not matter) and contain no
+// double quotes, so that all of it is one quoted argument.
+const
+  // The command exits with this plus the number of copies still running, which
+  // PowerShell's own failure code (1) cannot be mistaken for.
+  CopiesExitBase = 100;
+
+function CloseCommand(const OnlyCount: Boolean): String;
+var
+  Folder: String;
+begin
+  // A single quote in a folder name is doubled for PowerShell.
+  Folder := RemoveBackslash(ExpandConstant('{app}')) + '\';
+  StringChangeEx(Folder, '''', '''''', True);
+  Result :=
+    '$prefix = ''' + Folder + '''; ' +
+    '$find = { @(Get-Process -Name ''{#AppName}'' -ErrorAction SilentlyContinue | ' +
+    'Where-Object { try { $_.Path.StartsWith($prefix, ''OrdinalIgnoreCase'') } catch { $false } }) }; ';
+  if OnlyCount then
+    Result := Result + 'exit (' + IntToStr(CopiesExitBase) + ' + @(& $find).Count)'
+  else
+    Result := Result +
+      'foreach ($p in @(& $find)) { if ($p.MainWindowHandle -ne 0) { [void]$p.CloseMainWindow() } }; ' +
+      '$end = (Get-Date).AddSeconds(20); ' +
+      'while (@(& $find).Count -gt 0 -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 250 }; ' +
+      'foreach ($p in @(& $find)) { try { $p.Kill() } catch { } }; ' +
+      '$end = (Get-Date).AddSeconds(10); ' +
+      'while (@(& $find).Count -gt 0 -and (Get-Date) -lt $end) { Start-Sleep -Milliseconds 250 }; ' +
+      'exit (' + IntToStr(CopiesExitBase) + ' + @(& $find).Count)';
+end;
+
+// How many copies of the program from the install folder are running, after
+// closing them unless OnlyCount. -1 when PowerShell could not be used, in which
+// case Windows has its say.
+function CopiesRunning(const OnlyCount: Boolean): Integer;
+var
+  ExitCode: Integer;
+  Action: String;
+begin
+  Result := -1;
+  if OnlyCount then
+    Action := 'counting'
+  else
+    Action := 'closing';
+  try
+    if Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+        '-NoProfile -NonInteractive -Command "' + CloseCommand(OnlyCount) + '"',
+        '', SW_HIDE, ewWaitUntilTerminated, ExitCode) then
+    begin
+      Log('Copies of {#AppName} in the install folder, ' + Action + ': PowerShell exit code ' + IntToStr(ExitCode));
+      if (ExitCode >= CopiesExitBase) and (ExitCode < CopiesExitBase + 100) then
+        Result := ExitCode - CopiesExitBase;
+    end
+    else
+      Log('PowerShell could not be started: ' + SysErrorMessage(ExitCode));
+  except
+    Log('Looking for copies of {#AppName} failed: ' + GetExceptionMessage);
+  end;
+end;
+
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  Result := '';
+  // Nothing is installed yet, so nothing can be running.
+  if not FileExists(ExpandConstant('{app}\{#AppExe}')) then
+    Exit;
+  if not WizardSilent then
+  begin
+    if CopiesRunning(True) <= 0 then
+      Exit;
+    if SuppressibleMsgBox(
+        '{#AppName} is open. Setup has to close it before it can update the program. Save your work first if you need to, then choose Yes.' + #13#10#13#10 + 'Close {#AppName} now?',
+        mbConfirmation, MB_YESNO, IDYES) <> IDYES then
+    begin
+      Result := '{#AppName} is still open. Close it, then run Setup again.';
+      Exit;
+    end;
+  end;
+  if CopiesRunning(False) > 0 then
+    Log('{#AppName} is still running. Windows will be asked to close it.');
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := True;
+  if CopiesRunning(True) <= 0 then
+    Exit;
+  if not UninstallSilent then
+    if SuppressibleMsgBox(
+        '{#AppName} is open. Uninstalling closes it. Save your work first if you need to, then choose Yes.' + #13#10#13#10 + 'Close {#AppName} and continue?',
+        mbConfirmation, MB_YESNO, IDYES) <> IDYES then
+    begin
+      Result := False;
+      Exit;
+    end;
+  if CopiesRunning(False) > 0 then
+    Log('{#AppName} is still running. Windows will be asked to close it.');
+end;

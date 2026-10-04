@@ -186,6 +186,139 @@ test("the shortcuts, the optional desktop icon and the launch after setup", () =
   assert.equal(launch.Filename, "{app}\\{#AppExe}");
 });
 
+// The [Code] section closes a running copy of the program before an update or
+// an uninstall, by giving PowerShell a command as text. The command is built
+// from Pascal string literals, which is evaluated here for a sample folder.
+const code = template.slice(template.indexOf("\n[Code]"));
+function pascalFunction(name: string) {
+  const found = new RegExp(`^function ${name}\\b[\\s\\S]*?^end;`, "m").exec(
+    code,
+  );
+  assert.ok(found, `function ${name} is missing from [Code]`);
+  return found[0];
+}
+function pascalText(source: string, folder: string) {
+  const tokens = /'((?:[^']|'')*)'|IntToStr\(CopiesExitBase\)|\bFolder\b/g;
+  let text = "";
+  for (const match of source
+    .replaceAll("{#AppName}", "Prism Mapper")
+    .matchAll(tokens))
+    text +=
+      match[1] !== undefined
+        ? match[1].replaceAll("''", "'")
+        : match[0].startsWith("IntToStr")
+          ? "100"
+          : folder;
+  return text;
+}
+const closeCommands = (folder: string) => {
+  const body = pascalFunction("CloseCommand");
+  const assigned = body.slice(body.indexOf("Result :="));
+  const [common, rest] = assigned.split("if OnlyCount then");
+  const [count, close] = rest.split("\n  else\n");
+  return {
+    count: pascalText(common + count, folder),
+    close: pascalText(common + close, folder),
+  };
+};
+
+test("a running copy is closed by the installer and the uninstaller before files are replaced", () => {
+  // Windows (Restart Manager) is kept as the fallback.
+  assert.equal(directive("CloseApplications"), "yes");
+  assert.match(
+    code,
+    /^function PrepareToInstall\(var NeedsRestart: Boolean\): String;/m,
+  );
+  assert.match(code, /^function InitializeUninstall: Boolean;/m);
+  // Nothing is asked in a silent run, and an update of a missing install does nothing.
+  assert.match(pascalFunction("PrepareToInstall"), /if not WizardSilent then/);
+  assert.match(pascalFunction("PrepareToInstall"), /if not FileExists\(/);
+  assert.match(
+    pascalFunction("InitializeUninstall"),
+    /if not UninstallSilent then/,
+  );
+  // A person is asked before the program is closed, and can say no.
+  for (const name of ["PrepareToInstall", "InitializeUninstall"]) {
+    assert.match(
+      pascalFunction(name),
+      /SuppressibleMsgBox\([\s\S]*MB_YESNO, IDYES\)/,
+    );
+    assert.match(pascalFunction(name), /CopiesRunning\(True\)/);
+    assert.match(pascalFunction(name), /CopiesRunning\(False\)/);
+  }
+  // PowerShell failing in any way leaves the decision to Windows.
+  const running = pascalFunction("CopiesRunning");
+  assert.match(running, /Result := -1;/);
+  assert.match(running, /\bexcept\b/);
+  assert.match(
+    running,
+    /ExitCode >= CopiesExitBase\) and \(ExitCode < CopiesExitBase \+ 100/,
+  );
+  assert.match(code, /CopiesExitBase = 100;/);
+  assert.match(code, /\{sys\}\\WindowsPowerShell\\v1\.0\\powershell\.exe/);
+});
+
+test("the PowerShell commands look for this program in the install folder only and close it politely first", () => {
+  const folder = "C:\\Users\\Me\\AppData\\Local\\Programs\\Prism Mapper\\";
+  const { count, close } = closeCommands(folder);
+  for (const [name, command] of Object.entries({ count, close })) {
+    // One quoted argument: no double quotes, quotes and brackets balance.
+    assert.doesNotMatch(command, /"/, name);
+    assert.equal(command.split("'").length % 2, 1, `${name}: single quotes`);
+    for (const [open, shut] of ["{}", "()", "[]"])
+      assert.equal(
+        command.split(open).length,
+        command.split(shut).length,
+        `${name}: ${open}${shut}`,
+      );
+    assert.ok(command.startsWith(`$prefix = '${folder}'; `), name);
+    assert.match(
+      command,
+      /Get-Process -Name 'Prism Mapper' -ErrorAction SilentlyContinue/,
+    );
+    // Only a process whose file is inside the folder, compared without case.
+    assert.match(
+      command,
+      /\$_\.Path\.StartsWith\(\$prefix, 'OrdinalIgnoreCase'\)/,
+    );
+    assert.match(
+      command,
+      /catch \{ \$false \}/,
+      "a process that cannot be inspected is not ours",
+    );
+    assert.ok(command.endsWith("exit (100 + @(& $find).Count)"), name);
+    assert.doesNotMatch(command, /[–—]/);
+  }
+  // Counting changes nothing.
+  assert.doesNotMatch(count, /CloseMainWindow|Kill|Stop-Process/);
+  // Closing: the window first, then the wait, and only then the program itself.
+  const order = [
+    "CloseMainWindow()",
+    "AddSeconds(20)",
+    ".Kill()",
+    "AddSeconds(10)",
+  ].map((part) => close.indexOf(part));
+  assert.ok(
+    order.every((at) => at >= 0),
+    JSON.stringify(order),
+  );
+  assert.deepEqual(
+    [...order].sort((a, b) => a - b),
+    order,
+  );
+  // The program's name in PowerShell is its file name without the extension.
+  assert.equal(`${defined("AppName")}.exe`, defined("AppExe"));
+  // A quote in a folder name cannot end the PowerShell string early.
+  assert.match(
+    pascalFunction("CloseCommand"),
+    /StringChangeEx\(Folder, '''', '''''', True\);/,
+  );
+  assert.equal(
+    pascalText("'$prefix = ''' + Folder + '''; '", "C:\\O''Brien\\"),
+    "$prefix = 'C:\\O''Brien\\'; ",
+  );
+});
+
 test("project files are offered to the person but no default program is replaced", () => {
   const entries = parts.Registry.map(entryFields);
   assert.ok(entries.length >= 8);

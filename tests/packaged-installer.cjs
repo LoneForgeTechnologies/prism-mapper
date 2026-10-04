@@ -180,6 +180,18 @@ function versionInfo(file) {
   );
 }
 
+// What Setup's own code logged about copies of the program that were running.
+async function closingLog(file) {
+  try {
+    return (await fs.readFile(file, "utf8"))
+      .split(/\r?\n/)
+      .filter((line) => /Copies of Prism Mapper/.test(line))
+      .map((line) => line.replace(/^\S+ \S+\s+/, ""));
+  } catch {
+    return [];
+  }
+}
+
 async function tail(file, lines = 40) {
   try {
     return (await fs.readFile(file, "utf8"))
@@ -497,7 +509,9 @@ async function upgrade([setup, work]) {
       "still running",
       `the running copy was not closed\n${await tail(log)}`,
     );
-    lines.push("the running copy was closed by Setup");
+    lines.push(
+      `the running copy was closed by Setup (${(await closingLog(log)).join("; ")})`,
+    );
   } finally {
     await app.close().catch(() => {});
     killInstalledProgram();
@@ -532,14 +546,38 @@ async function uninstall([work]) {
   const { before } = JSON.parse(await fs.readFile(where.state, "utf8"));
   const links = shortcutFiles();
   killInstalledProgram();
-  const log = path.join(where.logs, "uninstall.log");
-  const code = await run(
-    where.uninstaller,
-    ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", `/LOG=${log}`],
-    SETUP_MINUTES * 60000,
+  // The program is open while it is uninstalled; the uninstaller closes it.
+  const { app } = await launchInstalled(
+    where.executable,
+    path.join(where.work, "profile-uninstall"),
   );
-  lines.push(`uninstaller exited with ${code}`);
-  assert.equal(code, 0, `uninstaller exited with ${code}\n${await tail(log)}`);
+  const exited = new Promise((resolve) => app.process().once("exit", resolve));
+  const log = path.join(where.logs, "uninstall.log");
+  let code;
+  try {
+    code = await run(
+      where.uninstaller,
+      ["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", `/LOG=${log}`],
+      SETUP_MINUTES * 60000,
+    );
+    lines.push(`uninstaller exited with ${code}`);
+    assert.equal(
+      code,
+      0,
+      `uninstaller exited with ${code}\n${await tail(log)}`,
+    );
+    assert.notEqual(
+      await Promise.race([exited, sleep(15000).then(() => "still running")]),
+      "still running",
+      `the running copy was not closed\n${await tail(log)}`,
+    );
+    lines.push(
+      `the running copy was closed by the uninstaller (${(await closingLog(log)).join("; ")})`,
+    );
+  } finally {
+    await app.close().catch(() => {});
+    killInstalledProgram();
+  }
   // The uninstaller hands over to a temporary copy of itself, so the removal
   // finishes shortly after the process the person started has gone.
   const started = Date.now();
