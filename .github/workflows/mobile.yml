@@ -30,7 +30,10 @@ name: Mobile apps
 # build whose check fails is checked once more on the same emulator. The first
 # attempt shows as warnings and is kept in the attempt-1 folder of the
 # artifact, and the run says that it needed a second attempt. A build that
-# fails both attempts fails the job (see mobile/android-smoke.sh).
+# fails both attempts fails the job (see mobile/android-smoke.sh). The
+# simulators work the same way: the launch is tried three times, a screenshot is
+# taken until the interface shows, and a device that still fails is checked
+# once more on an erased simulator (see mobile/ios-smoke.sh).
 #
 # Optional secrets, all skipped silently when they are not set. See
 # docs/building-mobile.md for how to create them.
@@ -586,7 +589,9 @@ jobs:
     needs: ios
     if: ${{ !cancelled() && needs.ios.outputs.simulator == 'true' }}
     runs-on: macos-26
-    timeout-minutes: 30
+    # A simulator can need over ten minutes to boot on a busy runner, and a
+    # device whose check fails is checked once more.
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
