@@ -37,16 +37,29 @@ async function replaceFile(
   }
 }
 
+// A file system that cannot flush a file (some network and FUSE mounts) says
+// so with one of these. Saving there still works, only without the guarantee.
+const CANNOT_FLUSH = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]);
+
 // Write beside the target and move into place, so an interrupted save never
-// leaves a half-written project where a good one used to be.
+// leaves a half-written project where a good one used to be. The new file is
+// flushed to the disk first: renaming alone can survive a crash or a power cut
+// as an empty file under the project's name, with the old contents gone.
 async function writeFileAtomic(filename, contents, options = {}) {
   const fs = options.fs ?? fsp;
   const temporary = `${filename}.${(options.uuid ?? randomUUID)()}.tmp`;
   try {
-    await fs.writeFile(temporary, contents, {
-      encoding: "utf8",
-      flag: "wx",
-    });
+    const file = await fs.open(temporary, "wx");
+    try {
+      await file.writeFile(contents, "utf8");
+      try {
+        await file.sync();
+      } catch (error) {
+        if (!CANNOT_FLUSH.has(error?.code)) throw error;
+      }
+    } finally {
+      await file.close();
+    }
     await replaceFile(temporary, filename, options);
   } finally {
     await fs.rm(temporary, { force: true }).catch(() => {});

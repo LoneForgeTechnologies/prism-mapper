@@ -95,7 +95,7 @@ test("keeps the old project and cleans up when the move never succeeds", async (
     const target = path.join(directory, "show.prism.json");
     await fs.writeFile(target, "old");
     const fake = {
-      writeFile: fs.writeFile,
+      open: fs.open,
       rm: fs.rm,
       rename: async () => {
         throw failure("EPERM");
@@ -114,4 +114,60 @@ test("keeps the old project and cleans up when the move never succeeds", async (
   } finally {
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+// A file system that records what is done to it, in order.
+function recording({ sync } = {}) {
+  const steps = [];
+  return {
+    steps,
+    open: async (name, flags) => {
+      steps.push(`open ${flags}`);
+      return {
+        writeFile: async (contents, encoding) =>
+          steps.push(`write ${contents} ${encoding}`),
+        sync: async () => {
+          steps.push("sync");
+          if (sync) throw sync;
+        },
+        close: async () => steps.push("close"),
+      };
+    },
+    rename: async () => steps.push("rename"),
+    rm: async () => steps.push("rm"),
+  };
+}
+
+test("flushes the new file to the disk before it takes the project's name", async () => {
+  const fake = recording();
+  await writeFileAtomic("show.prism.json", "new", { fs: fake });
+  assert.deepEqual(fake.steps, [
+    "open wx",
+    "write new utf8",
+    "sync",
+    "close",
+    "rename",
+    "rm",
+  ]);
+});
+
+test("a file system that cannot flush still saves, any other flush failure does not", async () => {
+  for (const code of ["EINVAL", "ENOTSUP", "EOPNOTSUPP", "ENOSYS"]) {
+    const fake = recording({ sync: failure(code) });
+    await writeFileAtomic("show.prism.json", "new", { fs: fake });
+    assert.ok(fake.steps.includes("rename"), code);
+  }
+  const failing = recording({ sync: failure("EIO") });
+  await assert.rejects(
+    writeFileAtomic("show.prism.json", "new", { fs: failing }),
+    { code: "EIO" },
+  );
+  // The old project was never replaced, the file was closed and cleaned up.
+  assert.deepEqual(failing.steps, [
+    "open wx",
+    "write new utf8",
+    "sync",
+    "close",
+    "rm",
+  ]);
 });
