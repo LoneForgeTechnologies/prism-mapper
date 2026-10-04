@@ -1,0 +1,31 @@
+name: Feature request
+description: Suggest something Prism Mapper should do.
+title: "[Feature]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Prism Mapper is a small volunteer project, so there is no promise that a request will be built. A clear description of what you are trying to do helps most.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do?
+      description: Describe the projection or the show, not only the feature. For example, "map a staircase with seven steps that are all different sizes".
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would help?
+      description: Your idea, if you have one, and what you do today instead.
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where would you use it?
+      multiple: true
+      options:
+        - Windows
+        - Mac
+        - Android
+        - iPhone or iPad
+        - In a browser

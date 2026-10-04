@@ -125,6 +125,23 @@ h2 {
   flex-direction: column;
   overflow: hidden;
 }
+/* Tablets in landscape are wide enough for this layout too. It stays clear of
+   the status bar, the notch and the home indicator, and follows the visible
+   page height in a browser with a toolbar that comes and goes. The insets
+   (defined in compact.css) are zero on a computer, so the desktop app and a
+   desktop browser look exactly as before. The compact layout does this
+   itself, piece by piece. */
+.app-shell[data-layout="desktop"] {
+  height: 100dvh;
+  padding: var(--inset-top, 0px) var(--inset-right, 0px)
+    var(--inset-bottom, 0px) var(--inset-left, 0px);
+}
+.app-shell[data-layout="desktop"] .toast {
+  bottom: calc(47px + var(--inset-bottom, 0px));
+}
+.app-shell[data-layout="desktop"] .error-toast {
+  bottom: calc(99px + var(--inset-bottom, 0px));
+}
 .topbar {
   height: 64px;
   flex-shrink: 0;
@@ -613,7 +630,10 @@ h2 {
 }
 .mapping-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   overflow: visible;
@@ -719,7 +739,10 @@ h2 {
 }
 .canvas-empty {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1145,7 +1168,10 @@ footer > span:last-child {
 }
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: #07110ba8;
   backdrop-filter: blur(8px);
   z-index: 30;
@@ -1215,7 +1241,10 @@ footer > span:last-child {
 }
 .projector {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: #000;
   cursor: none;
 }

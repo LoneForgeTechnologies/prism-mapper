@@ -1,0 +1,95 @@
+name: Web app
+
+# Publishes the installable web app (the same app as the phone and desktop
+# builds, as a web page) to GitHub Pages:
+#
+#   https://loneforgetechnologies.github.io/prism-mapper/
+#
+# It is the way onto an iPhone or iPad without an Apple developer account:
+# open the address in Safari, tap Share, then Add to Home Screen. It also
+# installs from Chrome and Edge on Android and on desktops, and it works
+# offline once it has loaded.
+#
+# GitHub Pages has to be switched on once by someone with admin rights on the
+# repository: Settings, Pages, Source: GitHub Actions. Until then this
+# workflow still builds the app and finishes with a warning that says so; it
+# does not fail. It publishes on every push to main that changes the app, and
+# by hand with "Run workflow".
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - "scripts/build-pwa.mjs"
+      - "scripts/sw-template.js"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a running one is never cancelled halfway.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  build:
+    name: Build the web app
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    outputs:
+      deployable: ${{ steps.pages.outcome == 'success' }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      # Fails while GitHub Pages is not switched on for the repository. That
+      # is allowed to fail here, so a repository that has not switched it on
+      # yet does not get a red mark on every push.
+      - name: Look for GitHub Pages
+        id: pages
+        continue-on-error: true
+        uses: actions/configure-pages@v6
+      - name: Say how to switch GitHub Pages on
+        if: ${{ steps.pages.outcome != 'success' }}
+        run: echo "::warning title=GitHub Pages is not switched on::The web app was built but not published. In the repository settings open Pages and choose GitHub Actions as the source, then run this workflow again."
+      - name: Upload the web app
+        if: ${{ steps.pages.outcome == 'success' }}
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    name: Publish the web app
+    needs: build
+    if: ${{ needs.build.outputs.deployable == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Publish to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5

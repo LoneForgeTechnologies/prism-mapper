@@ -1,175 +1,167 @@
 # Prism Mapper
 
-A free, local desktop projection-mapping app. Fit images, videos, and generated light to walls and objects with perspective rectangles or point-by-point outlines. The working name is **Prism Mapper**. Independently implemented and MIT licensed; not affiliated with MadMapper.
+**Free, open-source projection mapping for Windows, Mac, Android, iPhone and iPad.** Draw shapes over a wall or an object, fill them with moving light, pictures or video, and send the result to a projector. No account, no subscription, no telemetry, and normal playback needs no internet.
 
-**[Download the latest release](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest)** · [Getting started](docs/getting-started.md) · [Release notes](CHANGELOG.md) · [Report a bug](https://github.com/LoneForgeTechnologies/prism-mapper/issues/new/choose)
+[![Checks](https://github.com/LoneForgeTechnologies/prism-mapper/actions/workflows/checks.yml/badge.svg)](https://github.com/LoneForgeTechnologies/prism-mapper/actions/workflows/checks.yml)
+[![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Latest release](https://img.shields.io/github/v/release/LoneForgeTechnologies/prism-mapper?include_prereleases)](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest)
 
-## Download and open
+![Prism Mapper mapping light onto the three faces of a cube](docs/images/editor-desktop.png)
 
-Download **`Prism-Mapper-v0.4.1-macOS-arm64.zip`** from the release's **Assets** section. This build requires **macOS 12 or later on a Mac with an Apple M-series chip**. Check **Apple menu → About This Mac** if unsure. The packaged application includes its runtime; you do not need Node.js or a developer account to use it.
+> **Please read: this is a half vibe-coded, half-tested project.** Much of the code was written by directing AI coding assistants, and the testing is only partly done. Automated tests are real and run on every change, but the apps have not been tried on every device, and the last recorded test with a physical projector was version 0.2. Expect rough edges, keep a copy of your projects, and [report what breaks](https://github.com/LoneForgeTechnologies/prism-mapper/issues/new/choose). The details are in [How well is it tested?](#how-well-is-it-tested).
 
-Double-click the ZIP, move **Prism Mapper.app** into **Applications**, and open it. GitHub's automatic **Source code** downloads are for building the app yourself; choose the macOS-arm64 ZIP to run it directly.
+## Download
 
-This early build carries an **ad-hoc signature** and is **not notarized by Apple**, so macOS may show a first-launch warning. Download from this repository and review [Apple's app-opening guidance](https://support.apple.com/en-us/102445) if a warning appears. An organization-managed computer may prevent launch.
+Open the **[latest release](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest)**, expand **Assets**, and take the file for your device. The number in each name is the version.
 
-Apple silicon macOS is the physically tested platform and the only packaged download in this release. Intel Mac, Windows, and Linux users can try [building from source](#build-from-source), but those platforms have not been physically tested. Physical system-output audio capture still needs verification on all platforms.
+| Your device | Download |
+| --- | --- |
+| Windows 10 or 11, 64-bit | The file ending in `-Windows-x64-Setup.exe` (installer), or `-Windows-x64.zip` (extract and run, no install) |
+| Mac with an Apple M-series chip | The file ending in `-macOS-arm64.zip` |
+| Mac with an Intel processor | The file ending in `-macOS-x64.zip` |
+| Android 7 or newer, phone or tablet | The file ending in `-Android.apk` |
+| iPhone or iPad (iOS 15 or newer) | The [web app](https://loneforgetechnologies.github.io/prism-mapper/): open it in Safari, tap **Share**, then **Add to Home Screen** |
+| Any current browser | The same [web app](https://loneforgetechnologies.github.io/prism-mapper/). Browsers that offer to install it, such as Chrome and Edge, can put it on the desktop or home screen. It works offline once it has loaded |
 
-Normal playback stays offline. No account, subscription, telemetry, server, or API key is needed. Start with the [step-by-step setup guide](docs/getting-started.md).
+The source-code ZIP that GitHub offers next to the assets is for developers, it is not an app. Prism Mapper is not in the Google Play Store or the App Store. These community builds are not code-signed, so Windows, macOS and Android warn you the first time. That is expected, and the steps below say what to do. Every file has a SHA-256 checksum, see [Check a download](#check-a-download).
 
-## Updating
+<details>
+<summary><b>Windows</b></summary>
 
-Save your work with **Save project**, then use **Help → Download updates** to open the release page. Download and extract the new release, quit Prism Mapper, and replace the Mac app with the newly extracted copy. There is no automatic updater.
+1. Run the Setup file. Windows SmartScreen may say "Windows protected your PC". Choose **More info**, then **Run anyway**, but only if you trust where you got the file.
+2. By default the installer needs no administrator rights and installs for your user account. It adds a Start Menu entry and an uninstaller. Running a newer Setup over an installed copy updates it.
+3. For the ZIP instead, right-click the downloaded file, choose **Properties**, tick **Unblock**, press OK, extract it, and start **Prism Mapper.exe** inside.
 
-The app keeps the same identity between releases, so generated-pattern drafts normally remain available on the same computer and user account. An explicit `.prism.json` save is your portable backup. Projects reference imported media rather than including it: keep those files with the project when updating or sharing. Do not put your only project or media copy inside the application folder.
+</details>
 
-## First indoor mapping
+<details>
+<summary><b>Mac</b></summary>
 
-1. Connect your projector. In **System Settings → Displays**, use an **extended display** so the editor and projector have separate views.
-2. Aim and focus the projector so your wall or object fits inside the beam. Keep it fixed while mapping.
-3. Choose your projector under **Target display** and **Open projector output**. Set a matching canvas aspect ratio to fill the display; other ratios receive black bars.
-4. Use a **Rect** for a flat rectangular face: drag its four corners until the calibration grid fits. For an irregular section, choose **Line tool**, click each corner in order, then **click the first point again** to close it. Inward corners, such as an L-shaped wall section, are supported. Live point guides appear on the projector while drawing.
-5. Each closed shape becomes a **layer**. Select it and choose an animation or imported image/video. Add another layer for each section. Try **Shape → Edge chase** to run light around the outline, **Triangle weave** on a triangle, or **Radar sweep** on a circle.
-6. Draw a **Mask** around an area that should stay dark, such as a window. A mask blocks layers below it; layers above it can still show. The top row of the layer list is in front.
-7. **Save project** stores your layout and settings in `.prism.json`. Media uses relative file paths; keep the original files with the project when moving it. Missing media stays black until you import and assign a replacement.
+1. Open the ZIP, move **Prism Mapper.app** to **Applications**, and open it. macOS 12 or newer is needed.
+2. The app is ad-hoc signed and not notarized by Apple. If macOS blocks it, open **System Settings → Privacy & Security** and choose **Open Anyway** after the first attempt, but only if you trust the download. [Apple explains the steps](https://support.apple.com/en-us/102445).
 
-The default software brightness is 65%. The built-in **Setup guide** covers this workflow. Three examples require no external media: `examples/indoor-cube.prism.json`, `examples/architectural-study.prism.json`, and `examples/halloween-haunt.prism.json`.
+</details>
 
-## Mapping and layers
+<details>
+<summary><b>Android</b></summary>
 
-- **Rect / Square** use four-corner perspective warping. **Triangle / Circle** create editable polygon outlines; circles start with 32 points.
-- **Line tool** creates simple outlines with 3–64 points. Edges may turn inward but cannot cross, touch another edge, fold back, or leave the canvas. Invalid edits keep the last valid geometry.
-- Drag a point to refine an outline; double-click an edge to insert a point. Choose a point in the inspector to enter exact pixel coordinates or remove it. A shape must retain at least three points.
-- Drag inside a shape to move the whole layer. **Snapping** aligns points to nearby layer points and canvas corners. Hold Shift while drawing for 45-degree angle increments.
-- Drag layer rows to change stacking, or use the up/down controls. Each layer has independent visibility, lock, opacity, animation, speed, and detail. **Solo** temporarily shows one layer and the cutouts without changing saved visibility.
-- **Normal**, **Add**, and **Screen** blend modes combine overlapping animation layers. Masks always use normal black compositing. **Soft edge** feathers inward in output-canvas pixels. It is a basic edge fade, not calibrated multi-projector blending.
-- **Content positioning** rotates, zooms, and offsets the animation or media inside the mapped shape. Media outside its image bounds becomes transparent. The physical outline stays fixed.
-- **Projector guides** show the selected outline and point numbers on the real output. Guides and drawing previews disappear during blackout and are never saved into the project.
+1. Download the `.apk` on the phone and open it. Android asks you to allow installs from the app you opened it with (Chrome or Files). Allow it, go back and tap **Install**.
+2. Google Play Protect may say the app comes from an unknown developer. That is true, it does not come from Google Play.
+3. The app has no internet permission at all. It asks for the microphone only when you tap **Start listening**.
+4. Every build carries its own temporary signature, so a newer APK cannot be installed over an older one. Uninstall the old version first, after saving your projects as files, because uninstalling deletes the app's data.
+5. If the app closes by itself right after it starts, which can happen when Google Play services restart at that moment, open it again.
 
-## Controls
+</details>
 
-| Action                             | Control                                     |
-| ---------------------------------- | ------------------------------------------- |
-| Line tool / select tool            | **P / V**                                   |
-| Close the current outline          | **Click first point / Enter**               |
-| Undo the last point while drawing  | **Backspace / ⌘Z**                          |
-| Cancel drawing                     | **Esc**                                     |
-| Show / hide projector guides       | **G**                                       |
-| Blackout / restore projected light | **B**                                       |
-| Pause / resume patterns and videos | **Space**                                   |
-| Select point 1–9                   | **1–9** (inspector supports every point)    |
-| Nudge selected point               | **Arrow keys** (one output pixel)           |
-| Nudge 10 pixels                    | **Shift + Arrow keys**                      |
-| Undo / redo edits                  | **⌘Z / ⇧⌘Z** (Ctrl on Windows/Linux)        |
-| Save project                       | **⌘S** (Ctrl on Windows/Linux)              |
-| Remove unlocked selected layer     | **Delete / Backspace** outside drawing mode |
-| Close projector output             | **Esc** outside drawing mode                |
+<details>
+<summary><b>iPhone and iPad</b></summary>
 
-B and Esc also work when the projector window has focus. Locking prevents geometry edits and deletion. Solo, guides, unfinished outlines, and animation mixes are temporary session controls.
+iOS only runs apps that are signed through an Apple developer account, and Prism Mapper is not in the App Store. There are three ways in.
 
-## Animation library
+- **The web app (easiest, no account needed).** Open <https://loneforgetechnologies.github.io/prism-mapper/> in Safari, tap **Share**, then **Add to Home Screen**. It runs full screen and works offline. Safari may clear the saved data of a website after about a week without a visit, but an app added to the Home Screen is kept.
+- **Sideload the unsigned `.ipa`** from the release, if it has one, with a tool such as AltStore or Sideloadly and your own Apple ID. A free Apple ID gives an app that has to be refreshed every 7 days.
+- **Build it with Xcode on a Mac**, see [docs/building-mobile.md](docs/building-mobile.md).
 
-**46 original procedural animations**, plus calibration grid, checkerboard, and solid color. Every thumbnail is generated from the actual renderer. Category filters, search, shuffle, and a 20-second automatic mix help explore the library.
+</details>
 
-| Atmosphere | Geometry     | Playful       | Shape            |
-| ---------- | ------------ | ------------- | ---------------- |
-| Aurora     | Orbit        | Confetti      | Edge chase       |
-| Ocean      | Neon tunnel  | Bubble garden | Edge pulse       |
-| Flame      | Kaleidoscope | Silk ribbons  | Edge dashes      |
-| Cloudscape | Neon grid    | Comet trails  | Contour flow     |
-| Lava lamp  | Wavelength   | Fireworks     | Perimeter blooms |
-| Galaxy     | Spiral       | Cherry petals | Panel sweep      |
-| Rainfall   | Honeycomb    | Digital rain  | Radar sweep      |
-| Snowfall   | Interference | Spectrum      | Triangle weave   |
-| Fireflies  | Prism shards |               |                  |
+### Check a download
 
-**Speed** runs from 0–3×; 0 freezes just that layer. **Detail** runs from 0.5–3×. Shape effects also offer an accent color and outline width. Edge effects follow the actual outline, including inward corners and perspective quads. The rest of the library fills any shape; content positioning changes the composition inside it.
+Each file has a `.sha256` file, and `SHA256SUMS.txt` lists them all. On Windows run `Get-FileHash <file>` in PowerShell, on a Mac run `shasum -a 256 <file>` in Terminal. The result must equal the number in the `.sha256` file.
 
-**Play a mix** cycles the selected animation layer every 20 seconds. Pause stops animation and the mix. Manually choosing a material, switching layers, or opening a project stops the mix. Resume starts a fresh interval. There are no transitions or saved cue lists yet.
+## What it does
 
-The original shader code is included under the MIT license. Playback needs no downloaded videos or external service.
+- **Map flat faces and odd shapes.** Perspective rectangles with four draggable corners, and point-by-point outlines (3 to 64 points, inward corners allowed) for triangles, circles and anything else. Up to 32 layers.
+- **46 original generated animations**, from aurora and ocean to fireworks, neon grids and edge effects that follow your outline, plus 12 Halloween effects. Every thumbnail is rendered by the real renderer. Or use your own pictures and looping videos.
+- **Masks, blend modes and soft edges.** Keep a window dark, overlap layers with Add or Screen, feather edges, and rotate or zoom the content inside a shape without moving the outline.
+- **React to sound.** Layers can pulse with the volume, bass, mids, treble or beats of a microphone or (on desktops) the system output.
+- **A real projector output.** On a desktop the output opens in its own window on the projector, with live edits, guides, blackout and display-sleep prevention. On a phone or tablet, **Present** fills the screen with the mapped light.
+- **One app on every device.** Windows, Mac, Android, iPhone, iPad and the browser share the same editor, and the same `.prism.json` project files move between them.
+- **Yours.** MIT licensed, local files only, nothing leaves the device.
 
-## What works in 0.4.1
+## Quick start
 
-- GPU perspective warping for quads and triangulated concave polygons, up to 32 layers with 64 outline points each.
-- Shape presets, point-by-point drawing, point editing, snapping, projector guides, masks, blending, feathering, and content transforms.
-- Layer duplication, reorder, hide, solo, lock, numeric point positioning, and undo/redo.
-- 46 animations and three utility materials, per-layer speed/detail/color, real thumbnails, search and mix.
-- Local images and looping muted video. PNG/JPEG/WebP and H.264 MP4/WebM are good starting points. MOV playback depends on its codec. Decode failures are shown.
-- Native monitor discovery, one separate projector output, live edits, blackout, hot-plug handling, and display-sleep prevention while output is open.
-- Validated local projects with relative media paths. Version 0.4.1 reads schema versions 1 and 2 and saves version 2. Prism Mapper 0.1/0.2 cannot open version-2 projects; 0.3 understands their mapping geometry but drops audio response settings when saving. Use 0.4 or later to retain those settings, and keep a separate copy before opening projects in an older app.
+1. Connect a projector as an **extended display** (Mac: **System Settings → Displays**, Windows: **Windows + P**, then **Extend**), or just work on your own screen first.
+2. Pick **Rect** for a flat face and drag its four corners until the grid fits, or use the **Line tool**, click each corner in order and click the first point again to close the outline.
+3. Select the layer and choose an animation in the library, or import a picture or video.
+4. Add a **Mask** over anything that should stay dark. **Save project** keeps the layout.
 
-## Halloween collection
+The [Getting started guide](docs/getting-started.md) walks through it step by step, and the app has a built-in setup guide under the **?** button. Three example projects that need no media are in [`examples/`](examples).
 
-Twelve original effects add watching eyes, glossy blood drips, living veins, a haunted skull, restless spirits, spider webs, a blood moon and bats, a jack-o’-lantern, a dread portal, a stylized open wound, crawling swarms, and graveyard mist. Find them under **Halloween** in the source library. The blood, veins, and wound are fictional procedural horror graphics. Every effect is included in the MIT-licensed source.
+![A haunted house facade mapped with eyes, a skull, a wound and spider webs](docs/images/editor-halloween.png)
 
-## Audio react
+<p>
+  <img src="docs/images/editor-phone.png" alt="The phone layout of Prism Mapper with the cube project" width="260">
+  <img src="docs/images/editor-phone-looks.png" alt="The Looks sheet of the phone layout with the animation library" width="260">
+</p>
 
-Click **Audio react** above the mapping canvas to reveal its controls.
+The screenshots were taken from a desktop browser, the phone ones with an emulated phone screen.
 
-1. Under **Listen to**, choose **Microphone / audio input** or **System output · current mix**. For input, select a built-in mic, USB audio interface, or installed virtual audio device. Refresh the list after connecting hardware.
-2. Click **Start listening**. Allow the relevant microphone or system-audio permission if your OS asks. The live meters show volume, bass, mids, treble, and detected pulses.
-3. Select a mapped layer, enable **React this layer to audio**, then choose the frequency band and **Brightness**, **Zoom**, or **Both**. Response strength controls how much it changes. Different layers can react to different parts of the same audio.
-4. Adjust **Input sensitivity** if needed: gain for quiet sources, noise gate for room hiss, smoothing for gentler motion. **Stop listening** releases capture immediately.
+## How well is it tested?
 
-Brightness response dims between peaks and returns up to your chosen master brightness. Zoom changes content sampling inside the fixed outline. Masks are unaffected. Pause holds the response, blackout overrides it, and stopped or stale audio restores normal rendering.
+Honestly: partly. This is what has been checked, and by what. [VALIDATION.md](VALIDATION.md) has the details of each version.
 
-System output captures the current OS playback mix. It does not independently tap a selectable speaker/headphone device; route playback in your OS or select a virtual loopback input for more control. Native output capture is implemented for supported macOS 14.2+ and Windows systems; successful physical system-output capture has not yet been verified for this release. On Linux and unsupported systems, use an exposed monitor/loopback input. Browser preview supports inputs; system-output capture requires the desktop application.
+| | Checked by automation | Not checked |
+| --- | --- | --- |
+| **Everything** | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout and the offline web app. All on every push. | Real graphics cards, long sessions, every picture and video format. |
+| **Windows** | The packaged app and the Setup installer on GitHub's Windows machines, on every release: install, start, open a project, update over a running copy, uninstall, and the portable ZIP. | A real Windows PC with a real projector. SmartScreen. |
+| **Mac** | The packaged app on GitHub's Apple silicon and Intel Macs, on every release: start, signature, and the app unpacked from the ZIP. Version 0.4.1 was also checked on an Apple silicon Mac before its release. | Gatekeeper, notarization, a Mac of your own. |
+| **Android** | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed and Google Play services being crashed. | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
+| **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The web app was tested in headless Chrome. | A real iPhone or iPad, Safari itself, the App Store. |
 
-Capture is off at launch and only starts from **Start listening**. Audio is analyzed locally, without recording, speaker monitoring, uploads, or feedback. Only normalized level summaries travel to the projector window. Projects save each layer's response settings, while input choice, capture permission, gain/gate/smoothing, and current listening state belong to the session. Older version-1/2 mappings still load. Use version 0.4 to retain the optional audio response settings when saving.
+The last recorded test with a physical projector was version 0.2 on a Mac, and capturing the computer's own audio output has never been verified on real hardware. The phone and tablet apps were never run on a physical device.
 
-Electron's system-audio implementation uses Apple's CoreAudio Tap API on supported macOS releases. See the [official capture documentation](https://www.electronjs.org/docs/latest/api/desktop-capturer). A denied permission, unsupported OS, missing track, or disconnected source is shown in the panel; select another input and start again after fixing it.
+## Documentation
 
-## Current limits
-
-This is an early usable application. Curved-object mesh deformation, multi-projector routing and calibrated edge blending, cue timelines, DMX/OSC/MIDI, audio mixing, Syphon/Spout/NDI, auto-calibration, and camera alignment remain future work.
-
-Polygon content uses the outline's bounding rectangle; arbitrary polygons do not provide independent perspective control for every point. Use separate perspective quads for angled flat faces. Circular outlines are polygon approximations.
-
-Editor and projector animate independently: procedural phases can differ and video is not frame-locked between windows. Video is muted with no seek/scrub control. Generated-pattern layouts recover locally between sessions; **save explicitly when using imported media**. Output does not reopen automatically after restart. Saved projects reference media rather than bundling it.
-
-`npm run dev` starts a browser preview at http://127.0.0.1:5178. Native display selection and file dialogs require the desktop app. Browser media imports use temporary blobs and must be reimported after reload; browser JSON export retains geometry and generated materials only.
+- [Getting started](docs/getting-started.md): your first projection, step by step.
+- [User guide](docs/user-guide.md): every tool, the keyboard, phones and tablets, audio, saving and updating, the limits.
+- [Project file format](docs/project-format.md) for the `.prism.json` files.
+- [Building the Android and iPhone/iPad apps](docs/building-mobile.md), including signing and the store routes.
+- [Changelog](CHANGELOG.md), [validation notes](VALIDATION.md), [contributing](CONTRIBUTING.md), [security](SECURITY.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
 ## Build from source
 
-Requires **Node.js 22.12+** (or a supported newer LTS release), npm, and a graphics-capable desktop. Download the source or clone this repository, then run from the project folder:
+You need **Node.js 22.12 or newer** and npm, and a computer with a graphics chip. Get the source with `git clone` or the source ZIP, then run in the project folder:
 
 ```sh
 npm ci
 npm start
 ```
 
-Dependencies download during setup. On macOS, **Launch Prism Mapper.command** is also available after obtaining the source. To build a local Mac app:
+On a Mac, **Launch Prism Mapper.command** does the same, and on Windows **Launch Prism Mapper.cmd** does. To make the apps yourself:
 
 ```sh
-npm run package:mac
+npm run package:mac       # a Mac app in release/ (on a Mac)
+npm run package:release   # the release ZIP for the platform you are on
+npm run cap:sync          # the web app copied into the Android and iOS projects
 ```
 
-This creates an ad-hoc signed app in `release/`. See the release workflow in `.github/workflows/` for the build used by published downloads.
+The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) and is built by `node scripts/build-windows-installer.mjs`. The published downloads are built by the workflows in [`.github/workflows`](.github/workflows): `release.yml` for the desktop apps and the release page, `mobile.yml` for Android and iOS, and `pages.yml` for the web app.
 
 ## Development
 
 ```sh
 npm run build                 # TypeScript and production build
-npm test                      # Geometry, validation, media range tests
-npm run test:smoke            # Native editor and connected-projector checks
-npm run test:media            # Native media import, streaming, GPU decode, Save/Open
-npm run test:desktop-mapping  # Native advanced-project round trip and guide IPC
-npm run test:desktop-audio    # Fake-device native capture; requires npm run dev on port 5178
+npm test                      # unit tests
+npm run dev                   # browser preview at http://127.0.0.1:5178
 ```
 
-The native `test:desktop-audio` check requires `npm run dev` running in another terminal at http://127.0.0.1:5178.
-
-With that dev server running, installed Google Chrome can run these GPU/UI checks:
+With the dev server running, these use Chrome or Chromium:
 
 ```sh
-npm run test:animations       # All 49 materials: animation, pause, speed, detail, blackout
-npm run test:mapping          # Polygon/mask/blend GPU checks and editing workflow
-npm run previews:shapes       # Shape-specific thumbnails
-npm run test:mix              # Automatic animation mix
-npm run test:audio            # Synthetic audio response and capture UI
-npm run previews:halloween    # Halloween GPU validation and thumbnails
+npm run test:mapping          # polygon, mask and blend GPU checks and the editing workflow
+npm run test:mix              # the automatic animation mix
+npm run test:audio            # synthetic audio response and capture interface
+npm run test:mobile           # phone and tablet layout, touch editing, Present mode
+npm run test:pwa              # the installable, offline web app (builds and serves dist/ itself)
+npm run test:animations       # every material: animation, pause, speed, detail, blackout (slow)
 ```
 
-Code lives in `src/` (editor, model, WebGL renderer, geometry), `shared/patterns.json` (material catalog), and `electron/` (sandboxed shell, media streaming, project I/O). Preview and output share the renderer. A narrow preload bridge carries validated state; Node APIs are not exposed to the renderer. See [docs/project-format.md](docs/project-format.md) and [CONTRIBUTING.md](CONTRIBUTING.md).
+The desktop checks (`npm run test:smoke`, `test:media`, `test:desktop-mapping`, `test:desktop-audio`) start the real Electron app. The code is in `src/` (editor, model, WebGL renderer, geometry), `shared/patterns.json` (the animation catalog), `electron/` (the desktop shell), `android/` and `ios/` (the Capacitor projects) and `mobile/` (their test and build scripts). The editor and the projector output share one renderer, and a narrow preload bridge carries validated state to the output, no Node API reaches the web page. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-The core is MIT licensed. Dependencies retain their licenses, and Electron includes Chromium's third-party notices. Imported media belongs to its creator and is not included. Source, releases, and contributions live at [LoneForgeTechnologies/prism-mapper](https://github.com/LoneForgeTechnologies/prism-mapper).
+## Contributing and support
+
+Bug reports are very welcome, especially from real devices and real projectors: use the [bug report form](https://github.com/LoneForgeTechnologies/prism-mapper/issues/new/choose) and include your version, system and the exact message. Pull requests are welcome too, see [CONTRIBUTING.md](CONTRIBUTING.md). There is no support team, only the people who read the issues, so please be patient.
+
+## License
+
+Prism Mapper is MIT licensed, see [LICENSE](LICENSE). It is independently implemented and not affiliated with MadMapper or any other product. The libraries it uses keep their own licenses ([THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)), and the desktop apps include Electron and Chromium's notices. Pictures and videos you import belong to their creators and are not part of the project. Source, releases and issues live at [LoneForgeTechnologies/prism-mapper](https://github.com/LoneForgeTechnologies/prism-mapper).

@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" width="1024" height="1024">
+  <title>Prism Mapper</title>
+  <defs>
+    <radialGradient id="bg" cx="50%" cy="34%" r="80%">
+      <stop offset="0" stop-color="#1c2a3d"/>
+      <stop offset="0.55" stop-color="#0e1521"/>
+      <stop offset="1" stop-color="#070a0f"/>
+    </radialGradient>
+    <linearGradient id="cyan" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8bfaff"/>
+      <stop offset="1" stop-color="#16a8ff"/>
+    </linearGradient>
+    <linearGradient id="violet" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#c3a2ff"/>
+      <stop offset="1" stop-color="#ff4fd0"/>
+    </linearGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#4f86ff"/>
+      <stop offset="1" stop-color="#6b3fe0"/>
+    </linearGradient>
+    <linearGradient id="amber" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe27a"/>
+      <stop offset="1" stop-color="#ff5f4a"/>
+    </linearGradient>
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="46"/>
+    </filter>
+  </defs>
+  <rect id="backdrop" width="1024" height="1024" fill="url(#bg)"/>
+  <g id="mark">
+    <g filter="url(#glow)" opacity="0.55">
+      <polygon points="512,248 820,776 204,776" fill="url(#violet)"/>
+    </g>
+    <g stroke-linejoin="round">
+      <polygon points="512,248 204,776 565,564" fill="url(#cyan)"/>
+      <polygon points="512,248 565,564 578,556 820,776" fill="url(#violet)"/>
+      <polygon points="204,776 565,564 600,776" fill="url(#blue)"/>
+      <polygon points="565,564 578,556 820,776 600,776" fill="url(#amber)"/>
+      <g fill="none" stroke="#ffffff" stroke-opacity="0.9" stroke-linecap="round">
+        <polygon points="512,248 820,776 204,776" stroke-width="12"/>
+        <path d="M512 248 600 776" stroke-width="7"/>
+        <path d="M204 776 578 556 820 776" stroke-width="7"/>
+      </g>
+    </g>
+  </g>
+</svg>

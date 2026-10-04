@@ -1,3 +1,4 @@
+import { newId } from "./compat";
 export type Point = { x: number; y: number };
 export type Pattern = string;
 export { PATTERNS } from "./patterns";
@@ -64,6 +65,12 @@ export interface OutputStatus {
   displayId?: number;
   error?: string;
 }
+/** What opening a project file produced: the project, or the reason it could not be opened. */
+export interface LoadedProject {
+  project?: Project;
+  error?: string;
+  missing?: string[];
+}
 export interface DesktopAPI {
   getDisplays(): Promise<DisplayInfo[]>;
   onDisplays(callback: (displays: DisplayInfo[]) => void): () => void;
@@ -77,11 +84,15 @@ export interface DesktopAPI {
   saveProject(
     project: Project,
   ): Promise<{ saved: boolean; path?: string; error?: string }>;
-  loadProject(): Promise<{
-    project?: Project;
-    error?: string;
-    missing?: string[];
-  }>;
+  loadProject(): Promise<LoadedProject>;
+  /**
+   * A project the operating system asked to open (a double-clicked file, "Open
+   * with", a second launch, macOS open-file). The first subscriber tells the
+   * main process the page can show one, so there should be only one.
+   */
+  onProjectOpened(
+    callback: (result: LoadedProject & { path?: string }) => void,
+  ): () => void;
   setBlackout(value: boolean): void;
 }
 declare global {
@@ -92,7 +103,7 @@ declare global {
 export function newSurface(index: number): Surface {
   const inset = 0.12 + Math.min(index, 8) * 0.025;
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     name: `Surface ${String(index + 1).padStart(2, "0")}`,
     corners: [
       { x: inset, y: inset },

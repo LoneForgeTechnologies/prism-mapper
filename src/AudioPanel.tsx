@@ -1,7 +1,7 @@
 import { useEffect, useState, useSyncExternalStore } from "react";
 import { AudioLines, Mic, RefreshCw, Square } from "lucide-react";
 import type { Surface } from "./model";
-import { AudioController } from "./audio";
+import { AudioController, audioUnavailableReason } from "./audio";
 import "./audio-panel.css";
 
 interface AudioPanelProps {
@@ -32,12 +32,17 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
   const [deviceId, setDeviceId] = useState("");
   const [refreshing, setRefreshing] = useState(false);
   const [deviceError, setDeviceError] = useState("");
+  // Browsers cannot capture what the computer is playing. Only the desktop app can.
+  const canCaptureSystem = typeof window !== "undefined" && !!window.prism;
+  const [unsupported] = useState(() => audioUnavailableReason());
   const response = surface?.audio || DEFAULT_RESPONSE;
   const canReact = !!surface && surface.kind !== "mask";
   const busy = snapshot.status === "starting";
   const listening = snapshot.status === "listening";
+  // The device stopped the audio engine (a call, Siri, a locked screen).
+  const paused = listening && snapshot.paused;
   const capturing = busy || listening;
-  const error = deviceError || snapshot.error;
+  const error = unsupported || deviceError || snapshot.error;
 
   const refresh = async () => {
     setRefreshing(true);
@@ -68,11 +73,13 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
   const options = snapshot.options;
   const stateLabel = busy
     ? "STARTING"
-    : listening
-      ? "LIVE"
-      : error
-        ? "CHECK SOURCE"
-        : "OFF";
+    : paused
+      ? "PAUSED"
+      : listening
+        ? "LIVE"
+        : error
+          ? "CHECK SOURCE"
+          : "OFF";
 
   return (
     <details id="audio-react-panel" className="audio-panel" open>
@@ -80,7 +87,7 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
         <span>
           <AudioLines size={15} /> Audio react
         </span>
-        <span className={`audio-state ${listening ? "active" : ""}`}>
+        <span className={`audio-state ${listening && !paused ? "active" : ""}`}>
           {stateLabel}
         </span>
       </summary>
@@ -95,9 +102,19 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
             }
           >
             <option value="input">Microphone / audio input</option>
-            <option value="system">System output · current mix</option>
+            <option value="system" disabled={!canCaptureSystem}>
+              {canCaptureSystem
+                ? "System output · current mix"
+                : "System output · desktop app only"}
+            </option>
           </select>
         </label>
+        {!canCaptureSystem && (
+          <p className="audio-help">
+            Browsers cannot capture system sound, so choose a microphone or a
+            virtual audio input. System output works in the desktop app.
+          </p>
+        )}
         {source === "input" && (
           <div className="audio-device-row">
             <label className="audio-field">
@@ -142,6 +159,7 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
         <button
           className={`audio-capture-button ${capturing ? "listening" : ""}`}
           type="button"
+          disabled={!!unsupported && !capturing}
           onClick={() => {
             setDeviceError("");
             if (capturing) controller.stop();
@@ -165,6 +183,12 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
             ? "Responds to sound playing through your current system output."
             : "Choose an input, then start listening. Audio is never recorded."}
         </p>
+        {paused && (
+          <p className="audio-help" role="status">
+            Audio paused by your device, for example by a call or a locked
+            screen. Tap anywhere to start listening again.
+          </p>
+        )}
         {error && (
           <p className="audio-error" role="alert">
             {error}

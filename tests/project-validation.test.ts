@@ -249,3 +249,48 @@ test("both project boundaries reject malformed audio response settings", () => {
     assert.throws(() => validateNativeProject(input), JSON.stringify(audio));
   }
 });
+
+test("a browser draft that still lists imported media keeps every entry and stays valid across reloads", () => {
+  const project = createProject();
+  const media = [
+    { id: "image1", name: "wall.png", kind: "image" as const, url: "" },
+    { id: "video2", name: "loop.mp4", kind: "video" as const, url: "" },
+  ];
+  project.media = media;
+  project.surfaces[0] = { ...project.surfaces[0], source: "image1" };
+  // What the autosave writes and the next launch reads: entries without live URLs.
+  const reloaded = validateBrowserProject(JSON.parse(JSON.stringify(project)));
+  assert.deepEqual(reloaded.media, media);
+  assert.equal(reloaded.surfaces[0].source, "image1");
+  // A blob: URL from the previous page is meaningless after a reload and is never trusted.
+  const stale = validateBrowserProject({
+    ...project,
+    media: [{ ...media[0], url: "blob:https://app.example/0a1b" }, media[1]],
+  });
+  assert.equal(stale.media[0].url, "");
+  // A layer that points at media the draft no longer lists invalidates the whole draft.
+  assert.throws(() =>
+    validateBrowserProject({ ...project, media: [media[1]] }),
+  );
+  // Entry problems that would silently discard the draft are caught here, not on the next launch.
+  // These layers use built-in animations, so only the bad entry itself can be the reason.
+  const plain = createProject();
+  assert.deepEqual(
+    validateBrowserProject({ ...plain, media: [media[0], media[1]] }).media,
+    media,
+  );
+  for (const bad of [
+    { ...media[0], id: "" },
+    { ...media[0], kind: "audio" },
+    { ...media[0], id: PATTERNS[0] },
+    { ...media[0], name: "x".repeat(201) },
+    { ...media[0], name: "bell\u0007here" },
+  ])
+    assert.throws(
+      () => validateBrowserProject({ ...plain, media: [bad, media[1]] }),
+      JSON.stringify(bad),
+    );
+  assert.throws(() =>
+    validateBrowserProject({ ...plain, media: [media[0], media[0]] }),
+  );
+});

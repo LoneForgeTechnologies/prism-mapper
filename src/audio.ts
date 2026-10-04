@@ -18,6 +18,11 @@ export interface AudioInput {
 }
 export interface AudioSnapshot {
   status: "idle" | "starting" | "listening" | "error";
+  /**
+   * The device stopped the audio engine while listening: a call, Siri, an alarm
+   * or a locked screen. Listening carries on at the next tap.
+   */
+  paused: boolean;
   frame: AudioFrame;
   sources: AudioInput[];
   source?: AudioSource;
@@ -60,10 +65,32 @@ function captureError(error: unknown, source: AudioSource): string {
     : "Audio capture could not start. Choose another source and try again.";
 }
 
+/**
+ * Why this page cannot listen to audio inputs, or undefined when it can.
+ * Browsers hide the microphone API on insecure (plain http) pages, and some
+ * older embedded web views do not have it at all.
+ */
+export function audioUnavailableReason(
+  env: {
+    navigator?: { mediaDevices?: { getUserMedia?: unknown } };
+    isSecureContext?: boolean;
+    AudioContext?: unknown;
+  } = globalThis,
+): string | undefined {
+  if (!env.navigator?.mediaDevices?.getUserMedia)
+    return env.isSecureContext === false
+      ? "Audio inputs need a secure page. Open Prism Mapper over https or from localhost, or use the installed app."
+      : "This browser or app view cannot reach audio inputs. Try a current Chrome, Edge or Safari, or the desktop app.";
+  if (typeof env.AudioContext === "undefined")
+    return "This browser does not support Web Audio, so Audio react is not available here.";
+  return undefined;
+}
+
 /** Capture is opt-in, local, and analyser-only: no speaker connection, recording, or network traffic. */
 export class AudioController {
   private snapshot: AudioSnapshot = {
     status: "idle",
+    paused: false,
     frame: SILENT_AUDIO,
     sources: [],
     options: { ...DEFAULT_AUDIO_OPTIONS },
@@ -118,9 +145,11 @@ export class AudioController {
   }
   async listInputs(): Promise<AudioInput[]> {
     const devices = this.devices();
-    if (!devices) {
+    const unavailable = audioUnavailableReason();
+    if (!devices || unavailable) {
       this.update({
         error:
+          unavailable ??
           "Audio inputs are unavailable in this browser. Open the desktop app or localhost preview.",
       });
       return [];
@@ -164,16 +193,45 @@ export class AudioController {
     this.analyser?.disconnect();
     this.sourceNode = undefined;
     this.analyser = undefined;
-    if (this.context) void this.context.close().catch(() => {});
+    this.resumeOnTap(false);
+    if (this.context) {
+      this.context.onstatechange = null;
+      void this.context.close().catch(() => {});
+    }
     this.context = undefined;
     this.analysis.reset();
+  }
+  /**
+   * Safari reports a call, Siri or a locked screen as "interrupted" and a page
+   * may only restart audio from a tap. While paused the next tap, key press or
+   * click anywhere resumes it. Chrome and Firefox use "suspended" the same way.
+   */
+  private resumeOnTap(on: boolean) {
+    if (typeof document === "undefined") return;
+    for (const type of ["click", "touchend", "keydown"])
+      if (on) document.addEventListener(type, this.resume, true);
+      else document.removeEventListener(type, this.resume, true);
+  }
+  private resume = () => {
+    void this.context?.resume().catch(() => {});
+  };
+  private contextChanged(context: AudioContext, generation: number) {
+    if (generation !== this.generation || context !== this.context) return;
+    // Starting up has its own states; only a context that was listening can be paused.
+    if (this.snapshot.status !== "listening") return;
+    const paused = context.state !== "running";
+    if (paused === this.snapshot.paused) return;
+    this.resumeOnTap(paused);
+    this.update({ paused });
+    // The analyser keeps its last picture while paused, so the lights must not.
+    if (paused) this.publish(SILENT_AUDIO);
   }
   stop() {
     this.generation++;
     this.release();
     this.bridge()?.stopAudio();
     this.publish(SILENT_AUDIO);
-    this.update({ status: "idle", error: undefined });
+    this.update({ status: "idle", paused: false, error: undefined });
   }
   async start(source: AudioSource): Promise<void> {
     this.stop();
@@ -186,9 +244,11 @@ export class AudioController {
     let pending: MediaStream | undefined;
     try {
       const devices = this.devices();
-      if (!devices?.getUserMedia)
+      const unavailable = audioUnavailableReason();
+      if (!devices?.getUserMedia || unavailable)
         throw new Error(
-          "Audio capture is unavailable. Open the desktop app or localhost preview.",
+          unavailable ??
+            "Audio capture is unavailable. Open the desktop app or localhost preview.",
         );
       const bridge = this.bridge();
       if (source.kind === "system" && !bridge)
@@ -236,7 +296,10 @@ export class AudioController {
           "This source returned no audio. Choose an audio input or a virtual loopback device instead.",
         );
       this.stream = pending;
-      this.context = new AudioContext({ latencyHint: "interactive" });
+      const context = (this.context = new AudioContext({
+        latencyHint: "interactive",
+      }));
+      context.onstatechange = () => this.contextChanged(context, generation);
       this.analyser = this.context.createAnalyser();
       this.analyser.fftSize = 2048;
       this.analyser.smoothingTimeConstant = 0;
@@ -266,9 +329,15 @@ export class AudioController {
       const spectrum = new Float32Array(this.analyser.frequencyBinCount);
       let last = performance.now();
       this.update({ status: "listening" });
+      // An interruption during start-up was not counted yet.
+      this.contextChanged(context, generation);
       const tick = () => {
         if (generation !== this.generation || !this.analyser || !this.context)
           return;
+        if (this.snapshot.paused) {
+          last = performance.now();
+          return;
+        }
         this.analyser.getFloatTimeDomainData(samples);
         this.analyser.getFloatFrequencyData(spectrum);
         const now = performance.now();

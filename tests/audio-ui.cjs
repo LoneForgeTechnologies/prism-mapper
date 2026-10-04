@@ -1,13 +1,11 @@
-const { chromium } = require("playwright");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
 // Run the real analyser against a synthetic MediaStream. Never opens an actual mic or speaker.
 (async () => {
-  const browser = await chromium.launch({
-    channel: "chrome",
-    headless: true,
+  const browser = await launchBrowser({
     args: ["--autoplay-policy=no-user-gesture-required"],
   });
   const context = await browser.newContext({
@@ -19,12 +17,34 @@ const path = require("node:path");
       active: 0,
       stopped: 0,
       deny: false,
-      delay: 0,
+      gate: null,
       silence: false,
       empty: false,
       frequency: 120,
       tracks: [],
+      contexts: [],
     });
+    // Remember every audio engine the page creates, so the test can take one
+    // away the way a phone call does.
+    const RealAudioContext = window.AudioContext;
+    window.AudioContext = class extends RealAudioContext {
+      constructor(...args) {
+        super(...args);
+        state.contexts.push(this);
+      }
+    };
+    // hold() makes the next capture requests wait until release(). A fixed
+    // delay is a race on a slow machine: the pending state can be over before
+    // the test has had time to click Cancel.
+    state.hold = () => {
+      state.gate = new Promise((resolve) => {
+        state.open = resolve;
+      });
+    };
+    state.release = () => {
+      state.open?.();
+      state.gate = null;
+    };
     const devices = navigator.mediaDevices;
     Object.defineProperty(devices, "enumerateDevices", {
       value: async () => [
@@ -46,8 +66,7 @@ const path = require("node:path");
             "Permission denied by test",
             "NotAllowedError",
           );
-        if (state.delay)
-          await new Promise((resolve) => setTimeout(resolve, state.delay));
+        if (state.gate) await state.gate;
         if (state.empty) return new MediaStream();
         const audio = new AudioContext();
         const oscillator = audio.createOscillator();
@@ -108,7 +127,7 @@ const path = require("node:path");
         ) > 20,
     );
   try {
-    await page.goto(process.env.PRISM_TEST_URL || "http://127.0.0.1:5178");
+    await page.goto(baseUrl());
     await page.waitForSelector("#audio-react-panel", { state: "attached" });
     await button("Open audio react controls").click();
     assert.equal(
@@ -191,6 +210,41 @@ const path = require("node:path");
     );
     await button("Refresh audio inputs").click();
     assert.equal(await page.evaluate(() => window.__audioTest.calls.length), 1);
+
+    // A call, Siri or a locked screen takes the audio engine away. The panel
+    // says so, the meters fall silent, and the next tap starts it again.
+    const level = () =>
+      page.evaluate(() =>
+        Number(
+          document
+            .querySelector('[aria-label="Level audio level"]')
+            .getAttribute("aria-valuenow"),
+        ),
+      );
+    const pausedNote = page
+      .getByRole("status")
+      .filter({ hasText: "Audio paused by your device" });
+    await page.evaluate(() => window.__audioTest.contexts.at(-1).suspend());
+    await pausedNote.waitFor();
+    assert.equal(await page.locator(".audio-state").innerText(), "PAUSED");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[aria-label="Level audio level"]')
+          .getAttribute("aria-valuenow") === "0",
+    );
+    await button("Stop listening").waitFor();
+    await page.mouse.click(2, 2);
+    await pausedNote.waitFor({ state: "detached" });
+    assert.equal(await page.locator(".audio-state").innerText(), "LIVE");
+    await waitSignal();
+    assert.ok((await level()) > 20, "the meters move again");
+    assert.equal(
+      await page.evaluate(() => window.__audioTest.calls.length),
+      1,
+      "resuming does not ask for the microphone again",
+    );
+
     await button("Stop listening").click();
     await waitStopped();
     assert.equal(
@@ -253,16 +307,12 @@ const path = require("node:path");
     await waitStopped();
 
     // Cancelling a pending permission/capture result also stops its eventual stream.
-    await page.evaluate(() => {
-      window.__audioTest.delay = 400;
-    });
+    await page.evaluate(() => window.__audioTest.hold());
     await button("Start listening").click();
     await button("Cancel listening").click();
+    await page.evaluate(() => window.__audioTest.release());
     await page.waitForFunction(() => window.__audioTest.stopped >= 5);
     await waitStopped();
-    await page.evaluate(() => {
-      window.__audioTest.delay = 0;
-    });
     await button("Start listening").waitFor();
 
     await page.evaluate(() => {

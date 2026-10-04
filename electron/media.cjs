@@ -42,10 +42,51 @@ function parseByteRange(header, size) {
   return { start, end };
 }
 
+function contentType(filename) {
+  return (
+    mimeTypes[path.extname(filename).toLowerCase()] ||
+    "application/octet-stream"
+  );
+}
+
+// The whole file, read by Node instead of by Chromium's file loader. Node
+// reaches files that Chromium's loader cannot: on Windows a path of more than
+// 259 characters, and a share named as \\localhost\share (Chromium reads
+// file://localhost/ as the local disk).
+async function streamWholeFile(filename, request) {
+  const stat = await fs.promises.stat(filename);
+  if (!stat.isFile()) return new Response("Not found", { status: 404 });
+  const headers = {
+    "Content-Type": contentType(filename),
+    "Content-Length": String(stat.size),
+    "Accept-Ranges": "bytes",
+  };
+  const body =
+    request.method === "HEAD" || stat.size === 0
+      ? null
+      : Readable.toWeb(fs.createReadStream(filename));
+  return new Response(body, { status: 200, headers });
+}
+
 async function serveMediaFile(filename, request, fetchFile) {
   const rangeHeader = request.headers.get("range");
-  if (!rangeHeader)
-    return fetchFile(pathToFileURL(filename).href, { method: request.method });
+  if (!rangeHeader) {
+    let failure;
+    try {
+      const response = await fetchFile(pathToFileURL(filename).href, {
+        method: request.method,
+      });
+      if (response.ok) return response;
+      failure = new Error(`The file could not be loaded (${response.status})`);
+    } catch (error) {
+      failure = error;
+    }
+    try {
+      return await streamWholeFile(filename, request);
+    } catch {
+      throw failure;
+    }
+  }
   // Electron's file fetch currently ignores Range headers. Stream only the requested
   // bytes so large video seeking remains bounded and Chromium receives a real 206.
   const stat = await fs.promises.stat(filename);
@@ -60,9 +101,7 @@ async function serveMediaFile(filename, request, fetchFile) {
       },
     });
   const headers = {
-    "Content-Type":
-      mimeTypes[path.extname(filename).toLowerCase()] ||
-      "application/octet-stream",
+    "Content-Type": contentType(filename),
     "Content-Range": `bytes ${range.start}-${range.end}/${stat.size}`,
     "Content-Length": String(range.end - range.start + 1),
     "Accept-Ranges": "bytes",

@@ -13,36 +13,54 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseName } from "./release-name.mjs";
+import { createZip, verifyZip } from "./zip.mjs";
+import {
+  assertStamped,
+  executableMetadata,
+  iconSizes,
+  stampExecutableFile,
+} from "./windows-exe.mjs";
+
+export { releaseName };
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const applicationFiles = [
+export const applicationFiles = [
   "electron/main.cjs",
   "electron/preload.cjs",
   "electron/project.cjs",
   "electron/media.cjs",
   "electron/audio.cjs",
+  "electron/launch.cjs",
+  "electron/load.cjs",
+  "electron/paths.cjs",
+  "electron/files.cjs",
+  "electron/wakelock.cjs",
+  "electron/window-size.cjs",
   "shared/patterns.json",
+  "build/icon.ico",
+  "build/icon.png",
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
 ];
-const examples = [
+export const examples = [
   "indoor-cube.prism.json",
   "architectural-study.prism.json",
   "halloween-haunt.prism.json",
 ];
 
-export function releaseName(version, platform, arch) {
-  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
-    throw new Error("Invalid release version");
-  if (!(
-    (platform === "darwin" && ["arm64", "x64"].includes(arch)) ||
-    (platform === "win32" && arch === "x64")
-  ))
-    throw new Error(
-      "Release packaging supports macOS arm64/x64 and Windows x64",
-    );
-  return `Prism-Mapper-v${version}-${platform === "darwin" ? "macOS" : "Windows"}-${arch}`;
-}
+// Finder lists Prism Mapper in "Open With" for JSON files, which is what a
+// project is, and then hands the file to the app (open-file). Rank "Alternate"
+// means it never becomes the default program for JSON files.
+export const macDocumentTypes = Object.freeze([
+  {
+    CFBundleTypeName: "Prism Mapper project",
+    CFBundleTypeRole: "Editor",
+    LSHandlerRank: "Alternate",
+    CFBundleTypeExtensions: ["json"],
+    LSItemContentTypes: ["public.json"],
+  },
+]);
 
 // Reject sensitive development folders and any archive path that could escape
 // the containing folder. These checks also run against the finished ZIP.
@@ -86,13 +104,35 @@ async function copyPublicFile(relative, destination) {
   await cp(source, destination);
 }
 
-async function copyBuild(source, destination) {
+// The web build (the installable web app) adds these next to index.html. The
+// desktop shell loads its page from disk and never uses them, so they are left
+// out of the packaged app. The list is exact and only applies at the top of
+// dist/: any other file the build produces must be reviewed, not copied.
+export const webOnlyBuildPaths = Object.freeze([
+  "manifest.webmanifest",
+  "sw.js",
+  "icons",
+  "apple-touch-icon.png",
+  "favicon.svg",
+  "favicon-32.png",
+]);
+
+// Copies the production build into the application and returns the web-only
+// entries it left out. Anything it does not recognise stops packaging.
+export async function copyBuild(source, destination, relative = "") {
+  const skipped = [];
   for (const entry of await readdir(source, { withFileTypes: true })) {
     const from = path.join(source, entry.name);
     const to = path.join(destination, entry.name);
-    if (entry.isDirectory() && ["assets", "previews"].includes(entry.name)) {
+    const name = relative ? `${relative}/${entry.name}` : entry.name;
+    if (webOnlyBuildPaths.includes(name)) {
+      skipped.push(name);
+    } else if (
+      entry.isDirectory() &&
+      ["assets", "previews"].includes(entry.name)
+    ) {
       await mkdir(to, { recursive: true });
-      await copyBuild(from, to);
+      skipped.push(...(await copyBuild(from, to, name)));
     } else if (
       entry.isFile() &&
       !entry.name.startsWith(".") &&
@@ -103,51 +143,56 @@ async function copyBuild(source, destination) {
       throw new Error(`Unexpected file in production build: ${from}`);
     }
   }
+  return skipped;
 }
 
-function powershell(script, environment) {
-  return execFileSync(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-Command", script],
-    {
-      encoding: "utf8",
-      env: { ...process.env, ...environment },
-      maxBuffer: 16 * 1024 * 1024,
-    },
-  );
+const guide = (extend) =>
+  `Use an extended desktop for your projector${extend}, then select its display in Prism Mapper. Line tool lets you trace corners; click the first point to close the outline. Each layer can play its own animation. Press B for blackout. Example projects are included in the Example projects folder; open them with the app's Open button.\n\nAudio react starts only when you press Start listening and approve the requested access. Audio is analyzed locally.\n\nUpdates: download the newer ZIP from this project's GitHub Releases page, quit Prism Mapper, and replace the application. Save your project before updating. There is no automatic updater.\n`;
+
+export function startHereText(version, platform) {
+  if (platform === "darwin")
+    return `Prism Mapper ${version}\n\nMove Prism Mapper.app to Applications, then open it. This community build is ad-hoc signed, not notarized by Apple. If macOS blocks it, review System Settings > Privacy & Security after the first launch attempt and use Open Anyway only if you trust this download.\n\n${guide("")}`;
+  return `Prism Mapper ${version} for Windows (64-bit)\n\nExtract the ENTIRE ZIP first: right-click the ZIP and choose Extract All. Open the Prism Mapper folder and double-click Prism Mapper.exe. Keep all files in that folder together.\n\nThis community build is not code-signed, so Windows SmartScreen may show "Windows protected your PC" the first time you run it. Select "More info", then "Run anyway", but only if you trust where you downloaded it. To avoid the prompt, right-click the downloaded ZIP, choose Properties, tick Unblock, press OK, and then extract it.\n\nPrefer an installer? ${releaseName(version, "win32", "x64")}-Setup.exe on the same release page installs Prism Mapper for your user account without administrator rights and adds a Start Menu entry and an uninstaller. Run a newer Setup over an existing installation to update it. It is not code-signed either, so SmartScreen shows the same prompt.\n\nWindows support is new. This build was checked automatically on a Windows PC without a projector and has not yet been tested with a physical projector. Please report problems on the project's GitHub Issues page.\n\n${guide(" (press the Windows key + P and choose Extend)")}`;
 }
 
-export async function packageRelease() {
+// The options exist so the whole Windows packaging flow can be rehearsed on any
+// host with a stand-in Electron runtime; a real release uses the defaults.
+export async function packageRelease({
+  platform = process.platform,
+  arch = process.arch,
+  runtime = path.join(root, "node_modules", "electron", "dist"),
+  build = path.join(root, "dist"),
+  output = path.join(root, "release", "distribution"),
+} = {}) {
   const pkg = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8"),
   );
-  const folder = releaseName(pkg.version, process.platform, process.arch);
-  for (const [variable, actual] of [
-    ["PRISM_TARGET_PLATFORM", process.platform],
-    ["PRISM_TARGET_ARCH", process.arch],
+  const folder = releaseName(pkg.version, platform, arch);
+  for (const [variable, host, actual] of [
+    ["PRISM_TARGET_PLATFORM", process.platform, platform],
+    ["PRISM_TARGET_ARCH", process.arch, arch],
   ]) {
-    if (process.env[variable] && process.env[variable] !== actual)
+    // A rehearsal for another platform is not the host the variable describes.
+    if (
+      host === actual &&
+      process.env[variable] &&
+      process.env[variable] !== actual
+    )
       throw new Error(
         `${variable} does not match this packaging host (${actual})`,
       );
   }
-  const output = path.join(root, "release", "distribution");
-  const staging = path.join(
-    output,
-    pkg.version,
-    `${process.platform}-${process.arch}`,
-  );
+  const staging = path.join(output, pkg.version, `${platform}-${arch}`);
   const contents = path.join(staging, folder);
   const archive = path.join(output, `${folder}.zip`);
-  const runtime = path.join(root, "node_modules", "electron", "dist");
-  await stat(path.join(root, "dist", "index.html"));
+  await stat(path.join(build, "index.html"));
   await stat(runtime);
   await mkdir(output, { recursive: true });
   // This directory is dedicated to disposable distribution staging. Never use
   // the user's locally installed release/Prism Mapper-darwin-* application.
   await rm(staging, { recursive: true, force: true });
   await mkdir(contents, { recursive: true });
-  const mac = process.platform === "darwin";
+  const mac = platform === "darwin";
   const application = path.join(
     contents,
     mac ? "Prism Mapper.app" : "Prism Mapper",
@@ -167,6 +212,25 @@ export async function packageRelease() {
     const crashDll = path.join(application, "electron_wer.dll");
     if (await stat(crashDll).catch(() => null))
       await rename(crashDll, path.join(application, "Prism Mapper_wer.dll"));
+    // Explorer, Task Manager, the taskbar and SmartScreen read the icon and the
+    // version block of the executable, which still say "Electron" at this point.
+    const metadata = executableMetadata({
+      version: pkg.version,
+      license: await readFile(path.join(root, "LICENSE"), "utf8"),
+      fileName: "Prism Mapper.exe",
+    });
+    const stamped = await stampExecutableFile(
+      path.join(application, "Prism Mapper.exe"),
+      { iconFile: path.join(root, "build", "icon.ico"), metadata },
+    );
+    assertStamped(
+      stamped,
+      metadata,
+      iconSizes(await readFile(path.join(root, "build", "icon.ico"))),
+    );
+    console.log(
+      `Stamped Prism Mapper.exe: ${stamped.strings.ProductName} ${stamped.strings.ProductVersion}, icon sizes ${stamped.iconGroups.map((group) => group.sizes.join("/")).join(" | ")}`,
+    );
   }
   const resources = path.join(
     application,
@@ -175,7 +239,11 @@ export async function packageRelease() {
   await rm(path.join(resources, "default_app.asar"), { force: true });
   const applicationRoot = path.join(resources, "app");
   await mkdir(path.join(applicationRoot, "dist"), { recursive: true });
-  await copyBuild(path.join(root, "dist"), path.join(applicationRoot, "dist"));
+  const webOnly = await copyBuild(build, path.join(applicationRoot, "dist"));
+  if (webOnly.length)
+    console.log(
+      `Left web-only build files out of the app: ${webOnly.join(", ")}`,
+    );
   for (const relative of applicationFiles)
     await copyPublicFile(relative, path.join(applicationRoot, relative));
   await writeFile(
@@ -206,11 +274,7 @@ export async function packageRelease() {
     await cp(path.join(runtime, source), path.join(contents, target));
   await writeFile(
     path.join(contents, "START HERE.txt"),
-    `Prism Mapper ${pkg.version}\n\n${
-      mac
-        ? "Move Prism Mapper.app to Applications, then open it. This community build is ad-hoc signed, not notarized by Apple. If macOS blocks it, review System Settings > Privacy & Security after the first launch attempt and use Open Anyway only if you trust this download."
-        : "Extract the ENTIRE ZIP first. Open the Prism Mapper folder and launch Prism Mapper.exe. Keep all files in that folder together. This community build is not signed with a Windows publisher certificate; Windows may ask you to confirm the download's publisher."
-    }\n\nUse an extended desktop for your projector, then select its display in Prism Mapper. Line tool lets you trace corners; click the first point to close the outline. Each layer can play its own animation. Press B for blackout. Example projects are included in the Example projects folder; open them with the app's Open button.\n\nAudio react starts only when you press Start listening and approve the requested access. Audio is analyzed locally.\n\nUpdates: download the newer ZIP from this project's GitHub Releases page, quit Prism Mapper, and replace the application. Save your project before updating. There is no automatic updater.\n`,
+    startHereText(pkg.version, platform),
   );
 
   if (mac) {
@@ -234,6 +298,13 @@ export async function packageRelease() {
         value,
         plist,
       ]);
+    execFileSync("/usr/bin/plutil", [
+      "-replace",
+      "CFBundleDocumentTypes",
+      "-json",
+      JSON.stringify(macDocumentTypes),
+      plist,
+    ]);
     // Helpers retain Electron's executable names, while bundle metadata identifies
     // this application and keeps helper bundle identifiers distinct.
     const frameworks = path.join(application, "Contents", "Frameworks");
@@ -260,6 +331,12 @@ export async function packageRelease() {
           helperPlist,
         ]);
     }
+    // Replace Electron's icon with the Prism Mapper icon before signing seals
+    // the bundle (Info.plist already names electron.icns as the icon file).
+    await cp(
+      path.join(root, "build", "icon.icns"),
+      path.join(application, "Contents", "Resources", "electron.icns"),
+    );
     execFileSync(
       "/usr/bin/codesign",
       ["--force", "--deep", "--sign", "-", application],
@@ -284,9 +361,12 @@ export async function packageRelease() {
     `${appPrefix}/dist/index.html`,
     ...applicationFiles.map((name) => `${appPrefix}/${name}`),
     ...examples.map((name) => `Example projects/${name}`),
-    mac
-      ? "Prism Mapper.app/Contents/MacOS/Electron"
-      : "Prism Mapper/Prism Mapper.exe",
+    ...(mac
+      ? [
+          "Prism Mapper.app/Contents/MacOS/Electron",
+          "Prism Mapper.app/Contents/Resources/electron.icns",
+        ]
+      : ["Prism Mapper/Prism Mapper.exe"]),
   ];
   let entries;
   if (mac) {
@@ -308,15 +388,8 @@ export async function packageRelease() {
       .trim()
       .split("\n");
   } else {
-    powershell(
-      "$ErrorActionPreference = 'Stop'; Compress-Archive -LiteralPath $env:PRISM_PACKAGE_DIR -DestinationPath $env:PRISM_PACKAGE_ZIP -CompressionLevel Optimal",
-      { PRISM_PACKAGE_DIR: contents, PRISM_PACKAGE_ZIP: archive },
-    );
-    const listing = powershell(
-      "$ErrorActionPreference = 'Stop'; Add-Type -AssemblyName System.IO.Compression.FileSystem; $zip = [System.IO.Compression.ZipFile]::OpenRead($env:PRISM_PACKAGE_ZIP); try { foreach ($entry in $zip.Entries) { $stream = $entry.Open(); try { $stream.CopyTo([System.IO.Stream]::Null) } finally { $stream.Dispose() }; $entry.FullName } } finally { $zip.Dispose() }",
-      { PRISM_PACKAGE_ZIP: archive },
-    );
-    entries = listing.trim().split(/\r?\n/);
+    await createZip(contents, archive);
+    entries = await verifyZip(archive);
   }
   verifyArchiveEntries(entries, folder, required);
   const checksum = createHash("sha256")
@@ -327,7 +400,7 @@ export async function packageRelease() {
     `${checksum}  ${path.basename(archive)}\n`,
   );
   console.log(`Verified release archive:\n${archive}\nSHA-256: ${checksum}`);
-  return archive;
+  return { archive, checksum, contents, folder, application, staging };
 }
 
 if (

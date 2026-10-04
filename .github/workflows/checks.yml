@@ -27,3 +27,39 @@ jobs:
       - run: npm run format:check
       - run: npm test
       - run: npm run build
+
+  browser:
+    # GPU and UI checks in headless Chrome with software WebGL. The slow
+    # all-animations sweep (npm run test:animations) is left for local runs.
+    # Real iOS Safari, real Android phones and projectors are not covered.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      CI: "true"
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Start the preview server
+        run: |
+          nohup npm run dev > vite.log 2>&1 &
+          for attempt in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5178/ > /dev/null && exit 0
+            sleep 1
+          done
+          cat vite.log
+          exit 1
+      - run: npm run test:mix
+      - run: npm run test:mapping
+      - run: npm run test:audio
+      # The phone and tablet layout, touch editing and Present mode.
+      - run: npm run test:mobile
+      # The installable, offline web app. It builds and serves dist/ itself.
+      - run: npm run test:pwa
+

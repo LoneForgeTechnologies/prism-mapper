@@ -10,17 +10,17 @@ The `surfaces` array is back-to-front. Each layer requires a unique ID, name, so
 
 | Optional field | Meaning and default |
 | --- | --- |
-| `polygon` | 3–64 normalized vertices; absent means a perspective quad |
+| `polygon` | 3 to 64 normalized vertices; absent means a perspective quad |
 | `kind` | `surface` (default) or `mask` |
 | `blendMode` | `normal` (default), `add`, or `screen` |
-| `speed` | 0–3; default 1 |
-| `detail` | 0.5–3; default 1 |
-| `edgeWidth` | 1–80 output pixels; default 12 |
-| `feather` | 0–80 output pixels; default 0 |
+| `speed` | 0 to 3; default 1 |
+| `detail` | 0.5 to 3; default 1 |
+| `edgeWidth` | 1 to 80 output pixels; default 12 |
+| `feather` | 0 to 80 output pixels; default 0 |
 | `audio` | Optional per-layer response: enabled, band, amount, mode |
 | `content` | Rotation in degrees, scale, offsetX, offsetY; defaults 0, 1, 0, 0 |
 
-Content rotation accepts -180–180 degrees, scale 0.1–4, and offsets -1–1. Content transforms change sampling inside a surface; they do not move its mapped geometry. Media samples outside their unit rectangle are transparent.
+Content rotation accepts -180 to 180 degrees, scale 0.1 to 4, and offsets -1 to 1. Content transforms change sampling inside a surface; they do not move its mapped geometry. Media samples outside their unit rectangle are transparent.
 
 For polygons, `corners` must equal the axis-aligned bounding rectangle in top-left, top-right, bottom-right, bottom-left order. The polygon determines clipping and edge effects; the rectangle determines content UVs. Quads retain inverse-homography perspective sampling. Polygon outlines may be concave and use either winding, but must be simple: no crossings, non-adjacent touches, duplicate points, or folded-back edges. Collinear intermediate points are supported. There are at most 32 surfaces per project.
 
@@ -28,7 +28,7 @@ A mask composites black over the layers below it, using its opacity and feather.
 
 ## Audio responses
 
-An optional `audio` object contains `enabled` (boolean), `band` (`level`, `bass`, `mid`, `treble`, or `beat`), `amount` (0–1), and `mode` (`brightness`, `zoom`, or `both`). Omission disables reaction. Masks ignore audio. This additive version-2 field requires Prism Mapper 0.4 to retain it on subsequent saves; 0.3 does not know this field.
+An optional `audio` object contains `enabled` (boolean), `band` (`level`, `bass`, `mid`, `treble`, or `beat`), `amount` (0 to 1), and `mode` (`brightness`, `zoom`, or `both`). Omission disables reaction. Masks ignore audio. This additive version-2 field requires Prism Mapper 0.4 to retain it on subsequent saves; 0.3 does not know this field.
 
 Capture source IDs, permissions, tuning, raw audio samples, and live signal summaries are never serialized into a project. The editor owns capture. Validated, normalized level summaries are sent to the output over separate IPC at approximately 30Hz; stale data expires after 500ms. Capturing must be explicitly started after opening the application.
 

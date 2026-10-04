@@ -54,8 +54,8 @@ import {
   type Project,
   type Surface,
   type DisplayInfo,
+  type LoadedProject,
   type OutputStatus,
-  type Media,
   type Point,
 } from "./model";
 import { ProjectionRenderer } from "./renderer";
@@ -79,29 +79,76 @@ import {
   createShapeSurface,
 } from "./polygon";
 import type { MappingOverlay } from "./overlay";
-import { validateBrowserProject } from "./project-validation";
+import { portableProject, projectFromFile } from "./project-validation";
+import { readBootProject } from "./persistence";
+import {
+  helpPlatform,
+  projectFileName,
+  saveFile,
+  shortcutLabel,
+} from "./platform";
+import { helpGuide } from "./help-text";
+import { ownsActivationKeys, releaseFocus } from "./keys";
+import { usePersistence } from "./usePersistence";
+import { DeviceSection } from "./DeviceSection";
+import {
+  BottomNav,
+  CompactToolExtras,
+  NudgeDock,
+  SHEET_META,
+  ShapeRow,
+  SheetBar,
+  useCompactLayout,
+  useMediaQuery,
+  useSheetBehaviour,
+  useStageTouch,
+} from "./compact";
+import {
+  backAction,
+  bufferLongSide,
+  capBufferSize,
+  createRepeatGuard,
+  edgeMidpoint,
+  hitReach,
+  nudgedPoint,
+  toggleSheet,
+  TOUCH_DRAG_SLOP,
+  type NudgeStep,
+  type SheetId,
+} from "./compact-logic";
+import { lastOf, newId } from "./compat";
+import { exitApp, onBackButton } from "./native-glue";
+import { PresentMode, requestPresentFullscreen } from "./present";
 import "./style.css";
+import "./pwa.css";
+import "./compact.css";
 
 const api = window.prism;
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 const corners = ["Top left", "Top right", "Bottom right", "Bottom left"];
 function safeDraft(): Project {
-  try {
-    const data = validateBrowserProject(
-      JSON.parse(localStorage.getItem("prism-draft") || "null"),
-    );
-    if (!data.media.length) return { ...data, blackout: false };
-  } catch {}
-  return createProject();
+  // Browsers rebuild draft media from IndexedDB; the desktop app still starts clean.
+  return readBootProject({ keepMedia: !api });
 }
+/**
+ * Both options are opt-in: the projector window keeps the plain loop. `paused`
+ * stops drawing (Present mode owns the GPU meanwhile) and `pauseWhenHidden`
+ * stops while the page is hidden. The renderer itself is never re-created.
+ */
 function useRenderer(
   canvas: React.RefObject<HTMLCanvasElement | null>,
   project: Project,
   onError: (message: string) => void,
+  options?: { paused?: boolean; pauseWhenHidden?: boolean },
 ) {
   const current = useRef(project);
   current.current = project;
   const [fps, setFps] = useState(0);
+  const paused = options?.paused ?? false;
+  const pausedRef = useRef(paused);
+  pausedRef.current = paused;
+  const pauseWhenHidden = options?.pauseWhenHidden ?? false;
+  const gate = useRef<{ start: () => void; pause: () => void } | null>(null);
   useEffect(() => {
     if (!canvas.current) return;
     let renderer: ProjectionRenderer;
@@ -128,12 +175,40 @@ function useRenderer(
       }
       frame = requestAnimationFrame(loop);
     };
-    frame = requestAnimationFrame(loop);
-    return () => {
+    const start = () => {
+      if (frame || pausedRef.current || (pauseWhenHidden && document.hidden))
+        return;
+      previous = last = performance.now();
+      count = 0;
+      frame = requestAnimationFrame(loop);
+    };
+    const stop = () => {
       cancelAnimationFrame(frame);
+      frame = 0;
+    };
+    const visibility = () => (document.hidden ? stop() : start());
+    if (pauseWhenHidden)
+      document.addEventListener("visibilitychange", visibility);
+    gate.current = {
+      start,
+      pause: () => {
+        stop();
+        // One last frame with playback off lets video textures pause too.
+        renderer.render({ ...current.current, playing: false }, elapsed);
+      },
+    };
+    start();
+    return () => {
+      gate.current = null;
+      document.removeEventListener("visibilitychange", visibility);
+      stop();
       renderer.destroy();
     };
-  }, [canvas, onError]);
+  }, [canvas, onError, pauseWhenHidden]);
+  useEffect(() => {
+    if (paused) gate.current?.pause();
+    else gate.current?.start();
+  }, [paused]);
   return fps;
 }
 function Output() {
@@ -231,6 +306,27 @@ function Output() {
     </div>
   );
 }
+/** The numbered steps and the tip of the setup guide, worded for this device. */
+function SetupSteps() {
+  const guide = helpGuide(helpPlatform());
+  return (
+    <>
+      <ol>
+        {guide.steps.map((step) => (
+          <li key={step.title}>
+            <strong>{step.title}</strong>
+            <span>{step.text}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="help-tip">
+        {guide.tip.map((part, index) =>
+          typeof part === "string" ? part : <kbd key={index}>{part.key}</kbd>,
+        )}
+      </div>
+    </>
+  );
+}
 function App() {
   const [project, setProject] = useState<Project>(safeDraft);
   const [selected, setSelected] = useState(project.surfaces[0]?.id || "");
@@ -261,8 +357,16 @@ function App() {
   const [audioFocus, setAudioFocus] = useState(false);
   const [outputSettings, setOutputSettings] = useState(true);
   const [previewSize, setPreviewSize] = useState({ width: 960, height: 540 });
+  const compact = useCompactLayout();
+  const [sheet, setSheet] = useState<SheetId | null>(null);
+  const [presenting, setPresenting] = useState(false);
+  const [nudgeStep, setNudgeStep] = useState<NudgeStep>(1);
+  const activeSheet = compact ? sheet : null;
   const canvas = useRef<HTMLCanvasElement>(null);
   const stage = useRef<HTMLDivElement>(null);
+  const presentStage = useRef<HTMLDivElement>(null);
+  const presentOpener = useRef<HTMLElement | null>(null);
+  const insertGuard = useRef(createRepeatGuard());
   const canvasArea = useRef<HTMLDivElement>(null);
   const mediaInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -273,6 +377,11 @@ function App() {
     start: { x: number; y: number };
     surface: Surface;
     project: Project;
+    pointerId?: number;
+    /** Touch drags wait for a few pixels of travel, so a tap never nudges anything. */
+    pending?: { x: number; y: number };
+    /** Touch point drags keep the offset between the finger and the point. */
+    grab?: Point;
   } | null>(null);
   const surface = project.surfaces.find((s) => s.id === selected);
   const selectedPoints = surface ? surfacePoints(surface) : [];
@@ -294,8 +403,16 @@ function App() {
         .includes(search.toLowerCase()),
   );
   const fail = useCallback((m: string) => setError(m), []);
-  const fps = useRenderer(canvas, renderProject, fail);
+  const fps = useRenderer(canvas, renderProject, fail, {
+    paused: presenting,
+    pauseWhenHidden: true,
+  });
   const message = (m: string) => setNotice(m);
+  const closeSheet = useCallback(() => setSheet(null), []);
+  useSheetBehaviour(activeSheet, closeSheet, help || presenting);
+  useEffect(() => {
+    if (!compact) setSheet(null);
+  }, [compact]);
   const commit = useCallback((next: Project) => {
     setHistory((h) => ({
       past: [...h.past, clone(current.current)].slice(-60),
@@ -374,7 +491,7 @@ function App() {
     () =>
       setHistory((h) => {
         if (!h.past.length) return h;
-        const previous = h.past.at(-1)!;
+        const previous = lastOf(h.past)!;
         setProject(clone(previous));
         return {
           past: h.past.slice(0, -1),
@@ -395,17 +512,19 @@ function App() {
       }),
     [],
   );
+  const device = usePersistence({
+    project,
+    setProject,
+    notify: message,
+    fail,
+  });
   useEffect(() => {
     api?.updateProject(renderProject);
-    try {
-      if (!project.media.length)
-        localStorage.setItem("prism-draft", JSON.stringify(project));
-      else localStorage.removeItem("prism-draft");
-    } catch {}
+    device.saveDraft(project);
   }, [project, solo]);
   useEffect(() => {
     if (!project.surfaces.some((s) => s.id === selected))
-      setSelected(project.surfaces.at(-1)?.id || "");
+      setSelected(lastOf(project.surfaces)?.id || "");
   }, [project.surfaces, selected]);
   useEffect(() => {
     if (!notice) return;
@@ -450,7 +569,11 @@ function App() {
         Math.floor(
           Math.min(
             entry.contentRect.width,
-            (entry.contentRect.height - 67) * ratio,
+            // Below the stage: the caption and hint on desktop, one hint line
+            // in the compact layout while no sheet is open.
+            (entry.contentRect.height -
+              (compact ? (activeSheet ? 0 : 30) : 67)) *
+              ratio,
           ),
         ),
       );
@@ -458,7 +581,7 @@ function App() {
     });
     observer.observe(canvasArea.current);
     return () => observer.disconnect();
-  }, [project.width, project.height]);
+  }, [project.width, project.height, compact, activeSheet]);
   const blackout = () => setProject((p) => ({ ...p, blackout: !p.blackout }));
   const cancelDrawing = () => {
     setDraft([]);
@@ -469,6 +592,7 @@ function App() {
     setMix(false);
     setDraft([]);
     setDraftCursor(null);
+    setSheet(null);
     setTool(next);
   };
   const finishDrawing = () => {
@@ -536,7 +660,7 @@ function App() {
     if (!surface || project.surfaces.length >= 32) return;
     const next = {
       ...translateSurface(clone(surface), { x: 0.025, y: 0.025 }),
-      id: crypto.randomUUID(),
+      id: newId(),
       name: surface.name + " copy",
       locked: false,
     };
@@ -569,6 +693,12 @@ function App() {
       setBusyOutput(false);
     }
   };
+  const importBrowserFiles = (files: File[]) => {
+    const media = device.importFiles(files);
+    if (!media.length) return;
+    commit({ ...project, media: [...project.media, ...media] });
+    setTab("media");
+  };
   const importMedia = async () => {
     if (!api) {
       mediaInput.current?.click();
@@ -598,24 +728,17 @@ function App() {
             "Project saved. Media files stay in their original locations.",
           );
       } else {
-        const portable = {
-          ...project,
-          media: project.media.map(({ url, ...m }) => ({ ...m, url: "" })),
-        };
-        const a = document.createElement("a");
-        a.href = URL.createObjectURL(
-          new Blob([JSON.stringify(portable, null, 2)], {
-            type: "application/json",
-          }),
+        const outcome = await saveFile(
+          projectFileName(project.name),
+          JSON.stringify(portableProject(project), null, 2),
+          "application/json",
         );
-        a.download = project.name.replace(/[^a-z0-9 -]/gi, "") + ".prism.json";
-        a.click();
-        setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-        message(
-          project.media.length
-            ? "Saved geometry. Browser media must be reimported after opening."
-            : "Project saved.",
-        );
+        if (outcome !== "cancelled")
+          message(
+            project.media.length
+              ? "Saved geometry. Browser media must be reimported after opening."
+              : "Project saved.",
+          );
       }
     } catch (e) {
       setError(String(e));
@@ -623,6 +746,37 @@ function App() {
       setSaving(false);
     }
   };
+  /**
+   * Shows what opening a project file produced. The Open button and the
+   * operating system (a double-clicked file, a second launch) both come through
+   * here, so a project replaces the current one the same way: as one undo step,
+   * with a half-drawn outline dropped.
+   */
+  const showOpened = (result: LoadedProject) => {
+    if (result.error) setError(result.error);
+    else if (result.project) {
+      setMix(false);
+      setSolo(null);
+      cancelDrawing();
+      commit(result.project);
+      setSelected(result.project.surfaces[0]?.id || "");
+      message(
+        result.missing?.length
+          ? `Opened. Relink missing media by importing: ${result.missing.join(", ")}`
+          : "Project opened.",
+      );
+    }
+  };
+  // One subscription for the life of the page: the main process holds a project
+  // that the operating system asked to open until the page has subscribed, and
+  // treats the page as away when nothing is subscribed. The callback is read
+  // through a ref so it always sees the current state.
+  const showOpenedRef = useRef(showOpened);
+  showOpenedRef.current = showOpened;
+  useEffect(() => {
+    if (!api) return;
+    return api.onProjectOpened((result) => showOpenedRef.current(result));
+  }, []);
   const open = async () => {
     setMix(false);
     setSolo(null);
@@ -632,23 +786,124 @@ function App() {
       return;
     }
     try {
-      const result = await api.loadProject();
-      if (result.error) setError(result.error);
-      else if (result.project) {
-        commit(result.project);
-        setSelected(result.project.surfaces[0]?.id || "");
-        message(
-          result.missing?.length
-            ? `Opened. Relink missing media by importing: ${result.missing.join(", ")}`
-            : "Project opened.",
-        );
-      }
+      showOpened(await api.loadProject());
     } catch (e) {
       setError(String(e));
     }
   };
+  /**
+   * Moves the selected point by whole output pixels. The arrow keys and the
+   * touch nudge pad both come through here, so they cannot disagree. Held
+   * repeats fold into the history entry of the first press.
+   */
+  const nudge = (dx: number, dy: number, step: number, repeat = false) => {
+    if (!surface || surface.locked) return;
+    const p = selectedPoints[corner];
+    if (!p) return;
+    if (!repeat) {
+      updateSurface(
+        moveSurfacePoint(
+          surface,
+          corner,
+          nudgedPoint(p, dx, dy, step, project.width, project.height),
+        ),
+      );
+      return;
+    }
+    setProject((previous) => ({
+      ...previous,
+      surfaces: previous.surfaces.map((s) => {
+        const q = s.id === selected && !s.locked && surfacePoints(s)[corner];
+        return q
+          ? moveSurfacePoint(
+              s,
+              corner,
+              nudgedPoint(q, dx, dy, step, previous.width, previous.height),
+            )
+          : s;
+      }),
+    }));
+  };
+  /** Touch version of a double-click on an edge: split the edge after the selected point. */
+  const addPointAfterSelected = () => {
+    if (tool !== "select" || !surface?.polygon || surface.locked) return;
+    const middle = edgeMidpoint(selectedPoints, corner);
+    const next = middle && insertSurfacePoint(surface, corner, middle);
+    if (!next || next === surface) {
+      message("This outline can't take another point there.");
+      return;
+    }
+    updateSurface(next);
+    setCorner(corner + 1);
+    message("Point added. Drag it or use the arrows to place it.");
+  };
+  const selectSheet = (id: SheetId) => {
+    if (id === "audio") {
+      setAudioFocus(true);
+      setOutputSettings(false);
+    } else if (id === "adjust") {
+      setAudioFocus(false);
+      setOutputSettings(true);
+    }
+    setSheet((open) => toggleSheet(open, id));
+  };
+  const startPresent = () => {
+    // Fullscreen is only allowed from inside the click that asks for it.
+    requestPresentFullscreen();
+    presentOpener.current = document.activeElement as HTMLElement | null;
+    cancelDrawing();
+    setPresenting(true);
+  };
+  const exitPresent = useCallback(() => {
+    setPresenting(false);
+    requestAnimationFrame(() => {
+      const opener = presentOpener.current;
+      presentOpener.current = null;
+      if (opener?.isConnected) opener.focus({ preventScroll: true });
+    });
+  }, []);
+  // Android's Back button. Without a listener it does nothing on the first
+  // screen, so the editor answers it: close what was opened last, and leave the
+  // app only from the plain editor. Present mode keeps its own listener.
+  const backNow = {
+    presenting,
+    help,
+    sheet: activeSheet,
+    drawing: tool !== "select",
+  };
+  const backState = useRef(backNow);
+  backState.current = backNow;
+  useEffect(() => {
+    let cancelled = false;
+    let remove = () => {};
+    void onBackButton(() => {
+      switch (backAction(backState.current)) {
+        case "close-help":
+          setHelp(false);
+          break;
+        case "close-sheet":
+          closeSheet();
+          break;
+        case "cancel-drawing":
+          cancelDrawing();
+          break;
+        case "exit":
+          void exitApp();
+          break;
+      }
+    }).then((stop) => {
+      if (cancelled) stop();
+      else remove = stop;
+    });
+    return () => {
+      cancelled = true;
+      remove();
+    };
+  }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
+      // Present mode listens for its own keys.
+      if (presenting) return;
       if (help) {
         if (e.key === "Escape") setHelp(false);
         if (e.key === "Tab") {
@@ -656,7 +911,7 @@ function App() {
             document.querySelectorAll<HTMLButtonElement>(".help-modal button"),
           );
           const first = buttons[0],
-            last = buttons.at(-1);
+            last = lastOf(buttons);
           if (e.shiftKey && document.activeElement === first) {
             e.preventDefault();
             last?.focus();
@@ -668,6 +923,8 @@ function App() {
         return;
       }
       if ((e.target as HTMLElement).matches("input,textarea,select")) return;
+      // A focused button, link or summary keeps Space and Enter for itself.
+      const owned = ownsActivationKeys(e.target as HTMLElement);
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -687,7 +944,7 @@ function App() {
         e.preventDefault();
         blackout();
       }
-      if (e.code === "Space") {
+      if (e.code === "Space" && !owned) {
         e.preventDefault();
         setProject((p) => ({ ...p, playing: !p.playing }));
       }
@@ -697,7 +954,7 @@ function App() {
           cancelDrawing();
           return;
         }
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !owned) {
           e.preventDefault();
           finishDrawing();
           return;
@@ -729,45 +986,44 @@ function App() {
       }
       if (e.key.startsWith("Arrow") && surface && !surface.locked) {
         e.preventDefault();
-        const amount = e.shiftKey ? 10 : 1;
-        const p = selectedPoints[corner];
-        if (!p) return;
-        const next = moveSurfacePoint(surface, corner, {
-          x:
-            p.x +
-            (e.key === "ArrowRight"
-              ? amount
-              : e.key === "ArrowLeft"
-                ? -amount
-                : 0) /
-              project.width,
-          y:
-            p.y +
-            (e.key === "ArrowDown"
-              ? amount
-              : e.key === "ArrowUp"
-                ? -amount
-                : 0) /
-              project.height,
-        });
-        updateSurface(next);
+        nudge(
+          e.key === "ArrowRight" ? 1 : e.key === "ArrowLeft" ? -1 : 0,
+          e.key === "ArrowDown" ? 1 : e.key === "ArrowUp" ? -1 : 0,
+          e.shiftKey ? 10 : 1,
+        );
       }
     };
     addEventListener("keydown", key);
     return () => removeEventListener("keydown", key);
   });
-  const getPoint = (e: {
-    clientX: number;
-    clientY: number;
-    shiftKey?: boolean;
-  }): Point => {
-    const rect = stage.current!.getBoundingClientRect();
+  /** Present mode with Align on measures its own stage; otherwise the editor's. */
+  const stageRect = () =>
+    (presenting && presentStage.current
+      ? presentStage.current
+      : stage.current!
+    ).getBoundingClientRect();
+  /**
+   * Stage position of a pointer, 0 to 1. Touch drags pass `offset` to keep the
+   * finger a fixed distance from the point it grabbed, and `raw` to skip
+   * snapping when they only need to know where the finger is.
+   */
+  const getPoint = (
+    e: { clientX: number; clientY: number; shiftKey?: boolean },
+    hold?: { offset?: Point; raw?: boolean },
+  ): Point => {
+    const rect = stageRect();
     let p = {
       x: Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height)),
     };
+    if (hold?.offset)
+      p = {
+        x: Math.max(0, Math.min(1, p.x + hold.offset.x)),
+        y: Math.max(0, Math.min(1, p.y + hold.offset.y)),
+      };
+    if (hold?.raw) return p;
     if (e.shiftKey && tool !== "select" && draft.length) {
-      const last = draft.at(-1)!;
+      const last = lastOf(draft)!;
       const dx = (p.x - last.x) * rect.width,
         dy = (p.y - last.y) * rect.height;
       const angle =
@@ -807,7 +1063,7 @@ function App() {
   };
   const nearestOutlineEdge = (p: Point) => {
     if (!surface?.polygon) return null;
-    const rect = stage.current!.getBoundingClientRect();
+    const rect = stageRect();
     let closest: { edge: number; point: Point; distance: number } | null = null;
     selectedPoints.forEach((a, i) => {
       const b = selectedPoints[(i + 1) % selectedPoints.length];
@@ -832,17 +1088,19 @@ function App() {
     return closest as { edge: number; point: Point; distance: number } | null;
   };
   const stagePointerDown = (e: React.PointerEvent) => {
-    if (e.button !== 0) return;
+    // The first finger owns the gesture. A second one never starts anything.
+    if (e.button !== 0 || !e.isPrimary) return;
     const p = getPoint(e);
+    const reach = hitReach(e.pointerType);
     if (tool !== "select") {
       e.preventDefault();
-      const rect = stage.current!.getBoundingClientRect();
+      const rect = stageRect();
       if (
         draft.length >= 3 &&
         Math.hypot(
           (p.x - draft[0].x) * rect.width,
           (p.y - draft[0].y) * rect.height,
-        ) < 14
+        ) < reach
       ) {
         finishDrawing();
         return;
@@ -870,7 +1128,7 @@ function App() {
       !surface.locked &&
       (!solo || solo === surface.id) &&
       edge &&
-      edge.distance < 14
+      edge.distance < reach
     ) {
       beginDrag(e, null, surface.id);
       return;
@@ -890,20 +1148,28 @@ function App() {
     point: number | null,
     id = selected,
   ) => {
-    if (tool !== "select") return;
+    if (tool !== "select" || !e.isPrimary) return;
     const s = project.surfaces.find((s) => s.id === id);
     if (!s) return;
     setSelected(id);
     if (s.locked) return;
     e.preventDefault();
     e.stopPropagation();
-    (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    try {
+      (e.currentTarget as Element).setPointerCapture(e.pointerId);
+    } catch {}
     if (point !== null) setCorner(point);
     drag.current = {
       point,
       start: getPoint(e),
       surface: clone(s),
       project: clone(project),
+      pointerId: e.pointerId,
+      // A finger needs a little travel before it counts as a drag, so a tap
+      // that wobbles never nudges a point.
+      ...(e.pointerType === "touch"
+        ? { pending: { x: e.clientX, y: e.clientY } }
+        : {}),
     };
   };
   const onMove = (e: React.PointerEvent) => {
@@ -912,8 +1178,24 @@ function App() {
       return;
     }
     const d = drag.current;
-    if (!d) return;
-    const p = getPoint(e);
+    if (!d || (d.pointerId !== undefined && e.pointerId !== d.pointerId))
+      return;
+    if (d.pending) {
+      if (
+        Math.hypot(e.clientX - d.pending.x, e.clientY - d.pending.y) <
+        TOUCH_DRAG_SLOP
+      )
+        return;
+      // Past the slop: anchor here so the layer or point does not jump.
+      d.pending = undefined;
+      d.start = getPoint(e);
+      if (d.point !== null) {
+        const held = surfacePoints(d.surface)[d.point];
+        const finger = getPoint(e, { raw: true });
+        d.grab = { x: held.x - finger.x, y: held.y - finger.y };
+      }
+    }
+    const p = getPoint(e, d.grab ? { offset: d.grab } : undefined);
     setProject((current) => ({
       ...current,
       surfaces: current.surfaces.map((s) =>
@@ -928,10 +1210,10 @@ function App() {
       ),
     }));
   };
-  const insertPoint = (e: React.MouseEvent) => {
+  const insertPoint = (e: { clientX: number; clientY: number }, reach = 14) => {
     if (tool !== "select" || !surface?.polygon || surface.locked) return;
     const match = nearestOutlineEdge(getPoint(e));
-    if (match && match.distance < 14) {
+    if (match && match.distance < reach) {
       const next = insertSurfacePoint(surface, match.edge, match.point);
       if (next !== surface) {
         updateSurface(next);
@@ -940,15 +1222,41 @@ function App() {
       }
     }
   };
-  const endDrag = () => {
+  const endDrag = (e?: React.PointerEvent) => {
     const d = drag.current;
     if (!d) return;
+    // Another finger lifting must not end the drag of the first one.
+    if (e && d.pointerId !== undefined && e.pointerId !== d.pointerId) return;
     drag.current = null;
     if (JSON.stringify(d.project) !== JSON.stringify(current.current))
       setHistory((h) => ({
         past: [...h.past, d.project].slice(-60),
         future: [],
       }));
+  };
+  const stageTouch = useStageTouch((x, y) => {
+    if (!insertGuard.current.claim({ x, y, time: performance.now() })) return;
+    insertPoint({ clientX: x, clientY: y }, hitReach("touch"));
+  });
+  /** The editor stage and, with Align on, the Present stage share these handlers. */
+  const stageHandlers = {
+    onPointerDownCapture: stageTouch.onPointerDownCapture,
+    onPointerMove: onMove,
+    onPointerUp: (e: React.PointerEvent) => {
+      stageTouch.onPointerUp(e);
+      endDrag(e);
+    },
+    onPointerCancel: (e: React.PointerEvent) => {
+      stageTouch.onPointerCancel();
+      endDrag(e);
+    },
+    onLostPointerCapture: endDrag,
+    onContextMenu: stageTouch.onContextMenu,
+    onDoubleClick: (e: React.MouseEvent) => {
+      // After a touch double-tap some browsers also send a double-click.
+      const at = { x: e.clientX, y: e.clientY, time: performance.now() };
+      if (!insertGuard.current.seen(at)) insertPoint(e);
+    },
   };
   const point = selectedPoints[corner];
   const display = displays.find((d) => d.id === displayId);
@@ -960,8 +1268,38 @@ function App() {
     [items[index], items[next]] = [items[next], items[index]];
     update({ surfaces: items });
   };
+  const coarse = useMediaQuery("(pointer: coarse)");
+  // Phones and tablets draw into a smaller buffer. Desktop keeps one pixel per CSS pixel.
+  const buffer = compact
+    ? capBufferSize(
+        previewSize.width,
+        previewSize.height,
+        window.devicePixelRatio,
+        bufferLongSide(coarse, Math.min(innerWidth, innerHeight) <= 600),
+      )
+    : previewSize;
+  const sheetPanel = (side: "left" | "right") => {
+    if (!compact) return {};
+    const open = activeSheet !== null && SHEET_META[activeSheet].panel === side;
+    return {
+      id: `sheet-${side}`,
+      ...(open
+        ? {
+            role: "region",
+            "aria-labelledby": `nav-${activeSheet}`,
+            tabIndex: -1,
+          }
+        : {}),
+    };
+  };
   return (
-    <div className="app-shell">
+    <div
+      className="app-shell"
+      data-layout={compact ? "compact" : "desktop"}
+      data-runtime={api ? "desktop" : "web"}
+      data-sheet={activeSheet ?? undefined}
+      data-presenting={presenting ? "true" : undefined}
+    >
       <header className="topbar">
         <div className="brand">
           <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true">
@@ -1020,7 +1358,19 @@ function App() {
         </div>
       </div>
       <main className="workspace">
-        <aside className="left-panel">
+        <aside className="left-panel" {...sheetPanel("left")}>
+          <SheetBar
+            panel="left"
+            sheet={activeSheet}
+            onClose={closeSheet}
+            meta={
+              activeSheet === "layers"
+                ? `${project.surfaces.length} ${project.surfaces.length === 1 ? "layer" : "layers"}`
+                : surface
+                  ? `For ${surface.name}`
+                  : ""
+            }
+          />
           <div className="panel-heading">
             <h2>
               <Layers size={15} />
@@ -1148,8 +1498,16 @@ function App() {
               Draw outline
             </button>
           </div>
+          <ShapeRow
+            active={activeSheet === "layers"}
+            onAdd={(shape) =>
+              shape === "mask" ? startDrawing("mask") : addPreset(shape)
+            }
+          />
           <p className="layer-order-note">
-            Top layer appears in front · drag to reorder
+            {compact
+              ? "Top layer appears in front. Change the order in Adjust."
+              : "Top layer appears in front · drag to reorder"}
           </p>
           <div className="library">
             <div className="panel-heading">
@@ -1344,7 +1702,7 @@ function App() {
               <button
                 className="icon-button"
                 aria-label="Undo"
-                title="Undo · ⌘Z"
+                title={`Undo · ${shortcutLabel("Z")}`}
                 disabled={!history.past.length}
                 onClick={undo}
               >
@@ -1353,7 +1711,7 @@ function App() {
               <button
                 className="icon-button"
                 aria-label="Redo"
-                title="Redo · ⇧⌘Z"
+                title={`Redo · ${shortcutLabel("Z", { shift: true })}`}
                 disabled={!history.future.length}
                 onClick={redo}
               >
@@ -1446,6 +1804,28 @@ function App() {
                 <ScanLine size={14} />
               </button>
             </div>
+            <CompactToolExtras
+              active={compact}
+              canAddPoint={
+                tool === "select" && !!surface?.polygon && !surface.locked
+              }
+              onAddPoint={addPointAfterSelected}
+              // While drawing, undo takes back the last point, like the keyboard.
+              canUndo={
+                tool === "select" ? history.past.length > 0 : draft.length > 0
+              }
+              canRedo={tool === "select" && history.future.length > 0}
+              onUndo={
+                tool === "select" ? undo : () => setDraft((p) => p.slice(0, -1))
+              }
+              onRedo={redo}
+              playing={project.playing}
+              onTogglePlay={() =>
+                setProject((p) => ({ ...p, playing: !p.playing }))
+              }
+              blackout={project.blackout}
+              onBlackout={blackout}
+            />
           </div>
           {tool !== "select" && (
             <div
@@ -1455,11 +1835,11 @@ function App() {
               <span className="status-dot" />
               <span>
                 {draft.length
-                  ? `${draft.length} points · Click the first point to close`
-                  : `${tool === "mask" ? "Cutout mask" : "Line tool"} · Click to place the first point`}
+                  ? `${draft.length} points · ${compact ? "Tap" : "Click"} the first point to close`
+                  : `${tool === "mask" ? "Cutout mask" : "Line tool"} · ${compact ? "Tap" : "Click"} to place the first point`}
               </span>
               <button onClick={finishDrawing} disabled={draft.length < 3}>
-                Close outline ↵
+                {compact ? "Close outline" : "Close outline ↵"}
               </button>
               <button aria-label="Cancel drawing" onClick={cancelDrawing}>
                 <X size={13} />
@@ -1472,7 +1852,14 @@ function App() {
               <button onClick={() => setSolo(null)}>Show all layers</button>
             </div>
           )}
-          <div className="canvas-area" ref={canvasArea}>
+          <div
+            className="canvas-area"
+            ref={canvasArea}
+            // Tapping the backdrop around the stage puts the open sheet away.
+            onClick={(e) => {
+              if (activeSheet && e.target === e.currentTarget) setSheet(null);
+            }}
+          >
             <div className="stage-frame" style={{ width: previewSize.width }}>
               <div className="stage-caption">
                 <span>OUTPUT CANVAS</span>
@@ -1484,15 +1871,18 @@ function App() {
                 className={`stage ${tool !== "select" ? "drawing-stage" : ""}`}
                 ref={stage}
                 style={{ height: previewSize.height }}
-                onPointerMove={onMove}
-                onPointerUp={endDrag}
-                onPointerCancel={endDrag}
-                onDoubleClick={insertPoint}
+                {...stageHandlers}
+                onPointerDownCapture={(e) => {
+                  stageHandlers.onPointerDownCapture(e);
+                  // The stage cancels pointerdown, which keeps the focus on the
+                  // button pressed last; Enter would press it again.
+                  releaseFocus(document.activeElement, document.body, e.target);
+                }}
               >
                 <canvas
                   ref={canvas}
-                  width={previewSize.width}
-                  height={previewSize.height}
+                  width={buffer.width}
+                  height={buffer.height}
                 />
                 <svg
                   className="mapping-overlay"
@@ -1543,8 +1933,8 @@ function App() {
                         vectorEffect="non-scaling-stroke"
                       />
                       <line
-                        x1={(draftCursor || draft.at(-1)!).x * project.width}
-                        y1={(draftCursor || draft.at(-1)!).y * project.height}
+                        x1={(draftCursor || lastOf(draft)!).x * project.width}
+                        y1={(draftCursor || lastOf(draft)!).y * project.height}
                         x2={draft[0].x * project.width}
                         y2={draft[0].y * project.height}
                         vectorEffect="non-scaling-stroke"
@@ -1616,9 +2006,11 @@ function App() {
                 <span>
                   <Move size={13} />
                   {tool !== "select"
-                    ? "Shift: straight angles · Backspace: undo point · Esc: cancel"
+                    ? compact
+                      ? "Undo takes back the last point"
+                      : "Shift: straight angles · Backspace: undo point · Esc: cancel"
                     : surface?.polygon
-                      ? "Drag points · Double-click an edge to add a point"
+                      ? `Drag points · Double-${compact ? "tap" : "click"} an edge to add a point`
                       : "Drag a layer or its corners"}
                 </span>
                 <span>
@@ -1675,7 +2067,42 @@ function App() {
             </button>
           </div>
         </section>
-        <aside className="right-panel">
+        <aside className="right-panel" {...sheetPanel("right")}>
+          <SheetBar
+            panel="right"
+            sheet={activeSheet}
+            onClose={closeSheet}
+            meta={
+              activeSheet === "adjust"
+                ? surface?.kind === "mask"
+                  ? "Cutout"
+                  : surface?.polygon
+                    ? `${selectedPoints.length} points`
+                    : surface
+                      ? "Quad"
+                      : ""
+                : ""
+            }
+          />
+          <NudgeDock
+            active={activeSheet === "adjust" && !!surface && tool === "select"}
+            disabled={!surface || surface.locked || !point}
+            step={nudgeStep}
+            onStep={setNudgeStep}
+            onNudge={nudge}
+            label={
+              surface?.polygon
+                ? `Point ${corner + 1} of ${selectedPoints.length}`
+                : (corners[corner] ?? "")
+            }
+            index={corner}
+            count={selectedPoints.length}
+            onPoint={setCorner}
+            x={Math.round((point?.x || 0) * project.width)}
+            y={Math.round((point?.y || 0) * project.height)}
+            snap={snap}
+            onSnap={() => setSnap(!snap)}
+          />
           <div className="panel-heading">
             <h2>
               <SlidersHorizontal size={15} />
@@ -2003,7 +2430,9 @@ function App() {
                   <p className="field-help">
                     {surface.locked
                       ? "Unlock this surface to adjust its corners."
-                      : "Arrow keys move 1 px. Hold Shift for 10 px."}
+                      : compact
+                        ? "The arrows above move 1 px or 10 px at a time."
+                        : "Arrow keys move 1 px. Hold Shift for 10 px."}
                   </p>
                   {surface.polygon ? (
                     <button
@@ -2177,7 +2606,9 @@ function App() {
               <AudioPanel surface={surface} onChange={updateSurface} />
             </div>
           </div>
-          <div className={`output-panel ${outputSettings ? "" : "compact"}`}>
+          <div
+            className={`output-panel ${outputSettings || compact ? "" : "compact"}`}
+          >
             <div className="panel-heading">
               <h2>
                 <Monitor size={15} />
@@ -2195,7 +2626,10 @@ function App() {
                 <ChevronDown size={13} />
               </button>
             </div>
-            <div className="output-settings" hidden={!outputSettings}>
+            <div
+              className="output-settings"
+              hidden={!outputSettings && !compact}
+            >
               <label className="field-label" htmlFor="display">
                 TARGET DISPLAY
               </label>
@@ -2269,22 +2703,36 @@ function App() {
                 }
               />
             </div>
-            <button
-              aria-label={
-                output.open ? "Close projector output" : "Open projector output"
-              }
-              className={`output-button ${output.open ? "running" : ""}`}
-              disabled={!api || displayId === undefined || busyOutput}
-              onClick={toggleOutput}
-            >
-              <Monitor size={16} />
-              {busyOutput
-                ? "Connecting…"
-                : output.open
-                  ? "Close projector output"
-                  : "Open projector output"}
-              <span>↗</span>
-            </button>
+            {api ? (
+              <button
+                aria-label={
+                  output.open
+                    ? "Close projector output"
+                    : "Open projector output"
+                }
+                className={`output-button ${output.open ? "running" : ""}`}
+                disabled={!api || displayId === undefined || busyOutput}
+                onClick={toggleOutput}
+              >
+                <Monitor size={16} />
+                {busyOutput
+                  ? "Connecting…"
+                  : output.open
+                    ? "Close projector output"
+                    : "Open projector output"}
+                <span>↗</span>
+              </button>
+            ) : (
+              // Without the desktop app there is no second window, so this
+              // screen becomes the output.
+              <button className="output-button" onClick={startPresent}>
+                <Monitor size={16} />
+                Present on this screen
+                <span aria-hidden="true">
+                  <Maximize size={14} />
+                </span>
+              </button>
+            )}
             <button
               aria-label={project.blackout ? "Restore light" : "Blackout"}
               className={`blackout-button ${project.blackout ? "active" : ""}`}
@@ -2297,7 +2745,11 @@ function App() {
             <p className="output-note">
               {output.open
                 ? "Output is live. Press Esc to close it."
-                : "A clean, fullscreen window on your projector."}
+                : api
+                  ? "A clean, fullscreen window on your projector."
+                  : compact
+                    ? "Fills this screen with just your mapped light. Tap the screen to show the controls."
+                    : "Only your mapped light, fullscreen on this screen."}
             </p>
           </div>
         </aside>
@@ -2310,10 +2762,11 @@ function App() {
         <span>
           <Keyboard size={13} /> Space: play / pause{" "}
           <span className="tiny-separator">·</span> B: blackout{" "}
-          <span className="tiny-separator">·</span> ⌘Z: undo
+          <span className="tiny-separator">·</span> {shortcutLabel("Z")}: undo
         </span>
         <span>Made for light.</span>
       </footer>
+      <BottomNav active={compact} sheet={activeSheet} onSelect={selectSheet} />
       {notice && (
         <div className="toast" role="status">
           <Check size={16} />
@@ -2363,38 +2816,7 @@ function App() {
               light installation.
             </h1>
             <p>All you need is a projector, an object, and a few minutes.</p>
-            <ol>
-              <li>
-                <strong>Extend your desktop.</strong>
-                <span>
-                  In macOS System Settings → Displays, set the projector to an
-                  extended display. Place the projector so your object is fully
-                  inside its beam.
-                </span>
-              </li>
-              <li>
-                <strong>Find the edges.</strong>
-                <span>
-                  Choose your projector under Target display and open output.
-                  Use a rectangle for a flat face, or the Line tool to trace
-                  each corner. Click the first point again to close your
-                  outline.
-                </span>
-              </li>
-              <li>
-                <strong>Make it yours.</strong>
-                <span>
-                  Each outline is its own layer. Select a layer and choose an
-                  animation; try Shape effects to light its edges. Add a Mask to
-                  cut light out around a window or doorway. Save your project to
-                  keep the layout.
-                </span>
-              </li>
-            </ol>
-            <div className="help-tip">
-              <kbd>G</kbd> shows your outline on the projector. <kbd>B</kbd>
-              instantly blacks out the light.
-            </div>
+            <SetupSteps />
             <button
               className="output-button"
               onClick={() => {
@@ -2405,8 +2827,39 @@ function App() {
             >
               Start with the calibration grid <Crosshair size={16} />
             </button>
+            <DeviceSection storage={device.storage} />
           </section>
         </div>
+      )}
+      {presenting && (
+        <PresentMode
+          project={renderProject}
+          stageRef={presentStage}
+          stageHandlers={stageHandlers}
+          guides={renderProject.surfaces
+            .filter((s) => s.visible)
+            .map((s) => ({
+              id: s.id,
+              points: surfacePoints(s),
+              selected: s.id === selected,
+              mask: s.kind === "mask",
+            }))}
+          points={surface?.visible ? selectedPoints : []}
+          corner={corner}
+          locked={!!surface?.locked}
+          onOverlayDown={stagePointerDown}
+          onHandleDown={(e, index) => beginDrag(e, index)}
+          onSelectCorner={setCorner}
+          onNudge={nudge}
+          onBlackout={blackout}
+          onTogglePlay={() =>
+            setProject((p) => ({ ...p, playing: !p.playing }))
+          }
+          onBrightness={(brightness) =>
+            setProject((p) => ({ ...p, brightness }))
+          }
+          onExit={exitPresent}
+        />
       )}
       <input
         hidden
@@ -2415,15 +2868,7 @@ function App() {
         accept="image/png,image/jpeg,image/webp,video/mp4,video/webm,video/quicktime"
         multiple
         onChange={(e) => {
-          const files = Array.from(e.target.files || []);
-          const media: Media[] = files.map((file) => ({
-            id: crypto.randomUUID(),
-            name: file.name,
-            kind: file.type.startsWith("video") ? "video" : "image",
-            url: URL.createObjectURL(file),
-          }));
-          commit({ ...project, media: [...project.media, ...media] });
-          setTab("media");
+          importBrowserFiles(Array.from(e.target.files || []));
           e.target.value = "";
         }}
       />
@@ -2438,18 +2883,12 @@ function App() {
           try {
             if (file.size > 5 * 1024 * 1024)
               throw new Error("Project files must be smaller than 5 MB.");
-            const next = validateBrowserProject(JSON.parse(await file.text()));
-            commit({
-              ...next,
-              media: [],
-              surfaces: next.surfaces.map((s) => ({
-                ...s,
-                source: PATTERNS.includes(s.source as any) ? s.source : "grid",
-              })),
-              blackout: true,
-            });
+            const next = projectFromFile(JSON.parse(await file.text()));
+            commit(next);
             message(
-              "Project loaded in blackout. Browser media must be reimported.",
+              next.media.length
+                ? "Project loaded in blackout. Layers that use media stay dark until you import the files again."
+                : "Project loaded in blackout.",
             );
           } catch (err) {
             setError(String(err));

@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -41,7 +41,7 @@ const escapeHtml = (text) =>
     await fs.readFile(path.join(root, "shared/patterns.json"), "utf8"),
   ).filter((pattern) => pattern.category === "Shape");
   assert.equal(catalog.length, 8, "Expected eight shape animations");
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage({
       viewport: { width: 1320, height: 680 },
@@ -49,7 +49,7 @@ const escapeHtml = (text) =>
     });
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    await page.goto("http://127.0.0.1:5178/tests/advanced-harness.html");
+    await page.goto(`${baseUrl()}/tests/advanced-harness.html`);
     await page.waitForFunction(() => window.advancedHarness);
     const frames = [];
     await fs.mkdir(path.join(root, "public/previews"), { recursive: true });

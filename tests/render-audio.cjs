@@ -1,4 +1,4 @@
-const { chromium } = require("playwright");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const zero = { active: true, level: 0, bass: 0, mid: 0, treble: 0, beat: 0 };
 const loud = { active: true, level: 1, bass: 1, mid: 1, treble: 1, beat: 1 };
@@ -23,12 +23,12 @@ function near(actual, expected, label) {
   );
 }
 (async () => {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   try {
     const page = await browser.newPage();
     const errors = [];
     page.on("pageerror", (e) => errors.push(e.message));
-    await page.goto("http://127.0.0.1:5178/tests/advanced-harness.html");
+    await page.goto(`${baseUrl()}/tests/advanced-harness.html`);
     await page.waitForFunction(() => window.advancedHarness);
     const render = (surfaces, options = {}) =>
       page.evaluate(

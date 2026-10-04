@@ -1,11 +1,11 @@
-const { chromium } = require("playwright");
+const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const path = require("node:path");
 
 // Isolated browser storage and no desktop bridge: this never changes a live projector session.
 (async () => {
-  const browser = await chromium.launch({ channel: "chrome", headless: true });
+  const browser = await launchBrowser();
   const context = await browser.newContext({
     viewport: { width: 1460, height: 940 },
   });
@@ -81,7 +81,7 @@ const path = require("node:path");
   const close = (a, b, tolerance = 0.006) =>
     assert.ok(Math.abs(a - b) < tolerance, `${a} != ${b}`);
   try {
-    await page.goto(process.env.PRISM_TEST_URL || "http://127.0.0.1:5178");
+    await page.goto(baseUrl());
     await page.waitForSelector(".stage canvas");
     await page.waitForFunction(() => localStorage.getItem("prism-draft"));
     assert.equal(await page.evaluate(() => typeof window.prism), "undefined");
