@@ -40,9 +40,12 @@ async function openApp(browser, device, options = {}) {
   const touch = device.touch !== false;
   const context = await browser.newContext({
     viewport: { width: device.width, height: device.height },
-    deviceScaleFactor: device.dpr ?? 2,
+    // Layout does not depend on density, and a density of 1 renders three
+    // times faster in software. Screenshots for review use 2.
+    deviceScaleFactor: device.dpr ?? (SHOTS ? 2 : 1),
     isMobile: touch,
     hasTouch: touch,
+    reducedMotion: options.reducedMotion ? "reduce" : "no-preference",
   });
   await context.addInitScript(DRAW_COUNTER);
   if (options.init) await context.addInitScript(options.init);
@@ -51,8 +54,8 @@ async function openApp(browser, device, options = {}) {
   page.on("pageerror", (error) => errors.push(error.message));
   page.setDefaultTimeout(30000);
   if (options.setup) await options.setup(page, context);
-  await page.goto(baseUrl());
-  await page.waitForSelector(".stage canvas");
+  await page.goto(new URL(options.route || "", baseUrl()).href);
+  await page.waitForSelector(options.selector || ".stage canvas");
   await settle(page);
   const cdp = touch ? await context.newCDPSession(page) : null;
   return {
@@ -229,7 +232,8 @@ const pass = (text) => {
 // ---------------------------------------------------------------------------
 
 async function layoutChecks(browser, device) {
-  const app = await openApp(browser, device);
+  // Reduced motion: the checks measure where things end up, not the slide-in.
+  const app = await openApp(browser, device, { reducedMotion: true });
   const { page } = app;
   const landscape = device.width > device.height;
   const label = device.name;
@@ -277,7 +281,7 @@ async function layoutChecks(browser, device) {
   assert.equal((await project(page)).name, "Stairwell test");
 
   // The stage keeps the project's aspect ratio and fits its area.
-  const fit = async (minHeight, minWidth) => {
+  const fit = async (minHeight, minWidth, ratio = 1920 / 1080) => {
     const g = await page.evaluate(() => {
       const rect = (selector) => {
         const r = document.querySelector(selector).getBoundingClientRect();
@@ -290,7 +294,7 @@ async function layoutChecks(browser, device) {
         h: innerHeight,
       };
     });
-    near(g.stage.w / g.stage.h, 1920 / 1080, 0.03, `${label}: stage aspect`);
+    near(g.stage.w / g.stage.h, ratio, 0.03, `${label}: stage aspect`);
     assert.ok(
       g.stage.x >= g.area.x - 0.5 &&
         g.stage.x + g.stage.w <= g.area.x + g.area.w + 0.5,
@@ -452,6 +456,23 @@ async function layoutChecks(browser, device) {
     );
     await shot(app, `${device.width}x${device.height}-${sheet.toLowerCase()}`);
   }
+
+  // The stage follows the project's own aspect ratio, whatever the canvas is.
+  await openSheet(app, "Show");
+  const resolution = page.getByRole("combobox", { name: "Canvas resolution" });
+  await resolution.selectOption("1024x768");
+  await settle(page);
+  await fit(landscape ? 100 : 90, 150, 1024 / 768);
+  await closeSheet(app, "Show");
+  await fit(landscape ? 100 : 90, 150, 1024 / 768);
+  await openSheet(app, "Show");
+  await resolution.selectOption("1920x1200");
+  await closeSheet(app, "Show");
+  await fit(landscape ? 100 : 90, 150, 1920 / 1200);
+  await openSheet(app, "Show");
+  await resolution.selectOption("1920x1080");
+  await closeSheet(app, "Show");
+  await fit(landscape ? 100 : 90, 150);
 
   // Close paths: active tab, close button, backdrop, Escape. Focus returns to the tab.
   await openSheet(app, "Layers");
@@ -847,6 +868,22 @@ async function touchEditing(browser) {
   await page.getByRole("button", { name: "Cancel drawing" }).click();
   assert.equal(await page.locator(".draft-handle").count(), 0);
   assert.equal((await project(page)).surfaces.length, 3);
+  // With three points the Close outline button finishes the shape.
+  await page.getByRole("button", { name: "Line tool", exact: true }).click();
+  for (const [fx, fy] of [
+    [0.5, 0.55],
+    [0.7, 0.55],
+    [0.6, 0.85],
+  ])
+    await page.touchscreen.tap(hit.x + hit.w * fx, hit.y + hit.h * fy);
+  await page
+    .getByRole("button", { name: "Close outline", exact: true })
+    .click();
+  await waitFor(
+    async () => (await project(page)).surfaces.length === 4,
+    "the Close outline button should finish the outline",
+  );
+  assert.equal(await page.locator(".draft-handle").count(), 0);
   assert.deepEqual(app.errors, []);
   await app.context.close();
   pass(
@@ -899,16 +936,14 @@ async function pointEditing(browser) {
       if (++ups < 2) return;
       document.removeEventListener("pointerup", onUp);
       setTimeout(() => {
-        document
-          .querySelector(".stage")
-          .dispatchEvent(
-            new MouseEvent("dblclick", {
-              bubbles: true,
-              cancelable: true,
-              clientX: x,
-              clientY: y,
-            }),
-          );
+        document.querySelector(".stage").dispatchEvent(
+          new MouseEvent("dblclick", {
+            bubbles: true,
+            cancelable: true,
+            clientX: x,
+            clientY: y,
+          }),
+        );
       }, 0);
     };
     document.addEventListener("pointerup", onUp);
@@ -1721,8 +1756,60 @@ async function resizeChecks(browser) {
   );
   assert.deepEqual(app.errors, []);
   await app.context.close();
+
+  // Turning a phone sideways keeps the open sheet and swaps it for the drawer.
+  const phone = await openApp(browser, { ...PHONE, dpr: 1 });
+  await openSheet(phone, "Layers");
+  const panel = phone.page.locator("#sheet-left");
+  assert.ok((await panel.boundingBox()).height <= PHONE.height * 0.55 + 1);
+  await phone.page.setViewportSize({ width: 844, height: 390 });
+  await settle(phone.page);
+  assert.equal(
+    await tab(phone.page, "Layers").getAttribute("aria-expanded"),
+    "true",
+    "the sheet stays open when the phone turns",
+  );
+  await waitFor(async () => {
+    const workspace = await phone.page.locator(".workspace").boundingBox();
+    return (
+      Math.abs((await panel.boundingBox()).width / workspace.width - 0.45) <
+      0.02
+    );
+  }, "the sheet becomes a side drawer in landscape");
+  await phone.page.setViewportSize({ width: 390, height: 844 });
+  await settle(phone.page);
+  await waitFor(
+    async () => (await panel.boundingBox()).width >= 389,
+    "and a bottom sheet again in portrait",
+  );
+  assert.ok((await panel.boundingBox()).height <= PHONE.height * 0.55 + 1);
+  assert.deepEqual(phone.errors, []);
+  await phone.context.close();
+
+  // The projector window route gets no editor chrome and stays sharp.
+  const out = await openApp(
+    browser,
+    { name: "output", width: 960, height: 540, touch: false, dpr: 2 },
+    { route: "#output", selector: "canvas" },
+  );
+  assert.equal(
+    await out.page.locator(".app-shell").count(),
+    0,
+    "the output route has no editor",
+  );
+  const sharp = await out.page.evaluate(() => {
+    const c = document.querySelector("canvas");
+    const r = c.getBoundingClientRect();
+    return { w: c.width, cssW: r.width };
+  });
+  assert.ok(
+    Math.abs(sharp.w - Math.round(sharp.cssW * 2)) <= 1,
+    `the output canvas is not capped: ${sharp.w} for ${sharp.cssW} css px`,
+  );
+  assert.deepEqual(out.errors, []);
+  await out.context.close();
   pass(
-    "resize: 1049px is compact, 1050px is desktop, state resets without a reload",
+    "resize: 1049px is compact, 1050px is desktop, turning a phone keeps the sheet, output route untouched",
   );
 }
 
