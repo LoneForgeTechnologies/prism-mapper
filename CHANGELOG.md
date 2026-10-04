@@ -8,6 +8,7 @@ This version is in development. The 0.5.0 downloads do not include these scene a
 
 - Capture complete mapping looks as named scenes, load a scene into the editor and update its geometry, masks, sources and effects. Each scene keeps its own snapshot and uses the project's shared media library.
 - Add local MP4, MOV or WebM videos as scenes and ordered timeline clips. Clip lengths use video metadata, with an editable two-minute fallback when a supported length cannot be read. Twenty two-minute clips make a 40-minute rotation.
+- A full-width time ruler shows the complete rotation, with duration-scaled named video blocks beneath it. Click the ruler to seek; a moving playhead, elapsed fill and active clip highlight show where playback is. The ordered clip list remains below for editing.
 - Reorder clips by drag or arrows, duplicate or remove clips, set lengths, seek, play, pause, stop and loop the rotation. Scene changes use clean cuts and video audio remains muted. Shorter videos hold their final frame until the clip ends.
 - Preview and projector output share a timestamped show clock. Mapping handles and projector guides disappear during playback; editing or opening another project stops the show. No overlapping tracks or crossfades are added.
 - Save separate project files for band intro, pre-show and each set. The desktop panel reopens the eight most recently opened or saved files. New show retains the current mapping and media while clearing scenes and clips.

@@ -144,6 +144,29 @@ export function ShowPanel(props: Props) {
     change({ ...show, cues });
   };
   let start = 0;
+  let timelineStart = 0;
+  const timelineClips = show.cues.map((cue, index) => {
+    const begins = timelineStart;
+    timelineStart += cue.duration;
+    return {
+      cue,
+      index,
+      begins,
+      scene: show.scenes.find((item) => item.id === cue.sceneId),
+    };
+  });
+  const tickStep =
+    [1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 14400].find(
+      (step) => step >= duration / 8,
+    ) ?? 14400;
+  const ticks = [0];
+  for (let tick = tickStep; tick < duration; tick += tickStep) {
+    if (duration - tick >= tickStep * 0.6) ticks.push(tick);
+  }
+  if (duration) ticks.push(duration);
+  const playhead = duration
+    ? Math.min(1, Math.max(0, props.position / duration))
+    : 0;
   return (
     <section
       ref={panelRef}
@@ -205,16 +228,6 @@ export function ShowPanel(props: Props) {
         <output aria-label="Show position">
           {showTime(props.position)} / {showTime(duration)}
         </output>
-        <input
-          type="range"
-          aria-label="Show playhead"
-          min={0}
-          max={duration || 1}
-          step={0.1}
-          value={Math.min(props.position, duration)}
-          disabled={!duration}
-          onChange={(event) => props.onSeek(Number(event.target.value))}
-        />
         <label>
           <input
             type="checkbox"
@@ -238,6 +251,107 @@ export function ShowPanel(props: Props) {
           adding more.
         </p>
       )}
+      <div className="show-timeline">
+        <div className="show-section-heading">
+          <h3>
+            Timeline{" "}
+            <small>
+              {show.cues.length} clips · {showTime(duration)} total
+            </small>
+          </h3>
+          <button
+            onClick={props.onImportVideos}
+            disabled={
+              props.busy || show.scenes.length >= 128 || show.cues.length >= 512
+            }
+          >
+            <Film size={14} />
+            {props.busy ? "Reading clips…" : "Add videos to timeline"}
+          </button>
+        </div>
+        <div className="show-timeline-scroll">
+          <div className="show-timeline-canvas">
+            <div
+              className="show-time-ruler"
+              aria-label="Show time ruler"
+              style={{
+                backgroundSize: `${duration ? (tickStep / duration) * 100 : 100}% 100%`,
+              }}
+            >
+              {ticks.map((tick) => (
+                <span
+                  key={tick}
+                  className={`show-time-tick${tick === 0 ? " first" : tick === duration ? " last" : ""}`}
+                  style={{ left: `${duration ? (tick / duration) * 100 : 0}%` }}
+                >
+                  {showTime(tick)}
+                </span>
+              ))}
+              <input
+                type="range"
+                aria-label="Show playhead"
+                aria-valuetext={`${showTime(props.position)} of ${showTime(duration)}`}
+                min={0}
+                max={duration || 1}
+                step={0.1}
+                value={Math.min(props.position, duration)}
+                disabled={!duration}
+                onChange={(event) => props.onSeek(Number(event.target.value))}
+              />
+            </div>
+            <div className="show-timeline-strip" aria-label="Timeline overview">
+              {timelineClips.map(({ cue, index, begins, scene }) => (
+                <button
+                  key={cue.id}
+                  style={{ width: `${(cue.duration / duration) * 100}%` }}
+                  className={current?.index === index ? "current" : ""}
+                  aria-current={current?.index === index ? "step" : undefined}
+                  aria-label={`Seek to clip ${index + 1}: ${scene?.name ?? "Missing scene"} at ${showTime(begins)}`}
+                  title={`${scene?.name ?? "Missing scene"}, ${showTime(begins)} to ${showTime(begins + cue.duration)}`}
+                  onClick={() => props.onSeek(begins)}
+                >
+                  {current?.index === index && (
+                    <span
+                      className="show-clip-progress"
+                      style={{
+                        width: `${Math.min(100, Math.max(0, ((props.position - begins) / cue.duration) * 100))}%`,
+                      }}
+                    />
+                  )}
+                  <span className="show-clip-number">{index + 1}</span>
+                  <strong>{scene?.name ?? "Missing scene"}</strong>
+                  <span className="show-clip-length">
+                    {showTime(cue.duration)}
+                  </span>
+                </button>
+              ))}
+              {!show.cues.length && (
+                <p className="show-empty">
+                  Add your videos to build a timeline.
+                </p>
+              )}
+            </div>
+            {duration > 0 && (
+              <div
+                className="show-timeline-playhead"
+                style={{ left: `${playhead * 100}%` }}
+                aria-hidden="true"
+              >
+                <span />
+              </div>
+            )}
+          </div>
+        </div>
+        <div className="show-timeline-caption">
+          <span>Click the ruler to seek. Clips play from left to right.</span>
+          {current && (
+            <strong>
+              {props.playing ? "Playing" : "Paused"}:{" "}
+              {timelineClips[current.index]?.scene?.name ?? "Missing scene"}
+            </strong>
+          )}
+        </div>
+      </div>
       <div className="show-columns">
         <div className="show-scenes">
           <div className="show-section-heading">
@@ -319,51 +433,15 @@ export function ShowPanel(props: Props) {
             </div>
           ))}
         </div>
-        <div className="show-timeline">
+        <div className="show-playlist">
           <div className="show-section-heading">
-            <h3>
-              Timeline{" "}
-              <small>
-                {show.cues.length} clips · {showTime(duration)}
-              </small>
-            </h3>
-            <button
-              onClick={props.onImportVideos}
-              disabled={
-                props.busy ||
-                show.scenes.length >= 128 ||
-                show.cues.length >= 512
-              }
-            >
-              <Film size={14} />{" "}
-              {props.busy ? "Reading clips…" : "Add videos to timeline"}
-            </button>
+            <h3>Clip order & lengths</h3>
           </div>
           {!show.cues.length && (
             <p className="show-empty">
-              Add clips in show order. Set each length to 2:00 for two-minute
-              videos, then loop the sequence for pre-show or a set.
+              Add videos above, or add a captured scene to the timeline.
             </p>
           )}
-          <div className="show-timeline-strip" aria-label="Timeline overview">
-            {show.cues.map((cue, index) => (
-              <button
-                key={cue.id}
-                style={{ flexGrow: cue.duration }}
-                className={current?.index === index ? "current" : ""}
-                title={`${show.scenes.find((scene) => scene.id === cue.sceneId)?.name}, ${showTime(cue.duration)}`}
-                onClick={() =>
-                  props.onSeek(
-                    show.cues
-                      .slice(0, index)
-                      .reduce((sum, item) => sum + item.duration, 0),
-                  )
-                }
-              >
-                {index + 1}
-              </button>
-            ))}
-          </div>
           <ol className="show-cues">
             {show.cues.map((cue, index) => {
               const begins = start;
