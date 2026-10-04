@@ -681,7 +681,14 @@ async function touchEditing(browser) {
   const before = await project(page);
   const h2 = await handleCenter(1);
   await touch.down(h2);
-  await touch.move({ x: h2.x + 2, y: h2.y + 1 });
+  for (const [dx, dy] of [
+    [2, 1],
+    [-1, 2],
+    [3, -2],
+    [-2, -1],
+    [1, 3],
+  ])
+    await touch.move({ x: h2.x + dx, y: h2.y + dy });
   await touch.up();
   await settle(page);
   assert.deepEqual(
@@ -760,18 +767,22 @@ async function touchEditing(browser) {
   await touch.cancel();
   await settle(page);
   const afterCancel = pointsOf((await project(page)).surfaces[0]);
+  // A late move for the cancelled finger, a little way along: if the drag were
+  // still alive the point would follow it.
   const stray = await page.evaluate(() => {
     const id = window.__ids.at(-1);
     const stage = document.querySelector(".stage");
-    const r = stage.getBoundingClientRect();
+    const h = document
+      .querySelector(".stage .corner-handle")
+      .getBoundingClientRect();
     stage.dispatchEvent(
       new PointerEvent("pointermove", {
         pointerId: id,
         pointerType: "touch",
         isPrimary: true,
         bubbles: true,
-        clientX: r.x + r.width * 0.9,
-        clientY: r.y + r.height * 0.9,
+        clientX: h.x + h.width / 2 + 30,
+        clientY: h.y + h.height / 2 + 6,
       }),
     );
     return id;
