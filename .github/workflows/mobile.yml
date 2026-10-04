@@ -228,6 +228,10 @@ jobs:
             exit 1
           fi
           if [ -n "$KEYSTORE" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            if [ -z "$EXPECTED_SIGNER" ]; then
+              echo "::error::A permanent-key build requires PRISM_ANDROID_SIGNER_SHA256 to verify its signing certificate."
+              exit 1
+            fi
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"

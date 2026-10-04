@@ -48,6 +48,34 @@ async function range(page, value) {
       element.dispatchEvent(new Event("change", { bubbles: true }));
     }, value);
 }
+async function duration(page, index, seconds) {
+  const input = panel(page)
+    .getByRole("textbox", {
+      name: "Clip length, minutes and seconds",
+      exact: true,
+    })
+    .nth(index);
+  await input.fill(String(seconds));
+  await input.press("Enter");
+}
+async function opened(page, name) {
+  await wait(
+    page,
+    async (name) => {
+      const project = await window.prism.getProject();
+      const nameInput = document.querySelector('[aria-label="Project name"]');
+      const playhead = document.querySelector('[aria-label="Show playhead"]');
+      return (
+        project?.name === name &&
+        !project.transport &&
+        !project.playing &&
+        nameInput?.value === name &&
+        playhead?.max === "360"
+      );
+    },
+    name,
+  );
+}
 async function unblackout(page) {
   if (!(await read(page)).blackout) return;
   await page.evaluate(() => document.activeElement?.blur());
@@ -192,6 +220,21 @@ async function launch(directory, errors) {
       "native media protocol serves a real local MP4",
     );
 
+    // Keep real short-MP4 metadata and seek checks above. Longer show cues let
+    // Save/Recent UI checks run under software graphics without racing a 5s end.
+    for (let index = 0; index < imported.show.cues.length; index++)
+      await duration(page, index, 120);
+    await wait(page, async () =>
+      (await window.prism.getProject()).show.cues.every(
+        (cue) => cue.duration === 120,
+      ),
+    );
+    const expectedShow = (await read(page)).show;
+    assert.deepEqual(
+      expectedShow.cues.map((cue) => cue.duration),
+      [120, 120, 120],
+    );
+
     const names = ["Band intro", "Pre-show", "Set 1", "Set 2"];
     const projects = names.map((name) =>
       path.join(showsDirectory, `${name}.prism.json`),
@@ -215,15 +258,17 @@ async function launch(directory, errors) {
           ),
         [names[index], projects[index]],
       );
-      await page
-        .getByRole("status")
-        .filter({ hasText: "Project saved" })
-        .waitFor();
+      await wait(page, () => {
+        const save = Array.from(
+          document.querySelectorAll(".show-heading-actions button"),
+        ).find((button) => button.textContent.trim() === "Save project");
+        return save && !save.disabled;
+      });
       const saved = JSON.parse(await fs.readFile(projects[index], "utf8"));
       assert.equal(saved.version, 3);
       assert.equal(saved.name, names[index]);
       assert.equal(saved.transport, undefined);
-      assert.deepEqual(saved.show, imported.show);
+      assert.deepEqual(saved.show, expectedShow);
       assert.deepEqual(
         saved.media.map((media) => media.path),
         [
@@ -244,14 +289,7 @@ async function launch(directory, errors) {
     for (let index = 0; index < names.length; index++) {
       await openDialog(app, [projects[index]]);
       await button(page, "Open").click();
-      await wait(
-        page,
-        async (name) => {
-          const project = await window.prism.getProject();
-          return project?.name === name && !project.transport;
-        },
-        names[index],
-      );
+      await opened(page, names[index]);
       const reopened = await read(page);
       assert.equal(
         reopened.playing,
@@ -263,7 +301,7 @@ async function launch(directory, errors) {
         imported.blackout,
         "native show loading preserves the saved blackout setting",
       );
-      assert.deepEqual(reopened.show, imported.show);
+      assert.deepEqual(reopened.show, expectedShow);
       assert.ok(
         reopened.media.every(
           (media) => media.url && path.isAbsolute(media.path),
@@ -275,10 +313,7 @@ async function launch(directory, errors) {
     await recent(page)
       .getByRole("button", { name: "Set 1", exact: true })
       .click();
-    await wait(
-      page,
-      async () => (await window.prism.getProject())?.name === "Set 1",
-    );
+    await opened(page, "Set 1");
     await unblackout(page);
     await panel(page)
       .getByRole("button", { name: "Play show", exact: true })
@@ -290,12 +325,7 @@ async function launch(directory, errors) {
     await recent(page)
       .getByRole("button", { name: "Pre-show", exact: true })
       .click();
-    await wait(page, async () => {
-      const project = await window.prism.getProject();
-      return (
-        project?.name === "Pre-show" && !project.transport && !project.playing
-      );
-    });
+    await opened(page, "Pre-show");
     assert.equal(
       await panel(page)
         .getByRole("button", { name: "Stop show", exact: true })
@@ -324,13 +354,10 @@ async function launch(directory, errors) {
     await recent(page)
       .getByRole("button", { name: "Band intro", exact: true })
       .click();
-    await wait(
-      page,
-      async () => (await window.prism.getProject())?.name === "Band intro",
-    );
+    await opened(page, "Band intro");
     assert.equal((await read(page)).playing, false);
     await unblackout(page);
-    await range(page, 2.4);
+    await range(page, 120.4);
     await pixel(page, [0, 0, 255]);
     await panel(page)
       .getByRole("button", { name: "Stop show", exact: true })
