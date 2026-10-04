@@ -8,9 +8,10 @@
 # The debug build is inspected from the inside over the WebView DevTools
 # (mobile/android-smoke.mjs), and then its web view process is stopped to check
 # that the app comes back. The sideload build is the APK people install, so it
-# only gets the outside checks: it starts, stays alive, shows something and
-# survives a rotation. Both get a screenshot and a filtered system log.
-# Every check that fails is reported, then the script exits with 1.
+# only gets the outside checks: it starts, stays alive, shows something,
+# survives a rotation and survives Google Play services being stopped. Both
+# get a screenshot and a filtered system log. Every check that fails is
+# reported, then the script exits with 1.
 #
 # Every adb command has a time limit, so a stuck emulator fails a check
 # instead of hanging the job. Results and, for failures, an excerpt of the
@@ -282,6 +283,48 @@ check_recovery() {
   note "$label: after the web view process was stopped: $(echo "$SHOT_STATS" | tr '\n' ' ')"
 }
 
+# Which content providers of other apps this app is connected to, and what the
+# font provider of Google Play services knows about it. Android stops an app
+# whose connection to a provider is cut because the process of the provider
+# died, so a connection to Google Play services can take the app down with it.
+#   provider_report <label>
+provider_report() {
+  local label="$1" dump connections fonts
+  dump="$(adbt 90 shell dumpsys activity providers 2> /dev/null | tr -d '\r')"
+  echo "$dump" > "$OUT/providers-$label.txt"
+  connections="$(grep -E "$PACKAGE" <<< "$dump" | grep -i -E "connection|->|client" | cut -c1-200 | head -n 6 | tr '\n' '|')"
+  fonts="$(grep -m1 -A18 "ContentProviderRecord.*FontsProvider" <<< "$dump" | cut -c1-160 | tr '\n' '|')"
+  notice "Provider connections of the app ($label): ${connections:-none found}"
+  notice "Font provider of Google Play services ($label): ${fonts:-no record}"
+}
+
+# Google Play services restarts now and then (an update, a crash, and often on
+# the emulator images). Android stops every app that is connected to one of its
+# content providers when that happens, and a stopped app is a dark projector.
+# So stop Play services and check that the app lives on in the same process.
+#   check_play_services_restart <label> <app process>
+check_play_services_restart() {
+  local label="$1" before="$2" after killed
+  if ! adbt 30 shell pm list packages com.google.android.gms 2> /dev/null | tr -d '\r' | grep -q "^package:com.google.android.gms$"; then
+    note "$label: this image has no Google Play services, so there is nothing to restart."
+    return
+  fi
+  if [ -z "$before" ]; then return; fi
+  stage "$label: stop Google Play services"
+  provider_report "$label"
+  adbt 30 shell am force-stop com.google.android.gms > /dev/null 2>&1 || true
+  sleep 15
+  after="$(app_pid)"
+  killed="$(adbt 60 logcat -b events,system -d -v brief 2> /dev/null | tr -d '\r' | grep -E "am_kill|Killing" | grep "$PACKAGE" | tail -n 3 | cut -c1-300)"
+  if [ -z "$after" ]; then
+    fail "$label: the app was stopped when Google Play services was stopped. ${killed:-No kill was logged.}"
+  elif [ "$after" != "$before" ]; then
+    fail "$label: the app process changed from $before to $after when Google Play services was stopped. $killed"
+  else
+    note "$label: the app stayed alive (process $after) when Google Play services was stopped."
+  fi
+}
+
 is_debuggable() {
   adbt 60 shell dumpsys package "$PACKAGE" | tr -d '\r' | grep -E "pkgFlags=|flags=" | grep -q "DEBUGGABLE"
 }
@@ -344,6 +387,7 @@ check_sideload() {
   else
     note "Skipping the landscape screenshot."
   fi
+  check_play_services_restart sideload "$before"
   stage "sideload: log check"
   check_run sideload "$before" no
   notice "sideload build: version $EXPECTED_VERSION installed, process ${before:-none}, portrait: $(echo "$portrait" | tr '\n' ' ' | head -c 450) landscape: $(echo "$landscape" | tr '\n' ' ' | head -c 450)"
