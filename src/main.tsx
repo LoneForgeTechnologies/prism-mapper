@@ -81,7 +81,13 @@ import {
 import type { MappingOverlay } from "./overlay";
 import { portableProject, projectFromFile } from "./project-validation";
 import { readBootProject } from "./persistence";
-import { projectFileName, saveFile, shortcutLabel } from "./platform";
+import {
+  helpPlatform,
+  projectFileName,
+  saveFile,
+  shortcutLabel,
+} from "./platform";
+import { helpGuide } from "./help-text";
 import { usePersistence } from "./usePersistence";
 import { DeviceSection } from "./DeviceSection";
 import {
@@ -297,6 +303,27 @@ function Output() {
       )}
       {error && <div className="output-error">Output unavailable: {error}</div>}
     </div>
+  );
+}
+/** The numbered steps and the tip of the setup guide, worded for this device. */
+function SetupSteps() {
+  const guide = helpGuide(helpPlatform());
+  return (
+    <>
+      <ol>
+        {guide.steps.map((step) => (
+          <li key={step.title}>
+            <strong>{step.title}</strong>
+            <span>{step.text}</span>
+          </li>
+        ))}
+      </ol>
+      <div className="help-tip">
+        {guide.tip.map((part, index) =>
+          typeof part === "string" ? part : <kbd key={index}>{part.key}</kbd>,
+        )}
+      </div>
+    </>
   );
 }
 function App() {
@@ -2780,38 +2807,7 @@ function App() {
               light installation.
             </h1>
             <p>All you need is a projector, an object, and a few minutes.</p>
-            <ol>
-              <li>
-                <strong>Extend your desktop.</strong>
-                <span>
-                  In macOS System Settings → Displays, set the projector to an
-                  extended display. Place the projector so your object is fully
-                  inside its beam.
-                </span>
-              </li>
-              <li>
-                <strong>Find the edges.</strong>
-                <span>
-                  Choose your projector under Target display and open output.
-                  Use a rectangle for a flat face, or the Line tool to trace
-                  each corner. Click the first point again to close your
-                  outline.
-                </span>
-              </li>
-              <li>
-                <strong>Make it yours.</strong>
-                <span>
-                  Each outline is its own layer. Select a layer and choose an
-                  animation; try Shape effects to light its edges. Add a Mask to
-                  cut light out around a window or doorway. Save your project to
-                  keep the layout.
-                </span>
-              </li>
-            </ol>
-            <div className="help-tip">
-              <kbd>G</kbd> shows your outline on the projector. <kbd>B</kbd>
-              instantly blacks out the light.
-            </div>
+            <SetupSteps />
             <button
               className="output-button"
               onClick={() => {

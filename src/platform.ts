@@ -117,6 +117,25 @@ export function isIosDevice(): boolean {
   return n.platform === "MacIntel" && (n.maxTouchPoints ?? 0) > 1;
 }
 
+/**
+ * Which setup guide fits this device. The desktop app has a window of its own
+ * for the projector and its steps depend on the system; a phone or a tablet has
+ * only its own screen; a browser on a computer has a single window as well.
+ */
+export type HelpPlatform = "mac" | "windows" | "desktop" | "touch" | "browser";
+
+export function helpPlatform(): HelpPlatform {
+  if (isNative()) return "touch";
+  if (isElectron()) {
+    const n = nav();
+    const system = `${n?.platform ?? ""} ${n?.userAgent ?? ""}`;
+    if (/Mac/i.test(system)) return "mac";
+    if (/Windows|Win32|Win64/i.test(system)) return "windows";
+    return "desktop";
+  }
+  return isIosDevice() || isTouchPrimary() ? "touch" : "browser";
+}
+
 /** Project file name for browser and mobile saves: always ends in `.prism.json`. */
 export function projectFileName(projectName: string): string {
   const base = projectName.replace(/[^a-z0-9 -]/gi, "").trim();

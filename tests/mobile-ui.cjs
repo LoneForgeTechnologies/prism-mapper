@@ -2130,6 +2130,53 @@ async function oldWebViewChecks(browser) {
   );
 }
 
+// The setup guide describes the device it is open on: a phone has no second
+// window and no keyboard, a browser on a computer has one window, and neither
+// is the desktop app with its Target display.
+async function helpTextChecks(browser) {
+  const guideOn = async (app) => {
+    await app.page
+      .getByRole("button", { name: "Quick start and shortcuts", exact: true })
+      .click();
+    const dialog = app.page.locator(".help-modal");
+    await dialog.waitFor();
+    const keys = await dialog.locator(".help-tip kbd").allTextContents();
+    return { text: await dialog.textContent(), keys };
+  };
+  const NO_DASH = /[\u2013\u2014]/;
+
+  const phone = await openApp(browser, { ...PHONE, dpr: 1 });
+  const onPhone = await guideOn(phone);
+  assert.match(onPhone.text, /Connect a screen\./);
+  assert.match(onPhone.text, /Tap Rectangle for a flat face/);
+  assert.match(onPhone.text, /open Show, choose Present on this screen/);
+  assert.doesNotMatch(onPhone.text, /System Settings|Target display|macOS/);
+  assert.doesNotMatch(onPhone.text, NO_DASH);
+  assert.deepEqual(onPhone.keys, [], "no keyboard keys on a phone");
+  assert.deepEqual(phone.errors, []);
+  await phone.context.close();
+
+  const computer = await openApp(browser, {
+    name: "computer 1280x800",
+    width: 1280,
+    height: 800,
+    touch: false,
+    dpr: 1,
+  });
+  const onComputer = await guideOn(computer);
+  assert.match(onComputer.text, /Extend your desktop\./);
+  assert.match(onComputer.text, /drag this window onto it/);
+  assert.match(onComputer.text, /choose Present on this screen/);
+  assert.doesNotMatch(onComputer.text, /Target display|Tap Rectangle/);
+  assert.doesNotMatch(onComputer.text, NO_DASH);
+  assert.deepEqual(onComputer.keys, ["B", "Esc"]);
+  assert.deepEqual(computer.errors, []);
+  await computer.context.close();
+  pass(
+    "setup guide: a phone is told to connect a screen and tap, a browser on a computer to drag the window and present",
+  );
+}
+
 async function resizeChecks(browser) {
   const app = await openApp(browser, {
     name: "resize",
@@ -2258,6 +2305,7 @@ const GROUPS = {
   files: projectFileChecks,
   tabs: secondTabChecks,
   oldWebView: oldWebViewChecks,
+  help: helpTextChecks,
   resize: resizeChecks,
 };
 

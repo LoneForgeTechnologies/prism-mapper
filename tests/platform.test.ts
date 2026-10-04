@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  helpPlatform,
   isElectron,
   isIosDevice,
   isNative,
@@ -519,4 +520,102 @@ test("shortcut labels name Command on Apple devices and Ctrl everywhere else", a
     assert.equal(usesCommandKey(), false);
     assert.equal(shortcutLabel("Z"), "Ctrl+Z");
   });
+});
+
+test("the setup guide follows the device: the desktop app by system, phones and tablets, browsers", async () => {
+  const platformOf = (globals: Globals) =>
+    withGlobals(globals, () => helpPlatform());
+  const desktopApp = { prism: {} };
+  const mac = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Electron/41";
+  const windows = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Electron/41";
+  const linux = "Mozilla/5.0 (X11; Linux x86_64) Electron/41";
+  assert.equal(
+    await platformOf({
+      window: desktopApp,
+      navigator: { platform: "MacIntel", userAgent: mac },
+    }),
+    "mac",
+  );
+  assert.equal(
+    await platformOf({
+      window: desktopApp,
+      navigator: { platform: "Win32", userAgent: windows },
+    }),
+    "windows",
+  );
+  assert.equal(
+    await platformOf({
+      window: desktopApp,
+      navigator: { platform: "Linux x86_64", userAgent: linux },
+    }),
+    "desktop",
+  );
+  // The mobile apps are Capacitor shells, on Android and on iOS.
+  assert.equal(
+    await platformOf({
+      window: { Capacitor: { isNativePlatform: () => true } },
+      navigator: {
+        platform: "Linux armv81",
+        userAgent: "Mozilla/5.0 (Linux; Android 11; Pixel 4)",
+      },
+    }),
+    "touch",
+  );
+  // Phones and tablets in a browser: iOS, iPadOS asking for the desktop site, and
+  // anything whose main pointer is a finger.
+  assert.equal(
+    await platformOf({
+      window: {},
+      navigator: {
+        platform: "iPhone",
+        userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 17_4 like Mac OS X)",
+      },
+    }),
+    "touch",
+  );
+  assert.equal(
+    await platformOf({
+      window: {},
+      navigator: {
+        platform: "MacIntel",
+        userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+        maxTouchPoints: 5,
+      },
+    }),
+    "touch",
+  );
+  assert.equal(
+    await platformOf({
+      window: { matchMedia: media({ "(pointer: coarse)": true }) },
+      navigator: {
+        platform: "Linux armv81",
+        userAgent: "Mozilla/5.0 (Linux; Android 14) Chrome/124 Mobile",
+      },
+    }),
+    "touch",
+  );
+  // A computer, even one with a touch screen, whose main pointer is a mouse.
+  assert.equal(
+    await platformOf({
+      window: { matchMedia: media({ "(pointer: fine)": true }) },
+      navigator: {
+        platform: "Win32",
+        userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124",
+        maxTouchPoints: 10,
+      },
+    }),
+    "browser",
+  );
+  assert.equal(
+    await platformOf({
+      window: {},
+      navigator: { platform: "MacIntel", userAgent: mac, maxTouchPoints: 0 },
+    }),
+    "browser",
+  );
+  // No window or navigator at all (a test, a worker) is the plain browser.
+  assert.equal(
+    await platformOf({ window: undefined, navigator: undefined }),
+    "browser",
+  );
 });

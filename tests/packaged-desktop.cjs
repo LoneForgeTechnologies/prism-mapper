@@ -220,6 +220,36 @@ async function startedWithProject(directory) {
   }
 }
 
+// The setup guide names the steps of the system the app runs on, and the
+// desktop app's own projector controls.
+async function setupGuide(directory) {
+  const { app, page } = await launch(path.join(directory, "profile-guide"));
+  try {
+    await page
+      .getByRole("button", { name: "Quick start and shortcuts", exact: true })
+      .click();
+    const guide = page.locator(".help-modal");
+    await guide.waitFor();
+    const text = await guide.textContent();
+    const expected =
+      {
+        darwin: /In macOS System Settings → Displays, set the projector/,
+        win32: /Press Windows \+ P and choose Extend/,
+      }[process.platform] ||
+      /In your system's display settings, set the projector/;
+    assert.match(text, expected);
+    assert.match(text, /Target display and open output/);
+    assert.doesNotMatch(text, /Present on this screen|Tap |[\u2013\u2014]/);
+    assert.deepEqual(await guide.locator(".help-tip kbd").allTextContents(), [
+      "G",
+      "B",
+    ]);
+    return "setup guide names this system and the projector window";
+  } finally {
+    await app.close();
+  }
+}
+
 // The editor can be made as small as its minimum. There the page has the room
 // it needs (src/style.css .app-shell: 1050 x 700) when the screen can hold that,
 // and otherwise the window still fits the screen. Checked at the scaling
@@ -306,6 +336,7 @@ async function macBundle() {
     if (process.platform === "darwin") lines.push(await macBundle());
     lines.push(await openedProjects(directory));
     lines.push(await startedWithProject(directory));
+    lines.push(await setupGuide(directory));
     for (const scale of [1, 1.25, 1.5])
       lines.push(await windowFits(directory, scale));
     console.log(
