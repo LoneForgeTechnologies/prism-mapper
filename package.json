@@ -20,6 +20,7 @@
     "format:check": "prettier --check src electron tests scripts index.html vite.config.ts",
     "test:animations": "node tests/animations.cjs",
     "test:mix": "node tests/mix.cjs",
+    "test:mobile": "node tests/mobile-ui.cjs",
     "test:mapping": "node tests/render-advanced.cjs && node tests/advanced-ui.cjs",
     "test:desktop-mapping": "node tests/desktop-advanced.cjs",
     "previews:shapes": "node tests/shape-previews.cjs",
