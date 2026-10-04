@@ -1720,6 +1720,87 @@ async function desktopChecks(browser) {
   );
 }
 
+// A project file from the desktop app has media with a path. Opening it in the
+// web app keeps those entries and the layers that use them (dark until the files
+// are imported again), so saving it again and returning it to the desktop loses
+// nothing. tests/project-roundtrip.test.ts covers the file contents.
+async function projectFileChecks(browser) {
+  const app = await openApp(browser, {
+    name: "project file",
+    width: 1280,
+    height: 800,
+    touch: false,
+    dpr: 1,
+  });
+  const { page } = app;
+  const desktopFile = {
+    version: 2,
+    name: "Made on the desktop",
+    width: 1920,
+    height: 1080,
+    surfaces: [
+      {
+        id: "window",
+        name: "Window",
+        corners: [
+          { x: 0.2, y: 0.2 },
+          { x: 0.8, y: 0.2 },
+          { x: 0.8, y: 0.8 },
+          { x: 0.2, y: 0.8 },
+        ],
+        source: "poster",
+        visible: true,
+        locked: false,
+        opacity: 1,
+        color: "#ffffff",
+      },
+    ],
+    media: [
+      { id: "poster", name: "poster.png", kind: "image", path: "media/a.png" },
+    ],
+    brightness: 0.65,
+    blackout: false,
+    playing: true,
+  };
+  await page
+    .locator('input[type="file"][accept=".json,.prism.json"]')
+    .setInputFiles({
+      name: "made on the desktop.prism.json",
+      mimeType: "application/json",
+      buffer: Buffer.from(JSON.stringify(desktopFile)),
+    });
+  await waitFor(
+    async () => (await project(page)).name === "Made on the desktop",
+    "the project file was not opened",
+  );
+  const opened = await project(page);
+  assert.deepEqual(
+    opened.media.map((m) => [m.id, m.name, m.kind, m.path, m.url]),
+    [["poster", "poster.png", "image", "media/a.png", ""]],
+    "the media entry and its path are kept",
+  );
+  assert.equal(
+    opened.surfaces[0].source,
+    "poster",
+    "the layer keeps its media",
+  );
+  assert.equal(opened.blackout, true, "a project from a file starts dark");
+  await page
+    .getByRole("status")
+    .filter({ hasText: /stay dark until you import the files again/ })
+    .waitFor();
+  assert.match(
+    await page.locator(".surface-select small").first().innerText(),
+    /poster\.png/,
+    "the layer names its media",
+  );
+  assert.deepEqual(app.errors, []);
+  await app.context.close();
+  pass(
+    "project file: opening a desktop project in the web app keeps its media entries, paths and layers",
+  );
+}
+
 async function resizeChecks(browser) {
   const app = await openApp(browser, {
     name: "resize",
@@ -1841,6 +1922,7 @@ const GROUPS = {
   hidden: hiddenPage,
   performance: performanceCaps,
   desktop: desktopChecks,
+  files: projectFileChecks,
   resize: resizeChecks,
 };
 

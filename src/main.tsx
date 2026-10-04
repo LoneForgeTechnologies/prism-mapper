@@ -79,7 +79,7 @@ import {
   createShapeSurface,
 } from "./polygon";
 import type { MappingOverlay } from "./overlay";
-import { validateBrowserProject } from "./project-validation";
+import { portableProject, projectFromFile } from "./project-validation";
 import { readBootProject } from "./persistence";
 import { projectFileName, saveFile, shortcutLabel } from "./platform";
 import { usePersistence } from "./usePersistence";
@@ -697,13 +697,9 @@ function App() {
             "Project saved. Media files stay in their original locations.",
           );
       } else {
-        const portable = {
-          ...project,
-          media: project.media.map(({ url, ...m }) => ({ ...m, url: "" })),
-        };
         const outcome = await saveFile(
           projectFileName(project.name),
-          JSON.stringify(portable, null, 2),
+          JSON.stringify(portableProject(project), null, 2),
           "application/json",
         );
         if (outcome !== "cancelled")
@@ -2841,18 +2837,12 @@ function App() {
           try {
             if (file.size > 5 * 1024 * 1024)
               throw new Error("Project files must be smaller than 5 MB.");
-            const next = validateBrowserProject(JSON.parse(await file.text()));
-            commit({
-              ...next,
-              media: [],
-              surfaces: next.surfaces.map((s) => ({
-                ...s,
-                source: PATTERNS.includes(s.source as any) ? s.source : "grid",
-              })),
-              blackout: true,
-            });
+            const next = projectFromFile(JSON.parse(await file.text()));
+            commit(next);
             message(
-              "Project loaded in blackout. Browser media must be reimported.",
+              next.media.length
+                ? "Project loaded in blackout. Layers that use media stay dark until you import the files again."
+                : "Project loaded in blackout.",
             );
           } catch (err) {
             setError(String(err));

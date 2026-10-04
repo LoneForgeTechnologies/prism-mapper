@@ -163,3 +163,27 @@ export function validateBrowserProject(input: unknown): Project {
     playing: bool(p.playing),
   };
 }
+
+/**
+ * The project the web app starts from when a person picks a project file. The
+ * media entries and the layers that use them stay as the file has them, so a
+ * project made on the desktop (its media have a path) goes back to the desktop
+ * whole after it was edited on a phone. The pictures themselves are not in the
+ * file: it starts in blackout, and those layers stay dark until the files are
+ * imported again.
+ */
+export function projectFromFile(input: unknown): Project {
+  return { ...validateBrowserProject(input), blackout: true };
+}
+
+/**
+ * The project as the web app writes it. A blob: address belongs to one page
+ * load and is not saved. The path of media that came from a desktop project is
+ * kept, so the desktop can find the file again.
+ */
+export function portableProject(project: Project): Project {
+  return {
+    ...project,
+    media: project.media.map((media) => ({ ...media, url: "" })),
+  };
+}
