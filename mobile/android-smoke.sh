@@ -16,6 +16,13 @@
 # instead of hanging the job. Results and, for failures, an excerpt of the
 # system log are also written as GitHub annotations (::notice and ::error),
 # so they can be read from the run page and from the API without opening logs.
+#
+# A build whose check fails is checked once more (ATTEMPTS=2), because an
+# emulator on a shared runner now and then stops an app that is fine: the web
+# view draws inside the app's own process, in software. Everything the first
+# attempt left is kept in <output-folder>/attempt-1, its problems are reported
+# as warnings, and the run says that it needed a second attempt. A build that
+# fails every attempt fails the job. Set ATTEMPTS=1 to turn this off.
 
 set -u
 
@@ -29,16 +36,20 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
 EXPECTED_CODE="$(node -p 'const [a,b,c]=require("./package.json").version.split(/[-+]/)[0].split(".").map(Number); a*10000+b*100+c')"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+ATTEMPTS="${ATTEMPTS:-2}"
 TITLE="Android emulator test"
 
 mkdir -p "$OUT"
 failures=0
+# "error" when a failure is final, "warning" while the check can still be
+# repeated. Annotations use it as their level.
+LEVEL="error"
 
 # Annotation messages are one line, so newlines and percent signs are escaped.
 escape() { sed -e 's/%/%25/g' -e 's/\r//g' | awk 'BEGIN { ORS = "%0A" } { print }' | head -c 6000; }
 fail() {
   echo "FAIL $*"
-  echo "::error title=$TITLE::$(echo "$*" | escape)"
+  echo "::$LEVEL title=$TITLE::$(echo "$*" | escape)"
   failures=$((failures + 1))
 }
 note() { echo "[android-smoke] $*"; }
@@ -59,8 +70,8 @@ diagnose() {
   local label="$1" state processes excerpt
   state="$(adbt 20 get-state 2>&1 | tr -d '\r' | head -c 200)"
   processes="$(adbt 30 shell ps -A 2> /dev/null | tr -d '\r' | grep -i -E "prism|webview|chromium|sandboxed" | head -n 8)"
-  excerpt="$(adbt 60 logcat -b main,system,crash -d -v brief 2> /dev/null | tr -d '\r' \
-    | grep -E "AndroidRuntime|FATAL|Fatal signal|ActivityManager|ActivityTaskManager|$PACKAGE|prismmapper|chromium|Capacitor|WebView|libc  |DEBUG" \
+  excerpt="$(adbt 60 logcat -b main,system,crash,events -d -v brief 2> /dev/null | tr -d '\r' \
+    | grep -E "AndroidRuntime|FATAL|Fatal signal|ActivityManager|ActivityTaskManager|$PACKAGE|prismmapper|chromium|Capacitor|WebView|libc  |DEBUG|am_kill|am_low_memory|lmkd|lowmemorykiller" \
     | grep -v -E "^[VD]/" | tail -n 30 | cut -c1-260)"
   {
     echo "$label diagnosis. adb state: $state"
@@ -69,7 +80,7 @@ diagnose() {
     echo "Log:"
     echo "$excerpt"
   } > "$OUT/diagnosis-$label.txt"
-  echo "::error title=$TITLE diagnosis::$(escape < "$OUT/diagnosis-$label.txt")"
+  echo "::$LEVEL title=$TITLE diagnosis::$(escape < "$OUT/diagnosis-$label.txt")"
 }
 
 # Writes what the script is doing now, for the watchdog's timeline.
@@ -79,17 +90,23 @@ stage() {
 }
 
 # Runs in the background and records, every two seconds, whether the emulator
-# is still attached to adb and whether its process still exists. The timeline
-# shows exactly when, and during which stage, an emulator disappears. The
-# fields are separated by "|": time, adb state, emulator process, available
-# memory in MB, stage.
+# is still attached to adb, whether its process still exists, how much memory
+# the guest has left and whether the app is running. The timeline shows
+# exactly when, and during which stage, an emulator or the app disappears.
+# The fields are separated by "|": time, adb state, emulator process, memory
+# available on the runner in MB, memory available in the guest in MB (? when
+# the guest does not answer), the app's process (- when there is none), stage.
 watchdog() {
+  local guest
   while true; do
-    printf '%s|%s|%s|%s|%s\n' \
+    guest="$(timeout 10 adb shell "head -n 3 /proc/meminfo | tail -n 1; pidof -s $PACKAGE" 2> /dev/null | tr -d '\r' | tr '\n' ' ' \
+      | awk 'NF == 0 { printf "?|?"; next } { printf "%d|%s", $2 / 1024, ($4 == "" ? "-" : $4) }')"
+    printf '%s|%s|%s|%s|%s|%s\n' \
       "$(date +%T)" \
       "$(timeout 10 adb get-state 2>&1 | head -n 1 | cut -c1-60)" \
       "$(pgrep -f 'qemu-system' | head -n 1)" \
       "$(free -m | awk '/^Mem:/ { print $7 }')" \
+      "${guest:-?|?}" \
       "$(cat "$OUT/stage.txt" 2> /dev/null)" >> "$OUT/watchdog.txt"
     sleep 2
   done
@@ -103,21 +120,24 @@ host_diagnose() {
   local label="$1"
   {
     echo "$label host diagnosis: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }'), $(df -h / | awk 'NR == 2 { print $4 " disk free" }')"
-    echo "Timeline (time, adb state, emulator process, free MB, stage; changes only):"
-    awk -F'|' '{ key = $2 "|" $3 "|" $5; if (key != last) { print $1 " " $2 " qemu=" $3 " " $4 "MB " $5; last = key } }' "$OUT/watchdog.txt" 2> /dev/null | tail -n 16 | cut -c1-200
+    echo "Timeline (time, adb state, emulator process, app process, stage; changes only):"
+    awk -F'|' '{ key = $2 "|" $3 "|" $6 "|" $7; if (key != last) { print $1 " " $2 " qemu=" $3 " app=" $6 " " $7; last = key } }' "$OUT/watchdog.txt" 2> /dev/null | tail -n 16 | cut -c1-200
+    echo "Memory available in the guest in MB (minutes:seconds=MB, last 20 samples, two seconds apart): $(tail -n 20 "$OUT/watchdog.txt" 2> /dev/null | awk -F'|' '{ printf "%s=%s ", substr($1, 4), $5 }')"
     echo "Last watchdog line: $(tail -n 1 "$OUT/watchdog.txt" 2> /dev/null)"
     echo "Emulator process: $(pgrep -af 'qemu-system' | head -n 1 | cut -c1-300)"
     echo "Host kernel messages about killed processes:"
     sudo dmesg 2> /dev/null | grep -i -E "out of memory|oom-kill|killed process|segfault|general protection|invalid opcode|call trace" | tail -n 8 | cut -c1-220
-    echo "System log kept on this machine (last important lines):"
-    grep -a -E "FATAL|Fatal signal|AndroidRuntime|ANR in|Watchdog|lowmemorykiller|lmkd|am_crash|am_proc_died|am_anr|has died|DEBUG|tombstone|SIGSEGV|zygote" "$OUT/logcat-live.txt" 2> /dev/null | tail -n 14 | cut -c1-230
+    echo "System log kept on this machine (deaths, kills and crashes):"
+    grep -a -E "FATAL|Fatal signal|AndroidRuntime|ANR in|lowmemorykiller|lmkd|am_crash|am_proc_died|am_kill|am_low_memory|am_anr|has died|Killing|tombstone|SIGSEGV" "$OUT/logcat-live.txt" 2> /dev/null | tail -n 14 | cut -c1-230
     echo "Last lines of that log: $(tail -n 3 "$OUT/logcat-live.txt" 2> /dev/null | cut -c1-200 | tr '\n' '|')"
-    echo "Emulator output (errors and warnings):"
-    grep -a -i -E "error|fatal|panic|segfault|segmentation|oops|killed|abort|crash|failed" "$OUT/emulator.log" 2> /dev/null | tail -n 12 | cut -c1-230
+    echo "Guest kernel messages about memory or killed processes:"
+    grep -a -i -E "out of memory|oom|killed process|lowmemorykiller|lmkd|segfault|call trace|BUG:" "$OUT/emulator.log" 2> /dev/null | tail -n 6 | cut -c1-230
+    echo "Emulator output (errors and warnings, $(grep -a -c "DisplaySurfaceGlContextHelper" "$OUT/emulator.log" 2> /dev/null) context messages left out):"
+    grep -a -i -E "error|fatal|panic|segfault|segmentation|oops|killed|abort|crash|failed" "$OUT/emulator.log" 2> /dev/null | grep -a -v -E "DisplaySurfaceGlContextHelper|Failed to restore previous context|binder: " | tail -n 10 | cut -c1-230
     echo "Emulator output (last lines):"
     tail -n 8 "$OUT/emulator.log" 2> /dev/null | cut -c1-230
   } > "$OUT/host-diagnosis-$label.txt"
-  echo "::error title=$TITLE host diagnosis::$(escape < "$OUT/host-diagnosis-$label.txt")"
+  echo "::$LEVEL title=$TITLE host diagnosis::$(escape < "$OUT/host-diagnosis-$label.txt")"
 }
 
 device_report() {
@@ -317,6 +337,48 @@ check_sideload() {
   notice "sideload build: version $EXPECTED_VERSION installed, process ${before:-none}, portrait: $(echo "$portrait" | tr '\n' ' ' | head -c 450) landscape: $(echo "$landscape" | tr '\n' ' ' | head -c 450)"
 }
 
+# Checks one build.
+run_variant() {
+  case "$1" in
+    debug) check_debug debug "$DEBUG_APK" ;;
+    sideload) check_sideload ;;
+    *) fail "Unknown build '$1', use debug or sideload." ;;
+  esac
+}
+
+# Moves what an attempt left for one build into attempt-<number>, so that the
+# next attempt starts clean and the evidence stays.
+#   keep_attempt <build> <number>
+keep_attempt() {
+  local variant="$1" dir="$OUT/attempt-$2" file
+  local files=("$OUT"/*"$variant"*)
+  if [ "$variant" = debug ]; then files+=("$OUT/webview-probe.json" "$OUT/webview-crash.json"); fi
+  mkdir -p "$dir"
+  for file in "${files[@]}"; do
+    if [ -f "$file" ]; then mv "$file" "$dir/"; fi
+  done
+}
+
+# Right after the first boot, the Google apps on the image index, update and
+# restart each other for a while, which takes processor time and memory from
+# the test. Waits until the one-minute load average is below 1.5, but no
+# longer than QUIET_SECONDS, and says how it went.
+wait_until_quiet() {
+  local limit="${QUIET_SECONDS:-90}" waited=0 load=""
+  stage "waiting for the system to settle"
+  while true; do
+    load="$(adbt 10 shell cat /proc/loadavg 2> /dev/null | tr -d '\r' | awk '{ print $1 }')"
+    if [ -z "$load" ]; then
+      note "The load average cannot be read, so not waiting for it."
+      return
+    fi
+    if awk -v load="$load" 'BEGIN { exit !(load < 1.5) }' || [ "$waited" -ge "$limit" ]; then break; fi
+    sleep 5
+    waited=$((waited + 5))
+  done
+  notice "System load $load after waiting $waited seconds for the system to settle."
+}
+
 # --- Device ---------------------------------------------------------------
 stage "waiting for the device"
 adbt 120 wait-for-device
@@ -331,6 +393,7 @@ trap 'kill $WATCHDOG_PID $LOGCAT_PID 2> /dev/null' EXIT
 device_report
 notice "Host: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }')"
 adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
+wait_until_quiet
 
 # A control: if the emulator cannot show and screenshot the Settings app, then
 # the environment is broken and the results for Prism Mapper mean nothing.
@@ -342,13 +405,31 @@ note "control: $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 200)"
 adbt 20 shell input keyevent KEYCODE_HOME > /dev/null 2>&1 || true
 sleep 2
 
+# Builds that needed a second attempt, for the summary.
+retried=""
 for variant in $VARIANTS; do
-  case "$variant" in
-    debug) check_debug debug "$DEBUG_APK" ;;
-    sideload) check_sideload ;;
-    *) fail "Unknown build '$variant', use debug or sideload." ;;
-  esac
+  attempt=1
+  while true; do
+    # Failures of an attempt that can be repeated are only warnings.
+    if [ "$attempt" -lt "$ATTEMPTS" ]; then LEVEL="warning"; else LEVEL="error"; fi
+    failures_before=$failures
+    run_variant "$variant"
+    if [ "$failures" -eq "$failures_before" ] || [ "$attempt" -ge "$ATTEMPTS" ]; then break; fi
+    keep_attempt "$variant" "$attempt"
+    failures=$failures_before
+    LEVEL="error"
+    if [ "$(adbt 20 get-state 2> /dev/null | tr -d '\r')" != "device" ]; then
+      fail "$variant: the emulator no longer answers, so the check cannot be repeated."
+      break
+    fi
+    echo "::warning title=$TITLE::$variant: attempt $attempt of $ATTEMPTS failed, see the warnings above and attempt-$attempt in the artifact. Trying once more."
+    retried="$retried $variant"
+    adbt 30 shell am force-stop "$PACKAGE" > /dev/null 2>&1 || true
+    sleep 15
+    attempt=$((attempt + 1))
+  done
 done
+LEVEL="error"
 
 stage "finished"
 if [ "$failures" -gt 0 ]; then
@@ -356,4 +437,9 @@ if [ "$failures" -gt 0 ]; then
   echo "Android smoke test: $failures problem(s)." | tee "$OUT/summary.txt"
   exit 1
 fi
-echo "Android smoke test: the builds installed, started, drew their interface and stayed alive." | tee "$OUT/summary.txt"
+if [ -n "$retried" ]; then
+  echo "::warning title=$TITLE::Passed, but only at the second attempt for:$retried. The first attempt is kept in the attempt-1 folder of the android-smoke artifact."
+  echo "Android smoke test: passed, but a second attempt was needed for:$retried." | tee "$OUT/summary.txt"
+else
+  echo "Android smoke test: the builds installed, started, drew their interface and stayed alive." | tee "$OUT/summary.txt"
+fi

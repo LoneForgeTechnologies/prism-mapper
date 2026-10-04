@@ -26,7 +26,11 @@ name: Mobile apps
 # The emulator test runs on four Android setups. Android 14 and Android 11 must
 # pass (required: true in the matrix below). The other two still run and show
 # their result, but a failure there does not fail the workflow, because
-# emulators on shared runners are not always reliable.
+# emulators on shared runners are not always reliable. For the same reason, a
+# build whose check fails is checked once more on the same emulator. The first
+# attempt shows as warnings and is kept in the attempt-1 folder of the
+# artifact, and the run says that it needed a second attempt. A build that
+# fails both attempts fails the job (see mobile/android-smoke.sh).
 #
 # Optional secrets, all skipped silently when they are not set. See
 # docs/building-mobile.md for how to create them.
