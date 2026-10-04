@@ -23,6 +23,9 @@ IMAGE="system-images;android-$API;$TARGET;x86_64"
 AVD="prism-test"
 
 mkdir -p "$OUT"
+# Keep the virtual device in a known place, whatever the runner image sets.
+export ANDROID_AVD_HOME="$HOME/.android/avd"
+mkdir -p "$ANDROID_AVD_HOME"
 export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$SDK/emulator:$PATH"
 # The steps that come after this one need adb as well.
 if [ -n "${GITHUB_PATH:-}" ]; then
@@ -53,7 +56,10 @@ if ! echo no | avdmanager create avd --force --name "$AVD" --package "$IMAGE" --
   stop_with_log "avdmanager could not create the virtual device for $IMAGE." "$OUT/avdmanager.txt"
 fi
 cat "$OUT/avdmanager.txt"
-CONFIG="$HOME/.android/avd/$AVD.avd/config.ini"
+CONFIG="$ANDROID_AVD_HOME/$AVD.avd/config.ini"
+if [ ! -f "$CONFIG" ]; then
+  stop_with_log "The virtual device was created, but $CONFIG does not exist." "$OUT/avdmanager.txt"
+fi
 if grep -q '^hw.cpu.ncore' "$CONFIG"; then
   sed -i "s/^hw.cpu.ncore.*/hw.cpu.ncore=$CORES/" "$CONFIG"
 else
