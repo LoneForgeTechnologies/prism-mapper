@@ -1,3 +1,27 @@
+# Version 0.5.0 validation
+
+Tested October 3 and 4, 2026, by automation only. Nobody has tried this version on a physical Windows PC, Mac, phone, tablet or projector. The tests ran in a Linux container, on GitHub-hosted Windows, macOS and Linux machines, and on Android emulators and iOS simulators. Their results are in the Checks, Mobile apps and Release (dry run) workflow runs of the pull request for this version.
+
+What passed:
+
+- Formatting, the production build and all 303 unit tests: 224 for the editor, the project format, geometry, audio, the web app files and the release scripts, and 79 for the desktop shell. The release file checker is among them, including that a file nobody expected is refused.
+- Five browser suites in Chromium with software WebGL: the animation mix, mapping and GPU rendering, audio, the phone and tablet layout, and the offline web app (21 scenarios). The phone and tablet suite drives emulated touch screens from 320 × 568 to 1180 × 820 with real touch input. It is emulation: no physical device and no WebKit engine.
+- Windows 10 and 11, 64-bit, on a Windows Server machine: the packaged app started and reported the right version, opened project files, kept a usable window size, read project media from drive, long and network paths and a project file saved by Notepad, and started from the source launcher. The ZIP unpacked and started. The Setup installer was built, installed for the current user, started, opened projects through its commands, updated a running copy with a second Setup and uninstalled.
+- macOS on Apple silicon and on Intel (each on a machine of its own kind): the packaged app started, opened projects and kept a usable window size. The ZIP was unpacked the way the Finder does, its signature was verified and the app started again.
+- Android: the debug APK and the shareable APK were installed on four emulator setups: Android 11 with web view 83 (from 2020), Android 14 with Google apps and web view 113, Android 14 without Google apps and web view 113, and Android 15 with web view 124. On each, both installed with the right version, started, stayed alive, drew a screen that is not blank and left no crash or not-responding report in the system log. The shareable APK also survived a rotation. The debug build was inspected from the inside: secure context, WebGL working, the native shell present, the microphone interface present and the safe-area values readable. Its web view process was then stopped on purpose, as a phone short of memory does, and the app stayed alive in the same process and drew its screen again. Emulators draw in software, so this says nothing about speed or about real graphics chips.
+- iPhone and iPad: Xcode built the app for the simulator and for devices (unsigned), the app bundle and the unsigned IPA were checked, and the simulator build was installed and opened on an iPhone 17 and an iPad Pro 11-inch (M5) simulator running iOS 26.5. Both screenshots show the drawn editor.
+
+One result was not steady. In one Release (dry run) the shareable APK died about ten seconds after it started on the Android 14 emulator with Google apps, while the same commit passed in another run. The cause was not found. The emulator check now repeats a failed build once, reports a second attempt as a warning with the first attempt's evidence kept, and records more about memory and process deaths, so a repeat will show up in the run.
+
+Not tested:
+
+- Any physical device. The last test with a physical projector was version 0.2 on a Mac. Showing the output of a phone or tablet through a cable or a cast has not been tried.
+- The microphone on Windows, Android, iPhone and iPad, and physical system-output capture on any platform.
+- Windows on real hardware, on Windows 10 and on ARM processors.
+- Safari, Firefox and Edge. The web app was only run in Chromium. Adding it to an iPhone Home Screen and Safari's cleanup of unused sites were not tried.
+- Code signing, notarization, SmartScreen and Play Protect. The Windows, Mac and Android downloads are not signed by a known developer.
+- Long sessions, battery use on phones, and screen reader use.
+
 # Version 0.4.1 public release validation
 
 Tested September 16, 2026 on Apple silicon macOS.

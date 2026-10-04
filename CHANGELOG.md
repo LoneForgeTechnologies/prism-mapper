@@ -1,6 +1,54 @@
 # Changelog
 
-## 0.4.1 — 2026-09-16
+## 0.5.0 (2026-10-04)
+
+Prism Mapper leaves the Mac. Windows, Android, iPhone and iPad join macOS, and the project now says plainly what it is: a half vibe-coded, half-tested open-source tool. Much of the code was written by directing AI coding assistants, the automated tests are real but partial, and none of the new platforms has been tried on a physical device or with a physical projector.
+
+### New platforms
+
+- **Windows 10 and 11 (64-bit).** A Setup installer (for your user account by default, no administrator rights, Start Menu entry, uninstaller, in-place updates, an optional "Open in Prism Mapper" command for project files) and a portable ZIP.
+- **Intel Macs.** A separate ZIP next to the Apple silicon one.
+- **Android phones and tablets (Android 7 and newer).** An APK. The app has no internet permission and asks for the microphone only when you tap Start listening.
+- **iPhone and iPad.** The installable offline web app, an unsigned IPA for people who sideload, and an Xcode project for people with an Apple developer account. Prism Mapper is not in the App Store or on Google Play.
+- **The web app.** The same editor in a browser, installable and usable offline, published to GitHub Pages.
+
+### Phones and tablets
+
+- A touch layout for windows narrower than 1050 pixels, with Layers, Looks, Adjust, Audio and Show sheets, touch targets of at least 44 pixels, corner dragging with a finger and safe areas for notches.
+- **Present on this screen** fills the screen with only the mapped light, so a phone or tablet cabled or cast to a projector can be its source. Corner alignment works while presenting.
+- The screen stays on while the app is in front. The Android Back button closes sheets and leaves Present. All orientations work.
+- The setup guide in the app, and the keyboard hints, adapt to the device: Mac, Windows, phone or browser.
+
+### Projects and files
+
+- Projects move between the desktop apps, the phone apps and the web app. Media files do not travel with the project: they show as missing until added again.
+- The web app keeps your draft and imported media across reloads, reports storage that is blocked or full, warns when a second tab saves, and tells iPhone users about Safari's cleanup of unused sites.
+- Project files from Windows (byte-order marks, long and network paths) and projects named in any script open and save correctly. A saved project is flushed to disk before it takes its final name.
+- A project the operating system opens (double-click on Open With, command line, second launch) shows in the editor, and only one editor window runs at a time.
+
+### Smaller changes
+
+- Space and Enter act on the control that has the keyboard focus instead of pausing playback.
+- Old web views are supported: no `crypto.randomUUID`, no `Array.prototype.at`, no CSS `inset` shorthand.
+- The audio engine says so when the device pauses it and resumes at the next tap.
+- Preview pictures stay cached across app updates when the pictures did not change.
+- The projector output window has a plain title.
+- Shortcut labels show Ctrl or the Command key for the system you are on.
+
+### Building and releasing
+
+- One release workflow builds and tests the Windows, Intel Mac and Apple silicon apps, builds the Android and iOS apps, starts the Android app on four emulator setups and the iOS app on an iPhone and an iPad simulator, checks every download against its SHA-256 checksum and publishes the release. A dry-run mode does all of it except publishing. Files that nobody expected are refused. An emulator check that fails is repeated once, and a run that needed the second attempt says so.
+- A separate workflow publishes the web app to GitHub Pages once Pages is switched on.
+- Release notes list the right download for every device, explain the first-launch warnings and state the testing limits.
+
+### Known limits
+
+- No physical projector test of any version after 0.2, and none at all on Windows, Android, iPhone or iPad.
+- Real phones and tablets have not been used. The microphone, a cable or cast to a projector and real-world performance are untested on them.
+- Physical system-output audio capture has not been verified on any platform.
+- Windows, Mac and Android builds are not code-signed, and the Mac app is not notarized. Each Android build carries a new temporary signature, so an update needs the old version uninstalled first.
+
+## 0.4.1 (2026-09-16)
 
 First public GitHub release, focused on making Prism Mapper easier to share and install.
 

@@ -5,21 +5,21 @@ body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Prism Mapper. Include enough detail to reproduce the problem. Use generated animations in example projects when possible, and remove private media or personal file paths before attaching anything.
+        Thanks for helping improve Prism Mapper. It is a half vibe-coded, half-tested project, so reports from real devices and real projectors are especially valuable. Include enough detail to reproduce the problem. Use generated animations in example projects when possible, and remove private media or personal file paths before attaching anything.
   - type: input
     id: version
     attributes:
       label: Prism Mapper version
-      description: Release tag, or commit if you built from source.
-      placeholder: "0.4.1"
+      description: The release tag (it is also in the name of the file you downloaded), or the commit if you built from source.
+      placeholder: "0.5.0"
     validations:
       required: true
   - type: input
     id: operating-system
     attributes:
-      label: Operating system and computer
-      description: Include OS version and processor type. Add graphics hardware if known.
-      placeholder: "macOS 15 on Apple M2, or Windows 11 on Intel x64"
+      label: Operating system and device
+      description: Include the OS version and the processor type or phone model. Add graphics hardware if known.
+      placeholder: "macOS 15 on Apple M2, Windows 11 on Intel x64, Pixel 8 with Android 15, or iPhone 15 with iOS 18"
     validations:
       required: true
   - type: dropdown
@@ -27,9 +27,15 @@ body:
     attributes:
       label: How are you running the app?
       options:
-        - macOS Apple silicon release ZIP
+        - Windows installer (Setup.exe)
+        - Windows ZIP
+        - macOS Apple silicon ZIP
+        - macOS Intel ZIP
+        - Android APK
+        - iPhone or iPad, web app added to the Home Screen
+        - iPhone or iPad, sideloaded IPA or built with Xcode
+        - Web app in a browser tab
         - Built from source
-        - Browser preview
     validations:
       required: true
   - type: textarea
