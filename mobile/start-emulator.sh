@@ -16,6 +16,12 @@
 # WebGL triangle and the app without its WebGL drawing all survive those modes,
 # so it is the full app's drawing that they cannot take. With swangle_indirect
 # the same app stayed up for the 90 seconds that the experiment watched.
+#
+# The virtual device gets 4 GB of memory instead of the 1.5 GB that the Pixel 6
+# profile asks for. 1.5 GB is tight for a page that decodes pictures and video
+# and draws with WebGL, and the web view's own process is the first thing that
+# Android stops when memory runs short. The runners have 16 GB. Set
+# EMULATOR_RAM_MB to try another size.
 
 set -eu
 
@@ -24,6 +30,7 @@ TARGET="${2:?system image flavour, google_apis or default}"
 GPU="${3:?graphics mode, for example swangle_indirect}"
 OUT="${4:?folder for the emulator log}"
 CORES="${EMULATOR_CORES:-4}"
+RAM="${EMULATOR_RAM_MB:-4096}"
 BOOT_SECONDS="${BOOT_SECONDS:-900}"
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:?the Android SDK is not set up on this runner}}"
 IMAGE="system-images;android-$API;$TARGET;x86_64"
@@ -72,13 +79,18 @@ if grep -q '^hw.cpu.ncore' "$CONFIG"; then
 else
   echo "hw.cpu.ncore=$CORES" >> "$CONFIG"
 fi
+if grep -q '^hw.ramSize' "$CONFIG"; then
+  sed -i "s/^hw.ramSize.*/hw.ramSize=$RAM/" "$CONFIG"
+else
+  echo "hw.ramSize=$RAM" >> "$CONFIG"
+fi
 grep -E '^(hw.ramSize|hw.cpu.ncore|hw.lcd|vm.heapSize|disk.dataPartition.size|image.sysdir.1|tag.id)' "$CONFIG" | tee "$OUT/avd-config.txt"
 echo "::endgroup::"
 
 ls -l /dev/kvm 2>&1 | tee "$OUT/kvm.txt"
 emulator -version 2>&1 | grep -i -E "emulator version|build" | head -n 2 | tee "$OUT/emulator-version.txt"
 
-echo "Starting the emulator (graphics mode $GPU, $CORES cores)."
+echo "Starting the emulator (graphics mode $GPU, $CORES cores, $RAM MB memory)."
 adb start-server > /dev/null 2>&1 || true
 started=$SECONDS
 setsid nohup emulator -avd "$AVD" -no-window -gpu "$GPU" -no-snapshot -noaudio -no-boot-anim -no-metrics \

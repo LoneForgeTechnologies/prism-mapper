@@ -3,11 +3,12 @@
 # checks that each one starts. Run by the "Android emulator test" job in
 # .github/workflows/mobile.yml, inside the emulator runner.
 #
-#   bash mobile/android-smoke.sh <debug.apk> <sideload.apk> <output-folder> [other-debug.apk]
+#   bash mobile/android-smoke.sh <debug.apk> <sideload.apk> <output-folder>
 #
 # The debug build is inspected from the inside over the WebView DevTools
-# (mobile/android-smoke.mjs). The sideload build is the APK people install, so
-# it only gets the outside checks: it starts, stays alive, shows something and
+# (mobile/android-smoke.mjs), and then its web view process is stopped to check
+# that the app comes back. The sideload build is the APK people install, so it
+# only gets the outside checks: it starts, stays alive, shows something and
 # survives a rotation. Both get a screenshot and a filtered system log.
 # Every check that fails is reported, then the script exits with 1.
 #
@@ -21,8 +22,7 @@ set -u
 DEBUG_APK="${1:?path of the debug APK}"
 SIDELOAD_APK="${2:?path of the sideload APK}"
 OUT="${3:?folder for screenshots and logs}"
-EXTRA_APK="${4:-}"
-# Which builds to try, for experiments: any of debug, sideload, extra.
+# Which builds to try: any of debug and sideload.
 VARIANTS="${VARIANTS:-debug sideload}"
 PACKAGE="org.prismmapper.mobile"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -178,6 +178,8 @@ screenshot() {
   fi
 }
 
+capacitor_errors() { grep -E " E Capacitor" "$1" | grep -v "Error injecting safe area CSS"; }
+
 # Crash and error checks on the system log taken after the app has run.
 check_run() {
   local label="$1" before_pid="$2" debuggable="$3"
@@ -205,12 +207,47 @@ check_run() {
     fail "$label: the app is not the foreground activity (a crash or error dialog may cover it)."
   fi
   # Capacitor copies web console output and native plugin errors to logcat,
-  # in debuggable builds only.
-  if [ "$debuggable" = "yes" ] && grep -E " E Capacitor" "$log" | head -10 | grep -q .; then
-    fail "$label: Capacitor logged errors: $(grep -E " E Capacitor" "$log" | head -3 | cut -c1-300)"
+  # in debuggable builds only. One message is left out: the SystemBars plugin
+  # logs "Error injecting safe area CSS" when the first insets arrive before
+  # the page has a document, and writes them again once the page is visible.
+  if [ "$debuggable" = "yes" ] && capacitor_errors "$log" | head -10 | grep -q .; then
+    fail "$label: Capacitor logged errors: $(capacitor_errors "$log" | head -3 | cut -c1-300)"
   fi
   grep -E "FATAL EXCEPTION|AndroidRuntime|ANR in|Fatal signal| E Capacitor| E chromium|$PACKAGE.*(died|crash)" "$log" > "$OUT/problems-$label.txt" || true
   grep -E "Displayed $PACKAGE|Start proc .*$PACKAGE" "$log" | head -3 | cut -c1-200 || true
+}
+
+# Stops the web view's process, as a phone short of memory does, and checks
+# that the app lives on in the same process and draws its screen again.
+#   check_recovery <label>
+check_recovery() {
+  local label="$1" before after log="$OUT/logcat-$1-recovery.txt"
+  before="$(app_pid)"
+  if [ -z "$before" ]; then
+    fail "$label: the app is not running, so its web view process cannot be stopped."
+    return
+  fi
+  stage "$label: stop the web view process"
+  adbt 30 logcat -c
+  if ! node "$HERE/android-smoke.mjs" --crash --package "$PACKAGE" --out "$OUT" --timeout 60; then
+    fail "$label: the app did not come back after its web view process was stopped (see webview-crash.json)."
+  fi
+  adbt 90 logcat -b main,system,crash -d -v threadtime > "$log" 2>&1 || true
+  after="$(app_pid)"
+  if [ -z "$after" ]; then
+    fail "$label: the app closed when its web view process was stopped."
+  elif [ "$after" != "$before" ]; then
+    fail "$label: the app process changed from $before to $after when its web view process was stopped."
+  fi
+  if ! grep -q "PrismMapper.*restarting the screen" "$log"; then
+    fail "$label: MainActivity did not log that it restarted the screen, so something else kept the app alive."
+  fi
+  if grep -A3 "FATAL EXCEPTION" "$log" | grep -q "Process: $PACKAGE"; then
+    fail "$label: Java crash in the app after its web view process was stopped: $(grep -A8 "FATAL EXCEPTION" "$log" | cut -c1-200)"
+  fi
+  sleep 5
+  screenshot "$label-recovered"
+  note "$label: after the web view process was stopped: $(echo "$SHOT_STATS" | tr '\n' ' ')"
 }
 
 is_debuggable() {
@@ -243,6 +280,7 @@ check_debug() {
   fi
   stage "$label: log check"
   check_run "$label" "$before" yes
+  if [ -n "$before" ]; then check_recovery "$label"; fi
   notice "$label build: version $EXPECTED_VERSION installed, process ${before:-none}, screenshot: $(echo "$stats" | tr '\n' ' ' | head -c 500)"
 }
 
@@ -307,15 +345,8 @@ sleep 2
 for variant in $VARIANTS; do
   case "$variant" in
     debug) check_debug debug "$DEBUG_APK" ;;
-    extra)
-      if [ -n "$EXTRA_APK" ]; then
-        check_debug extra "$EXTRA_APK"
-      else
-        fail "extra: no fourth argument with the APK to try."
-      fi
-      ;;
     sideload) check_sideload ;;
-    *) fail "Unknown build '$variant', use debug, sideload or extra." ;;
+    *) fail "Unknown build '$variant', use debug or sideload." ;;
   esac
 done
 

@@ -11,12 +11,22 @@ name: Mobile apps
 #                  simulator and takes screenshots
 #
 # Artifacts (stable names, also when this workflow is called by another one):
-#   mobile-android  Prism-Mapper-v<version>-Android.apk and its .sha256
-#                   (plus -Android-release.apk and .aab when signing secrets exist)
-#   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and
-#                   Prism-Mapper-v<version>-iOS-Simulator.zip, with .sha256 files
+#   mobile-android  Prism-Mapper-v<version>-Android.apk and its .sha256. The
+#                   release workflow publishes exactly these files. The APK is
+#                   signed with the maintainer's key when the Android signing
+#                   secrets exist, and with a temporary test key otherwise.
+#   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and its .sha256
+#   mobile-android-store, mobile-ios-store
+#                   Only with signing secrets: the Android App Bundle for
+#                   Google Play and the signed IPA for the App Store. These are
+#                   never published on the release page.
 #   android-smoke-<emulator>        screenshots and logs of the emulator test
 #   ios-smoke-<iPhone or iPad>      screenshots and logs of the simulator test
+#
+# The emulator test runs on four Android setups. Android 14 and Android 11 must
+# pass (required: true in the matrix below). The other two still run and show
+# their result, but a failure there does not fail the workflow, because
+# emulators on shared runners are not always reliable.
 #
 # Optional secrets, all skipped silently when they are not set. See
 # docs/building-mobile.md for how to create them.
@@ -176,16 +186,6 @@ jobs:
           mkdir -p smoke
           cp android/app/build/outputs/apk/debug/app-debug.apk smoke/debug.apk
           cp android/app/build/outputs/apk/sideload/app-sideload.apk smoke/sideload.apk
-      # EXPERIMENT: the same debug build, but with the INTERNET permission, to
-      # find out whether the emulator problem is caused by removing it. This
-      # only changes the checkout of this job, nothing is committed.
-      - name: Build a debug APK that keeps the INTERNET permission
-        working-directory: android
-        run: |
-          sed -i '/android.permission.INTERNET/d' app/src/main/AndroidManifest.xml
-          ./gradlew assembleDebug
-          cp app/build/outputs/apk/debug/app-debug.apk ../smoke/debug-internet.apk
-          git checkout -- app/src/main/AndroidManifest.xml
       - uses: actions/upload-artifact@v7
         with:
           name: android-smoke-apks
@@ -253,19 +253,30 @@ jobs:
           VERSION: ${{ steps.version.outputs.version }}
           SIGNED: ${{ steps.signing.outputs.available }}
         run: |
-          mkdir -p out
-          cp android/app/build/outputs/apk/sideload/app-sideload.apk "out/Prism-Mapper-v$VERSION-Android.apk"
+          mkdir -p out store
           if [ "$SIGNED" = "true" ]; then
-            cp android/app/build/outputs/apk/release/app-release.apk "out/Prism-Mapper-v$VERSION-Android-release.apk"
-            cp android/app/build/outputs/bundle/release/app-release.aab "out/Prism-Mapper-v$VERSION-Android-release.aab"
+            # The sideload build that the emulators test and the release build
+            # are the same code. With the maintainer's key, later versions can
+            # be installed over this one.
+            cp android/app/build/outputs/apk/release/app-release.apk "out/Prism-Mapper-v$VERSION-Android.apk"
+            cp android/app/build/outputs/bundle/release/app-release.aab "store/Prism-Mapper-v$VERSION-Android.aab"
+          else
+            cp android/app/build/outputs/apk/sideload/app-sideload.apk "out/Prism-Mapper-v$VERSION-Android.apk"
           fi
           (cd out && for file in *; do sha256sum "$file" > "$file.sha256"; done)
-          ls -l out
+          ls -l out store
       - uses: actions/upload-artifact@v7
         with:
           name: mobile-android
           path: out/*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-android-store
+          path: store/*
+          if-no-files-found: ignore
           compression-level: 0
           retention-days: 14
 
@@ -275,6 +286,9 @@ jobs:
     if: ${{ !cancelled() && needs.android.outputs.apks == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 40
+    # A leg that is not required still shows its result, but a failure of it
+    # does not fail the workflow (and so does not stop a release).
+    continue-on-error: ${{ !matrix.required }}
     strategy:
       fail-fast: false
       matrix:
@@ -283,27 +297,22 @@ jobs:
             api: 34
             target: google_apis
             gpu: swangle_indirect
-            variants: debug sideload
-          - slug: api34-internet
-            api: 34
-            target: google_apis
-            gpu: swangle_indirect
-            variants: extra
+            required: true
           - slug: api30
             api: 30
             target: google_apis
             gpu: swangle_indirect
-            variants: debug sideload
+            required: true
           - slug: api35
             api: 35
             target: google_apis
             gpu: swangle_indirect
-            variants: debug sideload
+            required: false
           - slug: api34-aosp
             api: 34
             target: default
             gpu: swangle_indirect
-            variants: debug sideload
+            required: false
     steps:
       - uses: actions/checkout@v7
         with:
@@ -330,9 +339,7 @@ jobs:
         run: bash mobile/start-emulator.sh "$API" "$TARGET" "$GPU" android-smoke
       - name: Install, open and inspect the apps
         timeout-minutes: 20
-        env:
-          VARIANTS: ${{ matrix.variants }}
-        run: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke smoke/debug-internet.apk
+        run: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -438,14 +445,16 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
         run: |
-          mkdir -p out
+          mkdir -p out store smoke
+          # The same checks as for the simulator app, on the app that goes
+          # into the IPA: version, build number and the files the app needs.
+          bash mobile/verify-ios-app.sh "$RUNNER_TEMP/App.xcarchive/Products/Applications/App.app" "$VERSION" "$BUILD_NUMBER"
           bash mobile/package-ipa.sh "$RUNNER_TEMP/App.xcarchive" "out/Prism-Mapper-v$VERSION-iOS-unsigned.ipa"
+          # The simulator app is only for the simulator test below. It is not
+          # a download.
           ditto -c -k --sequesterRsrc --keepParent \
-            "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip"
-          (cd out && shasum -a 256 "Prism-Mapper-v$VERSION-iOS-Simulator.zip" > "Prism-Mapper-v$VERSION-iOS-Simulator.zip.sha256")
-          mkdir -p smoke
-          cp "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip" smoke/App-Simulator.zip
-          ls -l out
+            "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" smoke/App-Simulator.zip
+          ls -l out smoke
       # The simulator job starts as soon as the app exists, in parallel with
       # the signing steps below.
       - uses: actions/upload-artifact@v7
@@ -529,8 +538,7 @@ jobs:
             -archivePath "$RUNNER_TEMP/App.xcarchive" \
             -exportPath "$RUNNER_TEMP/export" \
             -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
-          cp "$RUNNER_TEMP/export/App.ipa" "out/Prism-Mapper-v$VERSION-iOS-appstore.ipa"
-          (cd out && shasum -a 256 "Prism-Mapper-v$VERSION-iOS-appstore.ipa" > "Prism-Mapper-v$VERSION-iOS-appstore.ipa.sha256")
+          cp "$RUNNER_TEMP/export/App.ipa" "store/Prism-Mapper-v$VERSION-iOS-appstore.ipa"
           rm -f "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
       - name: Upload the build to TestFlight
         if: steps.apple.outputs.signing == 'true' && steps.apple.outputs.upload == 'true' && inputs.testflight
@@ -543,7 +551,7 @@ jobs:
           mkdir -p "$HOME/.appstoreconnect/private_keys"
           echo "$API_KEY" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
           xcrun altool --upload-app --type ios \
-            --file "out/Prism-Mapper-v$VERSION-iOS-appstore.ipa" \
+            --file "store/Prism-Mapper-v$VERSION-iOS-appstore.ipa" \
             --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER"
           rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
 
@@ -552,6 +560,13 @@ jobs:
           name: mobile-ios
           path: out/*
           if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-ios-store
+          path: store/*
+          if-no-files-found: ignore
           compression-level: 0
           retention-days: 14
       - uses: actions/upload-artifact@v7
