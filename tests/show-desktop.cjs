@@ -7,10 +7,42 @@ const path = require("node:path");
 
 const root = path.resolve(__dirname, "..");
 const executablePath = process.argv[2] && path.resolve(process.argv[2]);
+const ownedApps = new WeakSet();
+let phase = "starting native show test";
+function progress(next) {
+  phase = next;
+  console.error(`[native-show ${new Date().toISOString()}] ${phase}`);
+}
+async function bounded(promise, operation, timeout = 15000) {
+  const current = phase;
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              new Error(
+                `${current}: ${operation} timed out after ${timeout}ms`,
+              ),
+            ),
+          timeout,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+const evaluatePage = (page, predicate, argument, timeout) =>
+  bounded(page.evaluate(predicate, argument), "renderer evaluation", timeout);
+const evaluateApp = (app, predicate, argument, timeout) =>
+  bounded(app.evaluate(predicate, argument), "native evaluation", timeout);
 const button = (page, name) => page.getByRole("button", { name, exact: true });
 const panel = (page) =>
   page.getByRole("region", { name: "Scenes and timeline", exact: true });
-const read = (page) => page.evaluate(() => window.prism.getProject());
+const read = (page) => evaluatePage(page, () => window.prism.getProject());
 const recent = (page) =>
   page.getByRole("navigation", { name: "Recent show projects", exact: true });
 
@@ -18,7 +50,15 @@ const recent = (page) =>
 async function wait(page, predicate, argument) {
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
-    if (await page.evaluate(predicate, argument)) return;
+    if (
+      await evaluatePage(
+        page,
+        predicate,
+        argument,
+        Math.max(1, deadline - Date.now()),
+      )
+    )
+      return;
     await page.waitForTimeout(40);
   }
   throw new Error(
@@ -27,26 +67,37 @@ async function wait(page, predicate, argument) {
 }
 
 async function openDialog(app, files) {
-  await app.evaluate(({ dialog }, filePaths) => {
-    dialog.showOpenDialog = async () => ({ canceled: false, filePaths });
-  }, files);
+  await evaluateApp(
+    app,
+    ({ dialog }, filePaths) => {
+      dialog.showOpenDialog = async () => ({ canceled: false, filePaths });
+    },
+    files,
+  );
 }
 async function saveDialog(app, filePath) {
-  await app.evaluate(({ dialog }, filePath) => {
-    dialog.showSaveDialog = async () => ({ canceled: false, filePath });
-  }, filePath);
+  await evaluateApp(
+    app,
+    ({ dialog }, filePath) => {
+      dialog.showSaveDialog = async () => ({ canceled: false, filePath });
+    },
+    filePath,
+  );
 }
 async function range(page, value) {
-  await page
-    .getByRole("slider", { name: "Show playhead", exact: true })
-    .evaluate((element, value) => {
-      Object.getOwnPropertyDescriptor(
-        HTMLInputElement.prototype,
-        "value",
-      ).set.call(element, String(value));
-      element.dispatchEvent(new Event("input", { bubbles: true }));
-      element.dispatchEvent(new Event("change", { bubbles: true }));
-    }, value);
+  await bounded(
+    page
+      .getByRole("slider", { name: "Show playhead", exact: true })
+      .evaluate((element, value) => {
+        Object.getOwnPropertyDescriptor(
+          HTMLInputElement.prototype,
+          "value",
+        ).set.call(element, String(value));
+        element.dispatchEvent(new Event("input", { bubbles: true }));
+        element.dispatchEvent(new Event("change", { bubbles: true }));
+      }, value),
+    "playhead input evaluation",
+  );
 }
 async function duration(page, index, seconds) {
   const input = panel(page)
@@ -78,44 +129,69 @@ async function opened(page, name) {
 }
 async function unblackout(page) {
   if (!(await read(page)).blackout) return;
-  await page.evaluate(() => document.activeElement?.blur());
+  await evaluatePage(page, () => document.activeElement?.blur());
   await page.keyboard.press("b");
   await wait(page, async () => !(await window.prism.getProject()).blackout);
 }
 async function pixel(page, expected) {
-  return page.evaluate(async (expected) => {
-    const deadline = performance.now() + 12000;
-    let latest;
-    while (performance.now() < deadline) {
-      latest = await new Promise((resolve) =>
-        requestAnimationFrame(() => {
-          const canvas = document.querySelector(".stage canvas");
-          const gl = canvas.getContext("webgl");
-          const rgba = new Uint8Array(4);
-          gl.readPixels(
-            Math.floor(canvas.width / 2),
-            Math.floor(canvas.height / 2),
-            1,
-            1,
-            gl.RGBA,
-            gl.UNSIGNED_BYTE,
-            rgba,
-          );
-          resolve(Array.from(rgba));
-        }),
-      );
-      // Default master brightness is .65; distinguish decoded swatches from black.
-      if (
-        expected.every(
-          (channel, index) => Math.abs(latest[index] - channel * 0.65) < 16,
+  return bounded(
+    page.evaluate(async (expected) => {
+      const deadline = performance.now() + 12000;
+      let latest;
+      while (performance.now() < deadline) {
+        latest = await new Promise((resolve) =>
+          requestAnimationFrame(() => {
+            const canvas = document.querySelector(".stage canvas");
+            const gl = canvas.getContext("webgl");
+            const rgba = new Uint8Array(4);
+            gl.readPixels(
+              Math.floor(canvas.width / 2),
+              Math.floor(canvas.height / 2),
+              1,
+              1,
+              gl.RGBA,
+              gl.UNSIGNED_BYTE,
+              rgba,
+            );
+            resolve(Array.from(rgba));
+          }),
+        );
+        // Default master brightness is .65; distinguish decoded swatches from black.
+        if (
+          expected.every(
+            (channel, index) => Math.abs(latest[index] - channel * 0.65) < 16,
+          )
         )
-      )
-        return latest;
+          return latest;
+      }
+      throw new Error(
+        `Expected MP4 color ${expected}; got ${latest}. Renderer: ${document.querySelector(".stage canvas").dataset.renderError || "no reported error"}`,
+      );
+    }, expected),
+    `GPU MP4 color check ${expected.join(",")}`,
+    15000,
+  );
+}
+async function closeOwnedApp(app) {
+  if (!ownedApps.has(app)) return;
+  try {
+    await bounded(app.close(), "closing disposable Electron app", 15000);
+  } catch (error) {
+    // This ChildProcess belongs to electron.launch above. Never discover or
+    // terminate processes by application name, user profile or executable path.
+    const child = app.process();
+    if (child && child.exitCode === null && child.signalCode === null) {
+      console.error(
+        `[native-show] ${error.message}; terminating test child PID ${child.pid}`,
+      );
+      const exited = new Promise((resolve) => child.once("exit", resolve));
+      child.kill("SIGKILL");
+      await bounded(exited, "waiting for test child exit", 5000);
     }
-    throw new Error(
-      `Expected MP4 color ${expected}; got ${latest}. Renderer: ${document.querySelector(".stage canvas").dataset.renderError || "no reported error"}`,
-    );
-  }, expected);
+    throw error;
+  } finally {
+    ownedApps.delete(app);
+  }
 }
 async function launch(directory, errors) {
   const app = await electron.launch({
@@ -135,38 +211,70 @@ async function launch(directory, errors) {
     env: { ...process.env, ELECTRON_ENABLE_LOGGING: "1" },
     timeout: 30000,
   });
-
-  assert.equal(
-    await app.evaluate(({ app }) => app.getPath("userData")),
-    path.join(directory, "profile"),
-  );
-  const page = await app.firstWindow();
-  page.setDefaultTimeout(15000);
-  page.on("pageerror", (error) => errors.push(error.message));
-  await button(page, "Scenes and timeline").waitFor();
-  // CI screens can put the native editor below the desktop breakpoint. Exercise
-  // the compact header deliberately instead of depending on the host display.
-  await app.evaluate(async ({ BrowserWindow }) => {
-    const editor = BrowserWindow.getAllWindows()[0];
-    if (!editor.isVisible())
-      await new Promise((resolve) => editor.once("show", resolve));
-    if (editor.isMaximized()) editor.unmaximize();
-    editor.setMinimumSize(320, 400);
-    editor.setContentSize(1024, 700);
-  });
-  await wait(
-    page,
-    () =>
-      innerWidth === 1024 &&
-      innerHeight === 700 &&
-      document.querySelector(".app-shell")?.dataset.layout === "compact",
-  );
-  const header = await page.evaluate(() => {
-    const name = document
-      .querySelector('[aria-label="Project name"]')
-      .getBoundingClientRect();
-    return Array.from(document.querySelectorAll(".header-actions button")).map(
-      (button) => {
+  ownedApps.add(app);
+  try {
+    progress("checking isolated native profile");
+    assert.equal(
+      await evaluateApp(app, ({ app }) => app.getPath("userData")),
+      path.join(directory, "profile"),
+    );
+    progress("waiting for editor window and controls");
+    const page = await bounded(
+      app.firstWindow({ timeout: 15000 }),
+      "first native editor window",
+    );
+    page.setDefaultTimeout(15000);
+    page.on("pageerror", (error) => errors.push(error.message));
+    await button(page, "Scenes and timeline").waitFor();
+    // CI screens can put the native editor below the desktop breakpoint. Exercise
+    // the compact header deliberately instead of depending on the host display.
+    progress(
+      "waiting for production editor visibility and resizing compact header",
+    );
+    const fitted = await evaluateApp(app, async ({ BrowserWindow, screen }) => {
+      const editor = BrowserWindow.getAllWindows()[0];
+      if (!editor.isVisible())
+        await new Promise((resolve) => editor.once("show", resolve));
+      if (editor.isMaximized()) editor.unmaximize();
+      const bounds = editor.getBounds();
+      const content = editor.getContentBounds();
+      const work = screen.getDisplayMatching(bounds).workArea;
+      const frame = {
+        width: Math.max(0, bounds.width - content.width),
+        height: Math.max(0, bounds.height - content.height),
+      };
+      const target = {
+        width: Math.min(1024, work.width - frame.width - 24),
+        height: Math.min(700, work.height - frame.height - 24),
+      };
+      editor.setMinimumSize(320, 400);
+      editor.setContentSize(target.width, target.height);
+      return { target, work, frame };
+    });
+    assert.ok(fitted.target.width >= 320 && fitted.target.height >= 400);
+    console.error(
+      `[native-show] fitted compact viewport: ${JSON.stringify(fitted)}`,
+    );
+    await wait(
+      page,
+      ({ width, height }) =>
+        innerWidth === width &&
+        innerHeight === height &&
+        document.querySelector(".app-shell")?.dataset.layout === "compact",
+      fitted.target,
+    );
+    const viewport = await evaluatePage(page, () => ({
+      width: innerWidth,
+      height: innerHeight,
+    }));
+    assert.deepEqual(viewport, fitted.target);
+    const header = await evaluatePage(page, () => {
+      const name = document
+        .querySelector('[aria-label="Project name"]')
+        .getBoundingClientRect();
+      return Array.from(
+        document.querySelectorAll(".header-actions button"),
+      ).map((button) => {
         const bounds = button.getBoundingClientRect();
         return {
           name: button.getAttribute("aria-label") || button.textContent.trim(),
@@ -183,23 +291,30 @@ async function launch(directory, errors) {
               )
               ?.closest("button") === button,
         };
-      },
+      });
+    });
+    for (const action of header) {
+      assert.equal(
+        action.overlapsName,
+        false,
+        `${action.name} does not overlap the project name`,
+      );
+      assert.equal(
+        action.receivesPointer,
+        true,
+        `${action.name} receives pointer clicks`,
+      );
+    }
+    await button(page, "Scenes and timeline").click();
+    return { app, page, viewport };
+  } catch (error) {
+    await closeOwnedApp(app).catch((cleanupError) =>
+      console.error(
+        `[native-show] launch cleanup failed: ${cleanupError.message}`,
+      ),
     );
-  });
-  for (const action of header) {
-    assert.equal(
-      action.overlapsName,
-      false,
-      `${action.name} does not overlap the project name`,
-    );
-    assert.equal(
-      action.receivesPointer,
-      true,
-      `${action.name} receives pointer clicks`,
-    );
+    throw error;
   }
-  await button(page, "Scenes and timeline").click();
-  return { app, page };
 }
 
 (async () => {
@@ -210,7 +325,10 @@ async function launch(directory, errors) {
   const mediaDirectory = path.join(showsDirectory, "media");
   const errors = [];
   let app;
+  let page;
+  let failure;
   try {
+    progress("preparing original local MP4 fixtures");
     await fs.mkdir(mediaDirectory, { recursive: true });
     const mediaPaths = [];
     for (const name of ["warm", "blue", "green"]) {
@@ -221,9 +339,11 @@ async function launch(directory, errors) {
       );
       mediaPaths.push(target);
     }
+    progress("launching clean disposable editor");
     let session = await launch(directory, errors);
     app = session.app;
-    let page = session.page;
+    page = session.page;
+    progress("importing local MP4 sequence and checking metadata");
     await openDialog(app, mediaPaths);
     await panel(page)
       .getByRole("button", { name: "Add videos to timeline", exact: true })
@@ -251,21 +371,28 @@ async function launch(directory, errors) {
       imported.media.map((media) => media.path),
       mediaPaths,
     );
+    progress("seeking warm MP4 and checking yellow GPU pixel");
     await range(page, 1.4);
     const warmPixel = await pixel(page, [255, 255, 0]);
+    progress("seeking blue MP4 and checking blue GPU pixel");
     await range(page, 2.4);
     const bluePixel = await pixel(page, [0, 0, 255]);
     const liveTransport = (await read(page)).transport;
     assert.equal(liveTransport.active, true);
     assert.equal(liveTransport.playing, false);
-    const protocolProbe = await page.evaluate(async (url) => {
-      const response = await fetch(url, { headers: { Range: "bytes=0-15" } });
-      return {
-        status: response.status,
-        range: response.headers.get("Content-Range"),
-        bytes: Array.from(new Uint8Array(await response.arrayBuffer())),
-      };
-    }, imported.media[0].url);
+    progress("checking native MP4 protocol range response");
+    const protocolProbe = await evaluatePage(
+      page,
+      async (url) => {
+        const response = await fetch(url, { headers: { Range: "bytes=0-15" } });
+        return {
+          status: response.status,
+          range: response.headers.get("Content-Range"),
+          bytes: Array.from(new Uint8Array(await response.arrayBuffer())),
+        };
+      },
+      imported.media[0].url,
+    );
     assert.equal(protocolProbe.status, 206);
     assert.match(protocolProbe.range, /^bytes 0-15\/\d+$/);
     assert.equal(
@@ -276,6 +403,7 @@ async function launch(directory, errors) {
 
     // Keep real short-MP4 metadata and seek checks above. Longer show cues let
     // Save/Recent UI checks run under software graphics without racing a 5s end.
+    progress("editing show cue durations for save and recent workflow");
     for (let index = 0; index < imported.show.cues.length; index++)
       await duration(page, index, 120);
     await wait(page, async () =>
@@ -294,6 +422,7 @@ async function launch(directory, errors) {
       path.join(showsDirectory, `${name}.prism.json`),
     );
     for (let index = 0; index < names.length; index++) {
+      progress(`saving show ${names[index]}`);
       // Notifications can overlap the toolbar on narrower CI desktops.
       await page.locator(".toast").waitFor({ state: "hidden" });
       await page
@@ -339,10 +468,11 @@ async function launch(directory, errors) {
         .click();
     }
     assert.equal(
-      (await page.evaluate(() => window.prism.getRecentProjects())).length,
+      (await evaluatePage(page, () => window.prism.getRecentProjects())).length,
       4,
     );
     for (let index = 0; index < names.length; index++) {
+      progress(`reopening show ${names[index]} through native Open`);
       await page.locator(".toast").waitFor({ state: "hidden" });
       await openDialog(app, [projects[index]]);
       await button(page, "Open").click();
@@ -367,6 +497,7 @@ async function launch(directory, errors) {
     }
 
     // Quick-switch during playback and leave the prior session clock behind.
+    progress("switching recent shows during active playback");
     await recent(page)
       .getByRole("button", { name: "Set 1", exact: true })
       .click();
@@ -394,13 +525,16 @@ async function launch(directory, errors) {
       1,
       "native checks never open a projector window",
     );
-    await app.close();
+    progress("closing disposable app before restart");
+    await closeOwnedApp(app);
     app = null;
 
+    progress("restarting disposable app and checking persistent recent shows");
     session = await launch(directory, errors);
     app = session.app;
     page = session.page;
-    const persistedRecent = await page.evaluate(() =>
+    progress("reading persistent recent shows after restart");
+    const persistedRecent = await evaluatePage(page, () =>
       window.prism.getRecentProjects(),
     );
     assert.deepEqual(
@@ -408,18 +542,21 @@ async function launch(directory, errors) {
       new Set(names),
     );
     assert.ok(persistedRecent.every((entry) => projects.includes(entry.path)));
+    progress("opening saved Band intro through recent projects");
     await recent(page)
       .getByRole("button", { name: "Band intro", exact: true })
       .click();
     await opened(page, "Band intro");
     assert.equal((await read(page)).playing, false);
     await unblackout(page);
+    progress("seeking reopened MP4 and checking blue GPU pixel");
     await range(page, 120.4);
     await pixel(page, [0, 0, 255]);
     await panel(page)
       .getByRole("button", { name: "Stop show", exact: true })
       .click();
     const good = await read(page);
+    progress("checking missing recent project preserves current show");
     await fs.unlink(projects[3]);
     await recent(page)
       .getByRole("button", { name: "Set 2", exact: true })
@@ -437,6 +574,10 @@ async function launch(directory, errors) {
     );
     assert.equal((await app.windows()).length, 1);
     assert.deepEqual(errors, []);
+    progress("closing final disposable app");
+    await closeOwnedApp(app);
+    app = null;
+    progress("native show assertions passed");
     console.log(
       JSON.stringify(
         {
@@ -447,16 +588,64 @@ async function launch(directory, errors) {
           savedShows: names,
           recentProjectsSurviveRestart: true,
           missingProjectPreservesCurrent: true,
-          compactHeaderViewport: { width: 1024, height: 700 },
+          compactHeaderViewport: session.viewport,
           projectorWindowsOpened: 0,
         },
         null,
         2,
       ),
     );
+  } catch (error) {
+    failure = error;
+    console.error(
+      `[native-show] failure during ${phase}: ${error.stack || error}`,
+    );
+    if (app) {
+      const diagnostics = await Promise.allSettled([
+        evaluateApp(
+          app,
+          ({ BrowserWindow }) =>
+            BrowserWindow.getAllWindows().map((window) => ({
+              visible: window.isVisible(),
+              minimized: window.isMinimized(),
+              focused: window.isFocused(),
+              contentBounds: window.getContentBounds(),
+            })),
+          undefined,
+          3000,
+        ),
+        evaluatePage(
+          page,
+          () => ({
+            visibility: document.visibilityState,
+            hidden: document.hidden,
+            viewport: { width: innerWidth, height: innerHeight },
+            activeElement: document.activeElement?.getAttribute("aria-label"),
+            rendererError:
+              document.querySelector(".stage canvas")?.dataset.renderError,
+          }),
+          undefined,
+          3000,
+        ),
+      ]);
+      console.error(
+        `[native-show] failure diagnostics: ${JSON.stringify(diagnostics)}`,
+      );
+    }
+    throw error;
   } finally {
-    if (app) await app.close();
-    await fs.rm(directory, { recursive: true, force: true });
+    try {
+      if (app) await closeOwnedApp(app);
+    } catch (cleanupError) {
+      if (!failure) throw cleanupError;
+      console.error(`[native-show] cleanup failed: ${cleanupError.message}`);
+    } finally {
+      await bounded(
+        fs.rm(directory, { recursive: true, force: true }),
+        "removing disposable test profile",
+        10000,
+      );
+    }
   }
 })().catch((error) => {
   console.error(error);
