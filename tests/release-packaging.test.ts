@@ -10,6 +10,7 @@ import * as ResEdit from "resedit";
 import {
   applicationFiles,
   copyBuild,
+  macDocumentTypes,
   packageRelease,
   releaseName,
   startHereText,
@@ -318,6 +319,20 @@ test("stamping gives the executable the Prism Mapper icon and version strings", 
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("the macOS bundle offers Prism Mapper for JSON files without taking them over", () => {
+  assert.equal(macDocumentTypes.length, 1);
+  const [type] = macDocumentTypes;
+  assert.equal(type.CFBundleTypeRole, "Editor");
+  // Alternate: listed under "Open With", never the default program for JSON.
+  assert.equal(type.LSHandlerRank, "Alternate");
+  assert.deepEqual(type.CFBundleTypeExtensions, ["json"]);
+  assert.deepEqual(type.LSItemContentTypes, ["public.json"]);
+  assert.ok(Object.isFrozen(macDocumentTypes));
+  // plutil takes it as JSON, so it has to survive a round trip unchanged.
+  assert.deepEqual(JSON.parse(JSON.stringify(macDocumentTypes)), [type]);
+  assert.doesNotMatch(JSON.stringify(macDocumentTypes), /[\u2013\u2014]/);
 });
 
 test("the portable README for each platform is honest and free of dash punctuation", () => {

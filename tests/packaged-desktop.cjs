@@ -5,7 +5,7 @@
 //   node tests/packaged-desktop.cjs <executable>
 const { _electron: electron } = require("playwright");
 const assert = require("node:assert/strict");
-const { spawn } = require("node:child_process");
+const { execFileSync, spawn } = require("node:child_process");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -266,6 +266,22 @@ async function windowFits(directory, scale) {
   }
 }
 
+// The macOS bundle lists Prism Mapper under Finder's "Open With" for JSON files
+// (a project is a JSON file). The declaration is read back from the packaged
+// Info.plist, which also proves the signed bundle's property list is valid.
+async function macBundle() {
+  const { macDocumentTypes } = await import("../scripts/package-release.mjs");
+  const plist = path.resolve(path.dirname(executable), "..", "Info.plist");
+  const info = JSON.parse(
+    execFileSync("/usr/bin/plutil", ["-convert", "json", "-o", "-", plist], {
+      encoding: "utf8",
+    }),
+  );
+  assert.deepEqual(info.CFBundleDocumentTypes, macDocumentTypes);
+  assert.equal(info.CFBundleIdentifier, "org.prismmapper.desktop");
+  return `Info.plist declares ${macDocumentTypes[0].CFBundleTypeName} (${macDocumentTypes[0].LSHandlerRank}) for .json`;
+}
+
 (async () => {
   if (!executable)
     throw new Error(
@@ -274,6 +290,7 @@ async function windowFits(directory, scale) {
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), "prism-desktop-"));
   const lines = [];
   try {
+    if (process.platform === "darwin") lines.push(await macBundle());
     lines.push(await openedProjects(directory));
     lines.push(await startedWithProject(directory));
     for (const scale of [1, 1.25, 1.5])

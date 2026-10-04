@@ -46,6 +46,19 @@ export const examples = [
   "halloween-haunt.prism.json",
 ];
 
+// Finder lists Prism Mapper in "Open With" for JSON files, which is what a
+// project is, and then hands the file to the app (open-file). Rank "Alternate"
+// means it never becomes the default program for JSON files.
+export const macDocumentTypes = Object.freeze([
+  {
+    CFBundleTypeName: "Prism Mapper project",
+    CFBundleTypeRole: "Editor",
+    LSHandlerRank: "Alternate",
+    CFBundleTypeExtensions: ["json"],
+    LSItemContentTypes: ["public.json"],
+  },
+]);
+
 export function releaseName(version, platform, arch) {
   if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
     throw new Error("Invalid release version");
@@ -295,6 +308,13 @@ export async function packageRelease({
         value,
         plist,
       ]);
+    execFileSync("/usr/bin/plutil", [
+      "-replace",
+      "CFBundleDocumentTypes",
+      "-json",
+      JSON.stringify(macDocumentTypes),
+      plist,
+    ]);
     // Helpers retain Electron's executable names, while bundle metadata identifies
     // this application and keeps helper bundle identifiers distinct.
     const frameworks = path.join(application, "Contents", "Frameworks");
