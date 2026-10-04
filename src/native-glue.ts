@@ -52,3 +52,15 @@ export async function onBackButton(handler: () => void): Promise<() => void> {
     return noop;
   }
 }
+
+/**
+ * Leaves the app, which is what the Android back button does from the first
+ * screen once a back button listener has replaced the default behaviour.
+ */
+export async function exitApp(): Promise<void> {
+  if (!isNativeShell()) return;
+  try {
+    const { App } = await import("@capacitor/app");
+    await App.exitApp();
+  } catch {}
+}

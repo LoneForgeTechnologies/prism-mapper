@@ -14,6 +14,28 @@ export const toggleSheet = (
   next: SheetId,
 ): SheetId | null => (current === next ? null : next);
 
+export type BackAction =
+  "close-help" | "close-sheet" | "cancel-drawing" | "exit" | "none";
+
+/**
+ * What the Android Back button does, from the last thing the person opened
+ * back to the plain editor: close the help window, close the open sheet, drop
+ * an outline that is being drawn, and only then leave the app. Present mode
+ * has its own handler for the button, so nothing more happens here meanwhile.
+ */
+export function backAction(state: {
+  presenting: boolean;
+  help: boolean;
+  sheet: SheetId | null;
+  drawing: boolean;
+}): BackAction {
+  if (state.presenting) return "none";
+  if (state.help) return "close-help";
+  if (state.sheet) return "close-sheet";
+  if (state.drawing) return "cancel-drawing";
+  return "exit";
+}
+
 export type NudgeStep = 1 | 10;
 export type NudgeDirection = "left" | "right" | "up" | "down";
 export const NUDGE_VECTORS: Record<NudgeDirection, readonly [number, number]> =

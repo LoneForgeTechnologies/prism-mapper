@@ -97,6 +97,7 @@ import {
   useStageTouch,
 } from "./compact";
 import {
+  backAction,
   bufferLongSide,
   capBufferSize,
   createRepeatGuard,
@@ -108,6 +109,7 @@ import {
   type NudgeStep,
   type SheetId,
 } from "./compact-logic";
+import { exitApp, onBackButton } from "./native-glue";
 import { PresentMode, requestPresentFullscreen } from "./present";
 import "./style.css";
 import "./pwa.css";
@@ -830,6 +832,44 @@ function App() {
       presentOpener.current = null;
       if (opener?.isConnected) opener.focus({ preventScroll: true });
     });
+  }, []);
+  // Android's Back button. Without a listener it does nothing on the first
+  // screen, so the editor answers it: close what was opened last, and leave the
+  // app only from the plain editor. Present mode keeps its own listener.
+  const backNow = {
+    presenting,
+    help,
+    sheet: activeSheet,
+    drawing: tool !== "select",
+  };
+  const backState = useRef(backNow);
+  backState.current = backNow;
+  useEffect(() => {
+    let cancelled = false;
+    let remove = () => {};
+    void onBackButton(() => {
+      switch (backAction(backState.current)) {
+        case "close-help":
+          setHelp(false);
+          break;
+        case "close-sheet":
+          closeSheet();
+          break;
+        case "cancel-drawing":
+          cancelDrawing();
+          break;
+        case "exit":
+          void exitApp();
+          break;
+      }
+    }).then((stop) => {
+      if (cancelled) stop();
+      else remove = stop;
+    });
+    return () => {
+      cancelled = true;
+      remove();
+    };
   }, []);
   useEffect(() => {
     const key = (e: KeyboardEvent) => {

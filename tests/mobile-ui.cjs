@@ -1408,6 +1408,31 @@ async function presentChecks(browser, device) {
   );
 }
 
+// A stand-in for the Capacitor App plugin that behaves like the real one: every
+// listener is called when Back is pressed, and exitApp is counted.
+const FAKE_APP_PLUGIN = `
+  window.__backListeners = [];
+  window.__pressBack = () => {
+    for (const callback of [...window.__backListeners])
+      callback({ canGoBack: false });
+  };
+  export const App = {
+    addListener: async (name, callback) => {
+      window.__backName = name;
+      window.__backListeners.push(callback);
+      return {
+        remove: async () => {
+          window.__backListeners = window.__backListeners.filter(
+            (listener) => listener !== callback,
+          );
+        },
+      };
+    },
+    exitApp: async () => {
+      window.__exited = (window.__exited || 0) + 1;
+    },
+  };`;
+
 async function presentPlatform(browser) {
   const urls = [];
   const app = await openApp(browser, PHONE, {
@@ -1456,19 +1481,15 @@ async function presentPlatform(browser) {
           show: async () => { window.__status = (window.__status || 0) - 1; },
         };`),
       );
-      await page.route(
-        /@capacitor_app\.js/,
-        fake(`export const App = {
-          addListener: async (name, callback) => {
-            window.__back = callback;
-            window.__backName = name;
-            return { remove: async () => { window.__back = null; } };
-          },
-        };`),
-      );
+      await page.route(/@capacitor_app\.js/, fake(FAKE_APP_PLUGIN));
     },
   });
   const { page } = app;
+  // The editor listens for Back from the start; Present adds its own listener.
+  await waitFor(
+    () => page.evaluate(() => window.__backListeners.length === 1),
+    "the editor listens for the Back button",
+  );
   await openSheet(app, "Show");
   await page
     .getByRole("button", { name: "Present on this screen", exact: true })
@@ -1481,7 +1502,7 @@ async function presentPlatform(browser) {
           window.__wake.requests >= 1 &&
           window.__fs.enters === 1 &&
           window.__status === 1 &&
-          typeof window.__back === "function",
+          window.__backListeners.length === 2,
       ),
     "platform hooks ran",
   );
@@ -1495,8 +1516,9 @@ async function presentPlatform(browser) {
     () => page.evaluate((n) => window.__wake.requests > n, requests),
     "wake lock is re-acquired",
   );
-  // The Android back button leaves Present.
-  await page.evaluate(() => window.__back());
+  // The Android back button leaves Present, and only Present: the editor
+  // underneath neither closes its sheet nor leaves the app.
+  await page.evaluate(() => window.__pressBack());
   await page.locator(".present-root").waitFor({ state: "detached" });
   await waitFor(
     () =>
@@ -1504,10 +1526,16 @@ async function presentPlatform(browser) {
         () =>
           window.__wake.releases >= 1 &&
           window.__status === 0 &&
-          window.__back === null &&
+          window.__backListeners.length === 1 &&
           window.__fs.exits === 1,
       ),
     "everything is released on exit",
+  );
+  assert.equal(await page.evaluate(() => window.__exited), undefined);
+  assert.equal(
+    await tab(page, "Show").getAttribute("aria-expanded"),
+    "true",
+    "Back from Present leaves the sheet that was open",
   );
 
   // Leaving fullscreen with the system gesture leaves Present as well.
@@ -1544,6 +1572,73 @@ async function presentPlatform(browser) {
   await web.context.close();
   pass(
     "present platform: fullscreen, wake lock + re-acquire, status bar, back button, fullscreen exit, nothing loaded on the web",
+  );
+}
+
+// The Android back button, in the native shell: close what was opened last,
+// and leave the app only from the plain editor.
+async function androidBackChecks(browser) {
+  const app = await openApp(browser, PHONE, {
+    init: () => {
+      window.Capacitor = { isNativePlatform: () => true };
+    },
+    setup: async (page) => {
+      await page.route(/@capacitor_app\.js/, (route) =>
+        route.fulfill({
+          contentType: "text/javascript",
+          body: FAKE_APP_PLUGIN,
+        }),
+      );
+    },
+  });
+  const { page } = app;
+  await waitFor(
+    () => page.evaluate(() => window.__backListeners?.length === 1),
+    "the editor listens for the Back button",
+  );
+  assert.equal(await page.evaluate(() => window.__backName), "backButton");
+  const back = () => page.evaluate(() => window.__pressBack());
+  const exits = () => page.evaluate(() => window.__exited || 0);
+  const helpOpen = () => page.locator(".help-modal").count();
+  const expanded = (name) => tab(page, name).getAttribute("aria-expanded");
+
+  // Help sits on top of everything and closes first, with a sheet open under it.
+  await openSheet(app, "Layers");
+  await page
+    .getByRole("button", { name: "Quick start and shortcuts", exact: true })
+    .click();
+  await page.locator(".help-modal").waitFor();
+  await back();
+  await waitFor(async () => (await helpOpen()) === 0, "Back closes Help");
+  assert.equal(await expanded("Layers"), "true", "the sheet is still open");
+  assert.equal(await exits(), 0);
+
+  // Then the sheet.
+  await back();
+  await waitFor(
+    async () => (await expanded("Layers")) === "false",
+    "Back closes the sheet",
+  );
+  assert.equal(await exits(), 0);
+
+  // Then an outline that is half drawn.
+  await page.getByRole("button", { name: "Line tool", exact: true }).click();
+  const box = await page.locator(".stage").boundingBox();
+  const at = toScreen(box, { x: 0.3, y: 0.3 });
+  await page.touchscreen.tap(at.x, at.y);
+  await page.locator(".drawing-instructions").waitFor();
+  await back();
+  await page.locator(".drawing-instructions").waitFor({ state: "detached" });
+  assert.equal(await exits(), 0, "cancelling a drawing does not leave the app");
+  assert.equal((await project(page)).surfaces.length, 1);
+
+  // Only from the plain editor does Back leave the app.
+  await back();
+  await waitFor(async () => (await exits()) === 1, "Back leaves the app");
+  assert.deepEqual(app.errors, []);
+  await app.context.close();
+  pass(
+    "android back: Help, then the open sheet, then a half-drawn outline, then the app; Present keeps its own",
   );
 }
 
@@ -2041,6 +2136,7 @@ const GROUPS = {
     await presentChecks(browser, { ...LANDSCAPE, dpr: 1 });
   },
   platform: presentPlatform,
+  back: androidBackChecks,
   hidden: hiddenPage,
   performance: performanceCaps,
   desktop: desktopChecks,

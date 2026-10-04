@@ -4,6 +4,7 @@ import { createShapeSurface, insertSurfacePoint } from "../src/polygon.ts";
 import {
   MAX_DEVICE_PIXEL_RATIO,
   NUDGE_VECTORS,
+  backAction,
   bufferLongSide,
   capBufferSize,
   createDoubleTapDetector,
@@ -213,4 +214,32 @@ test("drawing buffers are capped by device pixel ratio and long side", () => {
     height: 100,
   });
   assert.deepEqual(capBufferSize(0, 0, 2, 1280), { width: 1, height: 1 });
+});
+
+test("Back closes the last thing opened, then the sheet, then a half-drawn outline, then leaves", () => {
+  const editor = {
+    presenting: false,
+    help: false,
+    sheet: null,
+    drawing: false,
+  } as const;
+  assert.equal(backAction(editor), "exit");
+  assert.equal(backAction({ ...editor, drawing: true }), "cancel-drawing");
+  assert.equal(backAction({ ...editor, sheet: "layers" }), "close-sheet");
+  assert.equal(backAction({ ...editor, help: true }), "close-help");
+  // Several at once: the most recently opened thing closes first.
+  assert.equal(
+    backAction({ ...editor, sheet: "audio", drawing: true }),
+    "close-sheet",
+  );
+  assert.equal(
+    backAction({ ...editor, help: true, sheet: "audio", drawing: true }),
+    "close-help",
+  );
+  // Present mode answers the button itself.
+  assert.equal(
+    backAction({ ...editor, presenting: true, help: true, sheet: "show" }),
+    "none",
+  );
+  assert.equal(backAction({ ...editor, presenting: true }), "none");
 });
