@@ -1,0 +1,82 @@
+name: Android emulator experiments
+
+# Temporary, lives only on the claude/android-debug branch. Finds out why the
+# emulator stops about 20 seconds after Prism Mapper opens. It builds the same
+# Android app around several different web pages, opens each one on its own
+# emulator and records whether the emulator and the app survive.
+
+on:
+  push:
+    branches:
+      - claude/android-debug
+
+permissions:
+  contents: read
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  build:
+    name: build one APK per page
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+      - run: npm ci
+      - run: npm run build
+      - run: bash mobile/experiment-build.sh
+      - uses: actions/upload-artifact@v7
+        with:
+          name: experiment-apks
+          path: experiment-apks/*.apk
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+
+  emulator:
+    name: ${{ matrix.page }} (${{ matrix.gpu }})
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { page: plain, gpu: swiftshader_indirect }
+          - { page: canvas2d, gpu: swiftshader_indirect }
+          - { page: webgl-tri, gpu: swiftshader_indirect }
+          - { page: app-nogl, gpu: swiftshader_indirect }
+          - { page: app, gpu: swiftshader_indirect }
+          - { page: app, gpu: swangle_indirect }
+          - { page: app, gpu: guest }
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: experiment-apks
+          path: experiment-apks
+      - name: Let the emulator use hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start the emulator
+        timeout-minutes: 20
+        run: bash mobile/start-emulator.sh 34 google_apis "${{ matrix.gpu }}" experiment
+      - name: Open the page and watch what happens
+        timeout-minutes: 10
+        run: bash mobile/experiment-launch.sh "experiment-apks/${{ matrix.page }}.apk" experiment
