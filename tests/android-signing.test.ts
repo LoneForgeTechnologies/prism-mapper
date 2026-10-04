@@ -37,6 +37,38 @@ test("Android signer verification accepts only the configured public certificate
   );
 });
 
+test("Android Build Tools 37 V2 signer output is checked against the certificate digest", () => {
+  const currentOutput = `Verifies\nVerified using v2 scheme (APK Signature Scheme v2): true\nNumber of signers: 1\nV2 Signer: certificate DN: CN=Example\nV2 Signer: certificate SHA-256 digest: ${fingerprint.toLowerCase()}\nV2 Signer: public key SHA-256 digest: ${"F".repeat(64)}\n`;
+  assert.equal(verifyApkSigner(currentOutput, fingerprint), fingerprint);
+  assert.throws(
+    () =>
+      verifyApkSigner(
+        currentOutput.replace(fingerprint.toLowerCase(), "F".repeat(64)),
+        fingerprint,
+      ),
+    /does not match/,
+  );
+  assert.throws(
+    () =>
+      verifyApkSigner(
+        currentOutput.replace("Number of signers: 1", "Number of signers: 2"),
+        fingerprint,
+      ),
+    /does not match/,
+  );
+  assert.throws(
+    () =>
+      verifyApkSigner(
+        currentOutput.replace(
+          /^V2 Signer: certificate SHA-256 digest:.*\n/m,
+          "",
+        ),
+        fingerprint,
+      ),
+    /does not match/,
+  );
+});
+
 test("the Android signer CLI fails closed on a mismatched APK signer", () => {
   const script = path.resolve(
     import.meta.dirname,

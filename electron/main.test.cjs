@@ -22,6 +22,7 @@ class FakeWebContents extends EventEmitter {
   setWindowOpenHandler() {}
   send(channel, value) {
     this.sent.push([channel, value]);
+    this.emit("message-sent", channel, value);
   }
   isDestroyed() {
     return this.destroyed;
@@ -321,7 +322,33 @@ const opened = (window) =>
   window.webContents.sent.filter(
     ([channel]) => channel === "prism:project-opened",
   );
-const settle = () => new Promise((resolve) => setTimeout(resolve, 30));
+function waitForOpened(window, count = 1) {
+  return new Promise((resolve, reject) => {
+    const contents = window.webContents;
+    const finish = (result, value) => {
+      clearTimeout(timeout);
+      contents.off("message-sent", check);
+      result(value);
+    };
+    const check = () => {
+      const messages = opened(window);
+      if (messages.length >= count) finish(resolve, messages);
+    };
+    const timeout = setTimeout(
+      () =>
+        finish(
+          reject,
+          new Error(
+            `Expected ${count} project-opened message(s), received ${opened(window).length}`,
+          ),
+        ),
+      5000,
+    );
+    contents.on("message-sent", check);
+    check();
+  });
+}
+const nextTurn = () => new Promise((resolve) => setImmediate(resolve));
 
 test("the editor window has the app icon and room for the page", async () => {
   for (const [platform, icon] of [
@@ -423,11 +450,20 @@ test("a second copy gives up its place and opens no window", async () => {
 
 test("a project named on the command line opens once the page is ready", async () => {
   await withProject("Command line", async (file) => {
-    const fake = startMain({ argv: ["Prism Mapper.exe", file] });
+    let loadStarts = 0;
+    const { loadProjectFile } = require("./load.cjs");
+    const fake = startMain({
+      argv: ["Prism Mapper.exe", file],
+      projectLoader: (...args) => {
+        loadStarts++;
+        return loadProjectFile(...args);
+      },
+    });
     try {
       await fake.becomeReady();
       const editor = fake.editor();
-      await settle();
+      await nextTurn();
+      assert.equal(loadStarts, 0, "the loader waits for the editor page");
       assert.deepEqual(
         opened(editor),
         [],
@@ -439,11 +475,11 @@ test("a project named on the command line opens once the page is ready", async (
         { sender: new FakeWebContents(), senderFrame: null },
         true,
       );
-      await settle();
+      await nextTurn();
+      assert.equal(loadStarts, 0, "a foreign page cannot start the loader");
       assert.deepEqual(opened(editor), []);
       fake.send("prism:project-listener", fake.from(editor), true);
-      await settle();
-      const [[channel, payload]] = opened(editor);
+      const [[channel, payload]] = await waitForOpened(editor);
       assert.equal(channel, "prism:project-opened");
       assert.equal(payload.path, file);
       assert.equal(payload.project.name, "Command line");
@@ -477,7 +513,7 @@ test("macOS open-file before the app is ready is kept and prevents the default",
       await fake.becomeReady();
       const editor = fake.editor();
       fake.send("prism:project-listener", fake.from(editor), true);
-      await settle();
+      await waitForOpened(editor);
       assert.equal(opened(editor)[0][1].project.name, "Early open-file");
     } finally {
       fake.restorePlatform();
@@ -499,7 +535,7 @@ test("a second launch brings the editor forward and opens what it was given", as
         ["Prism Mapper.exe", "--flag", file],
         os.tmpdir(),
       );
-      await settle();
+      await waitForOpened(editor);
       assert.deepEqual(
         editor.calls.filter((call) =>
           ["restore", "show", "focus"].includes(call),
@@ -514,7 +550,7 @@ test("a second launch brings the editor forward and opens what it was given", as
         ["Prism Mapper.exe"],
         os.tmpdir(),
       );
-      await settle();
+      await nextTurn();
       assert.equal(opened(editor).length, 1);
       assert.equal(fake.windows.length, 1);
     } finally {
@@ -540,8 +576,7 @@ test("a project file that cannot be opened is reported to the page", async () =>
       ["Prism Mapper.exe", file],
       directory,
     );
-    await settle();
-    const [[, payload]] = opened(editor);
+    const [[, payload]] = await waitForOpened(editor);
     assert.match(payload.error, /not valid JSON/);
     assert.equal(payload.path, file);
     assert.equal(
@@ -572,8 +607,7 @@ test("the Open button and the operating system share one loader", async () => {
         ["Prism Mapper.exe", file],
         os.tmpdir(),
       );
-      await settle();
-      const [[, viaSystem]] = opened(editor);
+      const [[, viaSystem]] = await waitForOpened(editor);
       const { path: openedPath, ...rest } = viaSystem;
       assert.equal(openedPath, file);
       assert.deepEqual(rest, viaButton);
@@ -782,15 +816,17 @@ test("saving a renamed or new show offers a separate filename beside the previou
 });
 
 test("picker and OS opens share one queue and a failed load does not block later shows", async () => {
+  const intro = path.resolve("/shows/intro.prism.json");
+  const broken = path.resolve("/shows/broken.prism.json");
+  const set1 = path.resolve("/shows/set1.prism.json");
   const starts = [];
   let releaseFirst;
   const firstWait = new Promise((resolve) => (releaseFirst = resolve));
   const fake = startMain({
     projectLoader: async (filename) => {
       starts.push(filename);
-      if (filename === "/shows/intro.prism.json") await firstWait;
-      if (filename === "/shows/broken.prism.json")
-        throw new Error("broken show");
+      if (filename === intro) await firstWait;
+      if (filename === broken) throw new Error("broken show");
       return { project: { name: path.basename(filename) }, missing: [] };
     },
   });
@@ -800,32 +836,24 @@ test("picker and OS opens share one queue and a failed load does not block later
     fake.send("prism:project-listener", event, true);
     fake.dialogs.open = async () => ({
       canceled: false,
-      filePaths: ["/shows/intro.prism.json"],
+      filePaths: [intro],
     });
     const first = fake.invoke("prism:load-project", event);
-    await settle();
-    fake.electron.app.emit(
-      "open-file",
-      { preventDefault() {} },
-      "/shows/broken.prism.json",
-    );
-    await settle();
+    await nextTurn();
+    fake.electron.app.emit("open-file", { preventDefault() {} }, broken);
+    await nextTurn();
     fake.dialogs.open = async () => ({
       canceled: false,
-      filePaths: ["/shows/set1.prism.json"],
+      filePaths: [set1],
     });
     const latest = fake.invoke("prism:load-project", event);
-    await settle();
-    assert.deepEqual(starts, ["/shows/intro.prism.json"]);
+    await nextTurn();
+    assert.deepEqual(starts, [intro]);
     releaseFirst();
     await first;
     assert.equal((await latest).project.name, "set1.prism.json");
-    await settle();
-    assert.deepEqual(starts, [
-      "/shows/intro.prism.json",
-      "/shows/broken.prism.json",
-      "/shows/set1.prism.json",
-    ]);
+    await waitForOpened(fake.editor());
+    assert.deepEqual(starts, [intro, broken, set1]);
     assert.equal(
       (await fake.invoke("prism:get-project", event)).name,
       "set1.prism.json",
@@ -854,7 +882,7 @@ test("a save dialog cannot replace the path of a show opened while it was up", a
         fake.dialogs.save = () =>
           new Promise((resolve) => (finishDialog = resolve));
         const save = fake.invoke("prism:save-project", event, project);
-        await settle();
+        await nextTurn();
         fake.dialogs.open = async () => ({
           canceled: false,
           filePaths: [set1],

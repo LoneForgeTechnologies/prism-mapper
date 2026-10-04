@@ -240,6 +240,8 @@ async function launch(directory, errors) {
       path.join(showsDirectory, `${name}.prism.json`),
     );
     for (let index = 0; index < names.length; index++) {
+      // Notifications can overlap the toolbar on narrower CI desktops.
+      await page.locator(".toast").waitFor({ state: "hidden" });
       await page
         .getByRole("textbox", { name: "Project name", exact: true })
         .fill(names[index]);
@@ -287,6 +289,7 @@ async function launch(directory, errors) {
       4,
     );
     for (let index = 0; index < names.length; index++) {
+      await page.locator(".toast").waitFor({ state: "hidden" });
       await openDialog(app, [projects[index]]);
       await button(page, "Open").click();
       await opened(page, names[index]);

@@ -87,7 +87,7 @@ fi
 if [ "$SIGNED" = "signed" ]; then
   echo "--- signature"
   signature="$("$TOOLS/apksigner" verify --verbose --print-certs "$APK" || true)"
-  grep -E "^Verifies|Signer #1 certificate (DN|SHA-256)|Verified using" <<< "$signature" || true
+  grep -E "^Verifies|certificate (DN|SHA-256 digest):|Verified using" <<< "$signature" || true
   expect "the signature verifies" "$TOOLS/apksigner" verify "$APK"
   if [ -n "$EXPECTED_SIGNER" ]; then
     expected_signer() { node scripts/verify-apk-signer.mjs "$EXPECTED_SIGNER" <<< "$signature"; }

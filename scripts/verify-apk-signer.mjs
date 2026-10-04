@@ -12,10 +12,15 @@ export function verifyApkSigner(output, expected) {
     );
   const signers = [
     ...output.matchAll(
-      /^Signer #\d+ certificate SHA-256 digest:\s*([a-f0-9: ]+)$/gim,
+      /^(?:Signer #\d+ certificate|V2 Signer: certificate) SHA-256 digest:\s*([a-f0-9: ]+)$/gim,
     ),
   ].map((match) => normalized(match[1]));
-  if (signers.length !== 1 || signers[0] !== fingerprint)
+  const counts = [...output.matchAll(/^Number of signers:\s*(\d+)$/gim)];
+  if (
+    signers.length !== 1 ||
+    signers[0] !== fingerprint ||
+    (counts.length > 0 && (counts.length !== 1 || Number(counts[0][1]) !== 1))
+  )
     throw new Error(
       "The APK signing certificate does not match the permanent release key",
     );
