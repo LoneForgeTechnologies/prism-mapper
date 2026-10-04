@@ -144,6 +144,60 @@ async function launch(directory, errors) {
   page.setDefaultTimeout(15000);
   page.on("pageerror", (error) => errors.push(error.message));
   await button(page, "Scenes and timeline").waitFor();
+  // CI screens can put the native editor below the desktop breakpoint. Exercise
+  // the compact header deliberately instead of depending on the host display.
+  await app.evaluate(async ({ BrowserWindow }) => {
+    const editor = BrowserWindow.getAllWindows()[0];
+    if (!editor.isVisible())
+      await new Promise((resolve) => editor.once("show", resolve));
+    if (editor.isMaximized()) editor.unmaximize();
+    editor.setMinimumSize(320, 400);
+    editor.setContentSize(1024, 700);
+  });
+  await wait(
+    page,
+    () =>
+      innerWidth === 1024 &&
+      innerHeight === 700 &&
+      document.querySelector(".app-shell")?.dataset.layout === "compact",
+  );
+  const header = await page.evaluate(() => {
+    const name = document
+      .querySelector('[aria-label="Project name"]')
+      .getBoundingClientRect();
+    return Array.from(document.querySelectorAll(".header-actions button")).map(
+      (button) => {
+        const bounds = button.getBoundingClientRect();
+        return {
+          name: button.getAttribute("aria-label") || button.textContent.trim(),
+          overlapsName:
+            Math.min(name.right, bounds.right) >
+              Math.max(name.left, bounds.left) &&
+            Math.min(name.bottom, bounds.bottom) >
+              Math.max(name.top, bounds.top),
+          receivesPointer:
+            document
+              .elementFromPoint(
+                bounds.x + bounds.width / 2,
+                bounds.y + bounds.height / 2,
+              )
+              ?.closest("button") === button,
+        };
+      },
+    );
+  });
+  for (const action of header) {
+    assert.equal(
+      action.overlapsName,
+      false,
+      `${action.name} does not overlap the project name`,
+    );
+    assert.equal(
+      action.receivesPointer,
+      true,
+      `${action.name} receives pointer clicks`,
+    );
+  }
   await button(page, "Scenes and timeline").click();
   return { app, page };
 }
@@ -393,6 +447,7 @@ async function launch(directory, errors) {
           savedShows: names,
           recentProjectsSurviveRestart: true,
           missingProjectPreservesCurrent: true,
+          compactHeaderViewport: { width: 1024, height: 700 },
           projectorWindowsOpened: 0,
         },
         null,

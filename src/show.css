@@ -3,9 +3,6 @@
   align-items: center;
   gap: 7px;
 }
-.app-shell[data-layout="compact"] .workspace-bar {
-  margin-right: calc(var(--inset-right) + 6px + 176px + 4px);
-}
 .show-panel {
   position: fixed;
   z-index: 80;

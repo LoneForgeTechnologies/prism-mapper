@@ -1684,6 +1684,27 @@ function App() {
         : {}),
     };
   };
+  const projectHeading = (
+    <div className="workspace-bar">
+      <div className="project-title">
+        <span className="status-dot" />
+        <input
+          aria-label="Project name"
+          maxLength={80}
+          value={project.name}
+          onChange={(e) => {
+            showClock.stop();
+            setProject({ ...project, name: e.target.value });
+          }}
+        />
+        <span className="project-tag">INDOOR SESSION</span>
+      </div>
+      <div className="session-meta">
+        <span>LOCAL WORKSPACE</span>
+        <span>Free & open source</span>
+      </div>
+    </div>
+  );
   return (
     <div
       className="app-shell"
@@ -1714,6 +1735,7 @@ function App() {
           </span>
           <span className="alpha">EARLY ACCESS · {APP_VERSION}</span>
         </div>
+        {compact && projectHeading}
         <div className="header-actions">
           <button onClick={open} disabled={opening || saving}>
             <FolderOpen size={15} />
@@ -1745,25 +1767,7 @@ function App() {
           </button>
         </div>
       </header>
-      <div className="workspace-bar">
-        <div className="project-title">
-          <span className="status-dot" />
-          <input
-            aria-label="Project name"
-            maxLength={80}
-            value={project.name}
-            onChange={(e) => {
-              showClock.stop();
-              setProject({ ...project, name: e.target.value });
-            }}
-          />
-          <span className="project-tag">INDOOR SESSION</span>
-        </div>
-        <div className="session-meta">
-          <span>LOCAL WORKSPACE</span>
-          <span>Free & open source</span>
-        </div>
-      </div>
+      {!compact && projectHeading}
       <main className="workspace">
         <aside className="left-panel" {...sheetPanel("left")}>
           <SheetBar
