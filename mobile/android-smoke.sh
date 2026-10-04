@@ -3,7 +3,7 @@
 # checks that each one starts. Run by the "Android emulator test" job in
 # .github/workflows/mobile.yml, inside the emulator runner.
 #
-#   bash mobile/android-smoke.sh <debug.apk> <sideload.apk> <output-folder>
+#   bash mobile/android-smoke.sh <debug.apk> <sideload.apk> <output-folder> [other-debug.apk]
 #
 # The debug build is inspected from the inside over the WebView DevTools
 # (mobile/android-smoke.mjs). The sideload build is the APK people install, so
@@ -21,6 +21,9 @@ set -u
 DEBUG_APK="${1:?path of the debug APK}"
 SIDELOAD_APK="${2:?path of the sideload APK}"
 OUT="${3:?folder for screenshots and logs}"
+EXTRA_APK="${4:-}"
+# Which builds to try, for experiments: any of debug, sideload, extra.
+VARIANTS="${VARIANTS:-debug sideload}"
 PACKAGE="org.prismmapper.mobile"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
@@ -67,6 +70,54 @@ diagnose() {
     echo "$excerpt"
   } > "$OUT/diagnosis-$label.txt"
   echo "::error title=$TITLE diagnosis::$(escape < "$OUT/diagnosis-$label.txt")"
+}
+
+# Writes what the script is doing now, for the watchdog's timeline.
+stage() {
+  echo "$*" > "$OUT/stage.txt"
+  note "$*"
+}
+
+# Runs in the background and records, every two seconds, whether the emulator
+# is still attached to adb and whether its process still exists. The timeline
+# shows exactly when, and during which stage, an emulator disappears. The
+# fields are separated by "|": time, adb state, emulator process, available
+# memory in MB, stage.
+watchdog() {
+  while true; do
+    printf '%s|%s|%s|%s|%s\n' \
+      "$(date +%T)" \
+      "$(timeout 10 adb get-state 2>&1 | head -n 1 | cut -c1-60)" \
+      "$(pgrep -f 'qemu-system' | head -n 1)" \
+      "$(free -m | awk '/^Mem:/ { print $7 }')" \
+      "$(cat "$OUT/stage.txt" 2> /dev/null)" >> "$OUT/watchdog.txt"
+    sleep 2
+  done
+}
+
+# One annotation with what the machine knows: the changes of the watchdog
+# timeline, what the host kernel says about killed processes, the last
+# important lines of the system log that was kept on this machine, and what
+# the emulator itself printed.
+host_diagnose() {
+  local label="$1"
+  {
+    echo "$label host diagnosis: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }'), $(df -h / | awk 'NR == 2 { print $4 " disk free" }')"
+    echo "Timeline (time, adb state, emulator process, free MB, stage; changes only):"
+    awk -F'|' '{ key = $2 "|" $3 "|" $5; if (key != last) { print $1 " " $2 " qemu=" $3 " " $4 "MB " $5; last = key } }' "$OUT/watchdog.txt" 2> /dev/null | tail -n 16 | cut -c1-200
+    echo "Last watchdog line: $(tail -n 1 "$OUT/watchdog.txt" 2> /dev/null)"
+    echo "Emulator process: $(pgrep -af 'qemu-system' | head -n 1 | cut -c1-300)"
+    echo "Host kernel messages about killed processes:"
+    sudo dmesg 2> /dev/null | grep -i -E "out of memory|oom-kill|killed process|segfault|general protection|invalid opcode|call trace" | tail -n 8 | cut -c1-220
+    echo "System log kept on this machine (last important lines):"
+    grep -a -E "FATAL|Fatal signal|AndroidRuntime|ANR in|Watchdog|lowmemorykiller|lmkd|am_crash|am_proc_died|am_anr|has died|DEBUG|tombstone|SIGSEGV|zygote" "$OUT/logcat-live.txt" 2> /dev/null | tail -n 14 | cut -c1-230
+    echo "Last lines of that log: $(tail -n 3 "$OUT/logcat-live.txt" 2> /dev/null | cut -c1-200 | tr '\n' '|')"
+    echo "Emulator output (errors and warnings):"
+    grep -a -i -E "error|fatal|panic|segfault|segmentation|oops|killed|abort|crash|failed" "$OUT/emulator.log" 2> /dev/null | tail -n 12 | cut -c1-230
+    echo "Emulator output (last lines):"
+    tail -n 8 "$OUT/emulator.log" 2> /dev/null | cut -c1-230
+  } > "$OUT/host-diagnosis-$label.txt"
+  echo "::error title=$TITLE host diagnosis::$(escape < "$OUT/host-diagnosis-$label.txt")"
 }
 
 device_report() {
@@ -123,7 +174,7 @@ screenshot() {
     note "$name: $(echo "$SHOT_STATS" | tr '\n' ' ')"
   else
     echo "$SHOT_STATS"
-    fail "$name: the screenshot looks blank or is missing, so the app did not draw. $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 300) screencap said: $(head -c 300 "$OUT/screencap-$name.txt") file starts with: $(head -c 80 "$file" | tr -c '[:print:]' '.')"
+    fail "$name: the screenshot looks blank or is missing, so nothing was drawn. $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 300) screencap said: $(head -c 300 "$OUT/screencap-$name.txt") file starts with: $(head -c 80 "$file" | tr -c '[:print:]' '.')"
   fi
 }
 
@@ -166,63 +217,112 @@ is_debuggable() {
   adbt 60 shell dumpsys package "$PACKAGE" | tr -d '\r' | grep -E "pkgFlags=|flags=" | grep -q "DEBUGGABLE"
 }
 
-# --- Device ---------------------------------------------------------------
-adbt 120 wait-for-device
-adbt 20 devices -l
-device_report
-adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
-
-# --- Debug build: inspected from the inside --------------------------------
-note "Debug build."
-if install_apk "$DEBUG_APK" debug; then
-  if ! is_debuggable; then fail "debug: expected a debuggable build."; fi
-  launch debug
+# A debuggable build, inspected from the inside over the WebView DevTools.
+#   check_debug <label> <apk>
+check_debug() {
+  local label="$1" apk="$2" before stats
+  stage "$label: install"
+  install_apk "$apk" "$label" || return
+  if ! is_debuggable; then fail "$label: expected a debuggable build."; fi
+  stage "$label: launch"
+  launch "$label"
   before="$(app_pid)"
   if [ -z "$before" ]; then
-    fail "debug: no process after launch."
-    diagnose debug
+    fail "$label: no process after launch."
+    diagnose "$label"
+    host_diagnose "$label"
   fi
-  screenshot debug-screen
-  debug_stats="$SHOT_STATS"
+  stage "$label: screenshot"
+  screenshot "$label-screen"
+  stats="$SHOT_STATS"
+  stage "$label: web view check"
   if [ -n "$before" ]; then
     if ! node "$HERE/android-smoke.mjs" --native --package "$PACKAGE" --out "$OUT" --timeout 45; then
-      fail "debug: the page check inside the WebView failed (see webview-probe.json)."
+      fail "$label: the page check inside the WebView failed (see webview-probe.json)."
     fi
   fi
-  check_run debug "$before" yes
-  notice "Debug build: version $EXPECTED_VERSION installed, process ${before:-none}, screenshot: $(echo "$debug_stats" | tr '\n' ' ' | head -c 500)"
-fi
+  stage "$label: log check"
+  check_run "$label" "$before" yes
+  notice "$label build: version $EXPECTED_VERSION installed, process ${before:-none}, screenshot: $(echo "$stats" | tr '\n' ' ' | head -c 500)"
+}
 
-# --- Sideload build: the APK people install --------------------------------
-note "Sideload build."
-if install_apk "$SIDELOAD_APK" sideload; then
+# The APK people install: outside checks only, plus a rotation.
+check_sideload() {
+  local before portrait landscape="not tried"
+  stage "sideload: install"
+  install_apk "$SIDELOAD_APK" sideload || return
   if is_debuggable; then fail "sideload: the shared APK must not be debuggable."; fi
+  stage "sideload: launch"
   launch sideload
   before="$(app_pid)"
   if [ -z "$before" ]; then
     fail "sideload: no process after launch."
     diagnose sideload
+    host_diagnose sideload
   fi
+  stage "sideload: screenshot"
   screenshot sideload-screen
-  sideload_stats="$SHOT_STATS"
+  portrait="$SHOT_STATS"
   # The app must cope with rotation. Rotation is a device setting, so a
   # failure to change it is only a warning.
-  landscape_stats="not tried"
   if [ -n "$before" ] && adbt 20 shell settings put system accelerometer_rotation 0 && adbt 20 shell settings put system user_rotation 1; then
     sleep 5
     screenshot sideload-landscape
-    landscape_stats="$SHOT_STATS"
+    landscape="$SHOT_STATS"
     adbt 20 shell settings put system user_rotation 0 || true
     sleep 3
   else
     note "Skipping the landscape screenshot."
   fi
+  stage "sideload: log check"
   check_run sideload "$before" no
-  notice "Sideload build: version $EXPECTED_VERSION installed, process ${before:-none}, portrait: $(echo "$sideload_stats" | tr '\n' ' ' | head -c 450) landscape: $(echo "$landscape_stats" | tr '\n' ' ' | head -c 450)"
-fi
+  notice "sideload build: version $EXPECTED_VERSION installed, process ${before:-none}, portrait: $(echo "$portrait" | tr '\n' ' ' | head -c 450) landscape: $(echo "$landscape" | tr '\n' ' ' | head -c 450)"
+}
 
+# --- Device ---------------------------------------------------------------
+stage "waiting for the device"
+adbt 120 wait-for-device
+adbt 20 devices -l
+# The system log is also kept on this machine while the tests run, so that
+# its last lines survive an emulator that stops answering.
+adb logcat -b main,system,crash,events -v threadtime > "$OUT/logcat-live.txt" 2>&1 &
+LOGCAT_PID=$!
+watchdog &
+WATCHDOG_PID=$!
+trap 'kill $WATCHDOG_PID $LOGCAT_PID 2> /dev/null' EXIT
+device_report
+notice "Host: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }')"
+adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
+
+# A control: if the emulator cannot show and screenshot the Settings app, then
+# the environment is broken and the results for Prism Mapper mean nothing.
+stage "control: Settings app"
+adbt 30 shell am start -a android.settings.SETTINGS > /dev/null 2>&1 || true
+sleep 8
+screenshot control-settings
+note "control: $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 200)"
+adbt 20 shell input keyevent KEYCODE_HOME > /dev/null 2>&1 || true
+sleep 2
+
+for variant in $VARIANTS; do
+  case "$variant" in
+    debug) check_debug debug "$DEBUG_APK" ;;
+    extra)
+      if [ -n "$EXTRA_APK" ]; then
+        check_debug extra "$EXTRA_APK"
+      else
+        fail "extra: no fourth argument with the APK to try."
+      fi
+      ;;
+    sideload) check_sideload ;;
+    *) fail "Unknown build '$variant', use debug, sideload or extra." ;;
+  esac
+done
+
+stage "finished"
 if [ "$failures" -gt 0 ]; then
+  host_diagnose final
   echo "Android smoke test: $failures problem(s)." | tee "$OUT/summary.txt"
   exit 1
 fi
-echo "Android smoke test: both builds installed, started, drew their interface and stayed alive." | tee "$OUT/summary.txt"
+echo "Android smoke test: the builds installed, started, drew their interface and stayed alive." | tee "$OUT/summary.txt"

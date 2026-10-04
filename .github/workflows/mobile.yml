@@ -15,7 +15,7 @@ name: Mobile apps
 #                   (plus -Android-release.apk and .aab when signing secrets exist)
 #   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and
 #                   Prism-Mapper-v<version>-iOS-Simulator.zip, with .sha256 files
-#   android-smoke-<graphics mode>   screenshots and logs of the emulator test
+#   android-smoke-<emulator>        screenshots and logs of the emulator test
 #   ios-smoke-<iPhone or iPad>      screenshots and logs of the simulator test
 #
 # Optional secrets, all skipped silently when they are not set. See
@@ -171,6 +171,16 @@ jobs:
           mkdir -p smoke
           cp android/app/build/outputs/apk/debug/app-debug.apk smoke/debug.apk
           cp android/app/build/outputs/apk/sideload/app-sideload.apk smoke/sideload.apk
+      # EXPERIMENT: the same debug build, but with the INTERNET permission, to
+      # find out whether the emulator problem is caused by removing it. This
+      # only changes the checkout of this job, nothing is committed.
+      - name: Build a debug APK that keeps the INTERNET permission
+        working-directory: android
+        run: |
+          sed -i '/android.permission.INTERNET/d' app/src/main/AndroidManifest.xml
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../smoke/debug-internet.apk
+          git checkout -- app/src/main/AndroidManifest.xml
       - uses: actions/upload-artifact@v7
         with:
           name: android-smoke-apks
@@ -183,8 +193,8 @@ jobs:
         run: echo "ready=true" >> "$GITHUB_OUTPUT"
       - name: Check the APKs
         run: |
-          bash mobile/verify-apk.sh android/app/build/outputs/apk/debug/app-debug.apk debuggable signed
-          bash mobile/verify-apk.sh android/app/build/outputs/apk/sideload/app-sideload.apk release signed
+          bash mobile/verify-apk.sh smoke/debug.apk debuggable signed
+          bash mobile/verify-apk.sh smoke/sideload.apk release signed
 
       - name: Look for the Android signing secrets
         id: signing
@@ -255,7 +265,7 @@ jobs:
           retention-days: 14
 
   android-smoke:
-    name: Android emulator test (${{ matrix.gpu }})
+    name: Android emulator test (${{ matrix.slug }})
     needs: android
     if: ${{ !cancelled() && needs.android.outputs.apks == 'true' }}
     runs-on: ubuntu-24.04
@@ -263,9 +273,32 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        gpu:
-          - swiftshader_indirect
-          - guest
+        include:
+          - slug: api34
+            api: 34
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api34-internet
+            api: 34
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: extra
+          - slug: api30
+            api: 30
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api35
+            api: 35
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api34-aosp
+            api: 34
+            target: default
+            gpu: swiftshader_indirect
+            variants: debug sideload
     steps:
       - uses: actions/checkout@v7
         with:
@@ -282,21 +315,22 @@ jobs:
           echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
           sudo udevadm control --reload-rules
           sudo udevadm trigger --name-match=kvm
-      - name: Install, open and inspect the apps on an emulator
-        uses: reactivecircus/android-emulator-runner@v2
-        timeout-minutes: 25
-        with:
-          api-level: 34
-          target: google_apis
-          arch: x86_64
-          profile: pixel_6
-          cores: 4
-          emulator-options: -no-window -gpu ${{ matrix.gpu }} -no-snapshot -noaudio -no-boot-anim
-          script: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke
+      - name: Start the emulator
+        timeout-minutes: 20
+        env:
+          API: ${{ matrix.api }}
+          TARGET: ${{ matrix.target }}
+          GPU: ${{ matrix.gpu }}
+        run: bash mobile/start-emulator.sh "$API" "$TARGET" "$GPU" android-smoke
+      - name: Install, open and inspect the apps
+        timeout-minutes: 20
+        env:
+          VARIANTS: ${{ matrix.variants }}
+        run: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke smoke/debug-internet.apk
       - uses: actions/upload-artifact@v7
         if: always()
         with:
-          name: android-smoke-${{ matrix.gpu }}
+          name: android-smoke-${{ matrix.slug }}
           path: android-smoke
           if-no-files-found: warn
           retention-days: 14
