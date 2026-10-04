@@ -24,14 +24,35 @@ AVD="prism-test"
 
 mkdir -p "$OUT"
 export PATH="$SDK/cmdline-tools/latest/bin:$SDK/platform-tools:$SDK/emulator:$PATH"
+# The steps that come after this one need adb as well.
+if [ -n "${GITHUB_PATH:-}" ]; then
+  echo "$SDK/platform-tools" >> "$GITHUB_PATH"
+fi
+
+# Prints the last interesting lines of a log file as one annotation and stops.
+#   stop_with_log <message> <log file>
+stop_with_log() {
+  local lines
+  lines="$(tr '\r' '\n' < "$2" | grep -v -E '^\[[= ]*\]' | tail -n 20 | cut -c1-220 | sed -e 's/%/%25/g' | awk 'BEGIN { ORS = "%0A" } { print }')"
+  echo "::error title=Android emulator::$1 Last lines:%0A$lines"
+  exit 1
+}
+trap 'echo "::error title=Android emulator::start-emulator.sh stopped at line $LINENO: $BASH_COMMAND"' ERR
 
 echo "::group::Install the emulator and the system image ($IMAGE)"
-yes | sdkmanager --licenses > /dev/null 2>&1 || true
-sdkmanager --install "emulator" "platform-tools" "$IMAGE" 2>&1 | tr '\r' '\n' | grep -v -E '^\[[= ]*\]' | tail -n 15 || true
+echo "Java: $(java -version 2>&1 | head -n 1), SDK: $SDK, sdkmanager: $(command -v sdkmanager || echo missing), avdmanager: $(command -v avdmanager || echo missing)"
+yes | sdkmanager --licenses > "$OUT/sdk-licenses.txt" 2>&1 || true
+if ! sdkmanager --install "emulator" "platform-tools" "$IMAGE" > "$OUT/sdkmanager.txt" 2>&1; then
+  stop_with_log "sdkmanager could not install $IMAGE." "$OUT/sdkmanager.txt"
+fi
+tr '\r' '\n' < "$OUT/sdkmanager.txt" | grep -v -E '^\[[= ]*\]' | tail -n 10
 echo "::endgroup::"
 
 echo "::group::Create the virtual device"
-echo no | avdmanager create avd --force --name "$AVD" --package "$IMAGE" --device pixel_6
+if ! echo no | avdmanager create avd --force --name "$AVD" --package "$IMAGE" --device pixel_6 > "$OUT/avdmanager.txt" 2>&1; then
+  stop_with_log "avdmanager could not create the virtual device for $IMAGE." "$OUT/avdmanager.txt"
+fi
+cat "$OUT/avdmanager.txt"
 CONFIG="$HOME/.android/avd/$AVD.avd/config.ini"
 if grep -q '^hw.cpu.ncore' "$CONFIG"; then
   sed -i "s/^hw.cpu.ncore.*/hw.cpu.ncore=$CORES/" "$CONFIG"
