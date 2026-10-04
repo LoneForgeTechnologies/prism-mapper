@@ -12,6 +12,8 @@ import {
   verifyReleaseFiles,
   // @ts-expect-error The release scripts intentionally run as plain Node ESM.
 } from "../scripts/verify-release-files.mjs";
+// @ts-expect-error The release scripts intentionally run as plain Node ESM.
+import { releaseNotes } from "../scripts/release-notes.mjs";
 
 const version = "0.4.1";
 const sha = (data: string | Buffer) =>
@@ -230,4 +232,28 @@ test("the script prints what it verified and fails with a non-zero exit code oth
   } finally {
     done(folder);
   }
+});
+
+test("the release notes name every download and say what to expect from unsigned apps", () => {
+  const notes: string = releaseNotes(version);
+  for (const name of requiredFiles(version))
+    assert.ok(notes.includes(`\`${name}\``), name);
+  for (const phrase of [
+    "SHA256SUMS.txt",
+    "not code-signed",
+    "Windows protected your PC",
+    "More info",
+    "Run anyway",
+    "Unblock",
+    "not notarized",
+    "Open Anyway",
+    "Get-FileHash",
+    "shasum -a 256",
+    "physical projector",
+  ])
+    assert.ok(notes.includes(phrase), phrase);
+  assert.doesNotMatch(notes, /[\u2013\u2014]/, "no dash punctuation");
+  assert.doesNotMatch(notes, /\{\{|undefined|\$\{/);
+  assert.ok(notes.endsWith("\n"));
+  assert.throws(() => releaseNotes("../1.0.0"));
 });
