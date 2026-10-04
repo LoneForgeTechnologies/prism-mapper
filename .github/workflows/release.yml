@@ -87,24 +87,6 @@ jobs:
           else
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH/Prism Mapper.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
           fi
-      # TEMPORARY, removed before the branch is finished: the job log cannot be
-      # downloaded from the worker's network, so findings are published as
-      # annotations, which the REST API returns.
-      - name: Windows diagnostics, unit test counts (temporary)
-        if: matrix.platform == 'win32'
-        shell: pwsh
-        timeout-minutes: 8
-        continue-on-error: true
-        run: |
-          $lines = @()
-          $lines += 'tsx --test tests/*.test.ts'
-          $lines += (npx tsx --test "tests/*.test.ts" 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
-          $lines += 'node --test electron/*.test.cjs'
-          $lines += (node --test "electron/*.test.cjs" 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
-          $lines += 'npm test as the step runs it'
-          $lines += (npm test 2>&1 | Select-String -Pattern '(tests|pass|fail|cancelled|skipped) \d+$' | ForEach-Object { $_.Line })
-          $text = ($lines -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-          Write-Host "::notice title=Unit test counts on Windows::$text"
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
@@ -120,6 +102,11 @@ jobs:
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-windows.cjs "$PACKAGED_EXE"
+      - name: Test the Windows source launcher
+        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        shell: bash
+        timeout-minutes: 5
+        run: node tests/launcher-windows.cjs
       - name: Smoke test the application unpacked from the ZIP
         if: ${{ !cancelled() && matrix.platform == 'win32' }}
         shell: pwsh

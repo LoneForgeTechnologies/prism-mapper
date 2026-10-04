@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -57,6 +58,26 @@ test("the Windows launcher asks for the Node.js version the project requires", (
   assert.ok(windows.includes(`major === ${major} && minor >= ${minor}`));
   assert.ok(windows.includes(`Node.js ${major}.${minor} or newer`));
   assert.ok(mac.includes(`Node.js ${major}.${minor} or newer`));
+});
+
+test("the Node.js version check of the Windows launcher accepts 22.12 and newer only", () => {
+  const check = /^node -e "(const \[major, minor\][^"]*)" >nul 2>nul\r$/m.exec(
+    windows,
+  )?.[1];
+  assert.ok(check, "the version check is in the launcher");
+  const exitCode = (version: string) =>
+    spawnSync(
+      process.execPath,
+      [
+        "-e",
+        `Object.defineProperty(process, "versions", { value: { node: "${version}" } }); ${check}`,
+      ],
+      { encoding: "utf8" },
+    ).status;
+  for (const version of ["18.20.4", "20.19.0", "22.0.0", "22.11.9"])
+    assert.equal(exitCode(version), 1, version);
+  for (const version of ["22.12.0", "22.13.1", "23.0.0", "24.1.0", "26.0.0"])
+    assert.equal(exitCode(version), 0, version);
 });
 
 test("a double-clicked launcher does not hang in CI and always says what went wrong", () => {
