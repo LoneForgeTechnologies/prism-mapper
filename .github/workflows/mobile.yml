@@ -1,0 +1,591 @@
+name: Mobile apps
+
+# Builds the Android and iOS/iPadOS apps and checks that they start.
+#
+#   android        builds and checks the APKs (and the AAB when signing
+#                  secrets exist)
+#   android-smoke  installs them on an emulator, opens them, takes screenshots
+#   ios            builds for the simulator and for devices, checks the app
+#                  bundle, packages an unsigned IPA
+#   ios-smoke      opens the simulator build on an iPhone and on an iPad
+#                  simulator and takes screenshots
+#
+# Artifacts (stable names, also when this workflow is called by another one):
+#   mobile-android  Prism-Mapper-v<version>-Android.apk and its .sha256
+#                   (plus -Android-release.apk and .aab when signing secrets exist)
+#   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and
+#                   Prism-Mapper-v<version>-iOS-Simulator.zip, with .sha256 files
+#   android-smoke-<emulator>        screenshots and logs of the emulator test
+#   ios-smoke-<iPhone or iPad>      screenshots and logs of the simulator test
+#
+# Optional secrets, all skipped silently when they are not set. See
+# docs/building-mobile.md for how to create them.
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS,
+#   ANDROID_KEY_PASSWORD
+#   APPLE_TEAM_ID, APPLE_CERTIFICATE_P12_BASE64, APPLE_CERTIFICATE_PASSWORD,
+#   APPLE_PROVISIONING_PROFILE_BASE64
+#   APPLE_API_KEY_ID, APPLE_API_ISSUER_ID, APPLE_API_KEY_P8_BASE64 (TestFlight)
+
+on:
+  push:
+    branches:
+      - claude/mobile-native
+      - main
+    paths:
+      - "android/**"
+      - "ios/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "capacitor.config.*"
+      - "assets/**"
+      - "mobile/**"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - ".github/workflows/mobile.yml"
+  pull_request:
+    paths:
+      - "android/**"
+      - "ios/**"
+      - "src/**"
+      - "public/**"
+      - "index.html"
+      - "package.json"
+      - "package-lock.json"
+      - "capacitor.config.*"
+      - "assets/**"
+      - "mobile/**"
+      - "vite.config.ts"
+      - "tsconfig*.json"
+      - ".github/workflows/mobile.yml"
+  workflow_dispatch:
+    inputs:
+      testflight:
+        description: "Upload the signed iOS build to TestFlight (needs the APPLE_* secrets)"
+        type: boolean
+        default: false
+  workflow_call:
+    inputs:
+      version:
+        description: "Optional. The version that package.json must have, for example 0.4.1 or v0.4.1. The build fails when it differs."
+        required: false
+        type: string
+      testflight:
+        description: "Upload the signed iOS build to TestFlight (needs the APPLE_* secrets)"
+        required: false
+        type: boolean
+        default: false
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+      APPLE_TEAM_ID:
+        required: false
+      APPLE_CERTIFICATE_P12_BASE64:
+        required: false
+      APPLE_CERTIFICATE_PASSWORD:
+        required: false
+      APPLE_PROVISIONING_PROFILE_BASE64:
+        required: false
+      APPLE_API_KEY_ID:
+        required: false
+      APPLE_API_ISSUER_ID:
+        required: false
+      APPLE_API_KEY_P8_BASE64:
+        required: false
+
+permissions:
+  contents: read
+
+# github.workflow is the caller's name when this file is called by another
+# workflow, so the group never equals the caller's own group.
+concurrency:
+  group: ${{ github.workflow }}-mobile-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+
+jobs:
+  android:
+    name: Android build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    outputs:
+      apks: ${{ steps.apks.outputs.ready }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: "21"
+      - uses: gradle/actions/setup-gradle@v6
+        with:
+          cache-read-only: false
+      - name: Read the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          if [ -n "$REQUESTED" ] && [ "${REQUESTED#v}" != "$VERSION" ]; then
+            echo "::error::The requested version $REQUESTED is not the version in package.json ($VERSION)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Prism Mapper $VERSION for Android."
+      - run: npm ci
+      - run: npm run build
+      - name: Copy the web app into the Android project
+        run: npx cap sync android
+      - name: Warn when the committed Capacitor files are out of date
+        run: |
+          if ! git diff --quiet -- android; then
+            echo "::warning title=Capacitor files are out of date::npx cap sync changed files that are committed under android/. Run npm run cap:sync and commit the result."
+            git --no-pager diff --stat -- android
+          fi
+      - name: Build the debug and sideload APKs
+        working-directory: android
+        run: ./gradlew assembleDebug assembleSideload
+      # The emulator job starts as soon as the APKs exist, in parallel with the
+      # checks below.
+      - name: Keep the APKs for the emulator test
+        run: |
+          mkdir -p smoke
+          cp android/app/build/outputs/apk/debug/app-debug.apk smoke/debug.apk
+          cp android/app/build/outputs/apk/sideload/app-sideload.apk smoke/sideload.apk
+      # EXPERIMENT: the same debug build, but with the INTERNET permission, to
+      # find out whether the emulator problem is caused by removing it. This
+      # only changes the checkout of this job, nothing is committed.
+      - name: Build a debug APK that keeps the INTERNET permission
+        working-directory: android
+        run: |
+          sed -i '/android.permission.INTERNET/d' app/src/main/AndroidManifest.xml
+          ./gradlew assembleDebug
+          cp app/build/outputs/apk/debug/app-debug.apk ../smoke/debug-internet.apk
+          git checkout -- app/src/main/AndroidManifest.xml
+      - uses: actions/upload-artifact@v7
+        with:
+          name: android-smoke-apks
+          path: smoke/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Tell the emulator job that the APKs are ready
+        id: apks
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
+      - name: Check the APKs
+        run: |
+          bash mobile/verify-apk.sh smoke/debug.apk debuggable signed
+          bash mobile/verify-apk.sh smoke/sideload.apk release signed
+
+      - name: Look for the Android signing secrets
+        id: signing
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "No Android signing secrets, so no signed release build is made."
+          fi
+      - name: Build the signed release APK and AAB
+        if: steps.signing.outputs.available == 'true'
+        working-directory: android
+        env:
+          KEYSTORE: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.keystore"
+          export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
+          ./gradlew assembleRelease bundleRelease
+          rm -f "$ANDROID_KEYSTORE_FILE"
+          cd ..
+          bash mobile/verify-apk.sh android/app/build/outputs/apk/release/app-release.apk release signed
+      - name: Try the release signing with a throwaway key
+        if: steps.signing.outputs.available != 'true'
+        working-directory: android
+        run: |
+          # The same build as above, signed with a key made on the spot, so the
+          # signing setup is exercised even without the real secrets. Nothing
+          # from this step is published.
+          KEYSTORE="$RUNNER_TEMP/throwaway.jks"
+          keytool -genkeypair -keystore "$KEYSTORE" -storepass throwaway -keypass throwaway \
+            -alias throwaway -keyalg RSA -keysize 2048 -validity 2 -dname "CN=Prism Mapper CI throwaway key"
+          export ANDROID_KEYSTORE_FILE="$KEYSTORE" ANDROID_KEYSTORE_PASSWORD=throwaway \
+            ANDROID_KEY_ALIAS=throwaway ANDROID_KEY_PASSWORD=throwaway
+          ./gradlew assembleRelease bundleRelease
+          cd ..
+          bash mobile/verify-apk.sh android/app/build/outputs/apk/release/app-release.apk release signed
+          jarsigner -verify android/app/build/outputs/bundle/release/app-release.aab
+          rm -rf "$KEYSTORE" android/app/build/outputs/apk/release android/app/build/outputs/bundle/release
+
+      - name: Collect the files to publish
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGNED: ${{ steps.signing.outputs.available }}
+        run: |
+          mkdir -p out
+          cp android/app/build/outputs/apk/sideload/app-sideload.apk "out/Prism-Mapper-v$VERSION-Android.apk"
+          if [ "$SIGNED" = "true" ]; then
+            cp android/app/build/outputs/apk/release/app-release.apk "out/Prism-Mapper-v$VERSION-Android-release.apk"
+            cp android/app/build/outputs/bundle/release/app-release.aab "out/Prism-Mapper-v$VERSION-Android-release.aab"
+          fi
+          (cd out && for file in *; do sha256sum "$file" > "$file.sha256"; done)
+          ls -l out
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-android
+          path: out/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  android-smoke:
+    name: Android emulator test (${{ matrix.slug }})
+    needs: android
+    if: ${{ !cancelled() && needs.android.outputs.apks == 'true' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slug: api34
+            api: 34
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api34-internet
+            api: 34
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: extra
+          - slug: api30
+            api: 30
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api35
+            api: 35
+            target: google_apis
+            gpu: swiftshader_indirect
+            variants: debug sideload
+          - slug: api34-aosp
+            api: 34
+            target: default
+            gpu: swiftshader_indirect
+            variants: debug sideload
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v8
+        with:
+          name: android-smoke-apks
+          path: smoke
+      - name: Let the emulator use hardware acceleration
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+      - name: Start the emulator
+        timeout-minutes: 20
+        env:
+          API: ${{ matrix.api }}
+          TARGET: ${{ matrix.target }}
+          GPU: ${{ matrix.gpu }}
+        run: bash mobile/start-emulator.sh "$API" "$TARGET" "$GPU" android-smoke
+      - name: Install, open and inspect the apps
+        timeout-minutes: 20
+        env:
+          VARIANTS: ${{ matrix.variants }}
+        run: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke smoke/debug-internet.apk
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-smoke-${{ matrix.slug }}
+          path: android-smoke
+          if-no-files-found: warn
+          retention-days: 14
+
+  ios:
+    name: iOS and iPadOS build
+    runs-on: macos-26
+    timeout-minutes: 45
+    outputs:
+      simulator: ${{ steps.simulator.outputs.ready }}
+    env:
+      PROJECT: ios/App/App.xcodeproj
+      DERIVED_DATA: ${{ github.workspace }}/ios/App/build/DerivedData
+      SPM_DIR: ${{ github.workspace }}/ios/App/build/SourcePackages
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+          cache: npm
+      - name: Read the version
+        id: version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          if [ -n "$REQUESTED" ] && [ "${REQUESTED#v}" != "$VERSION" ]; then
+            echo "::error::The requested version $REQUESTED is not the version in package.json ($VERSION)."
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building Prism Mapper $VERSION (build $BUILD_NUMBER) for iOS."
+      - name: Check the Xcode version
+        run: |
+          xcodebuild -version
+          MAJOR="$(xcodebuild -version | sed -n 's/^Xcode \([0-9]*\).*/\1/p')"
+          if [ "$MAJOR" -lt 26 ]; then
+            echo "::error::Capacitor 8 needs Xcode 26 or newer, this runner has Xcode $MAJOR."
+            exit 1
+          fi
+          xcrun simctl list runtimes
+      - run: npm ci
+      - run: npm run build
+      - name: Copy the web app into the iOS project
+        run: npx cap sync ios
+      - name: Warn when the committed Capacitor files are out of date
+        run: |
+          if ! git diff --quiet -- ios; then
+            echo "::warning title=Capacitor files are out of date::npx cap sync changed files that are committed under ios/. Run npm run cap:sync and commit the result."
+            git --no-pager diff --stat -- ios
+          fi
+      - name: Cache the Swift packages
+        uses: actions/cache@v6
+        with:
+          path: ${{ env.SPM_DIR }}
+          key: spm-${{ runner.os }}-${{ hashFiles('ios/App/CapApp-SPM/Package.swift', 'package-lock.json') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      - name: Build for the iOS Simulator
+        run: |
+          mkdir -p ios-logs
+          if ! xcodebuild build \
+            -project "$PROJECT" -scheme App -configuration Debug \
+            -destination "generic/platform=iOS Simulator" \
+            -derivedDataPath "$DERIVED_DATA" -clonedSourcePackagesDirPath "$SPM_DIR" \
+            ARCHS=arm64 ONLY_ACTIVE_ARCH=NO CODE_SIGNING_ALLOWED=NO \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" > ios-logs/build-simulator.log 2>&1; then
+            grep -E "error:|BUILD FAILED|nonzero exit code" ios-logs/build-simulator.log | head -40 || true
+            echo "--- last lines of the log"
+            tail -n 60 ios-logs/build-simulator.log
+            exit 1
+          fi
+          tail -n 3 ios-logs/build-simulator.log
+      - name: Check the simulator app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: bash mobile/verify-ios-app.sh "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" "$VERSION" "$BUILD_NUMBER"
+
+      - name: Build the app for devices without signing
+        run: |
+          if ! xcodebuild archive \
+            -project "$PROJECT" -scheme App -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -derivedDataPath "$DERIVED_DATA" -clonedSourcePackagesDirPath "$SPM_DIR" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" > ios-logs/archive-device.log 2>&1; then
+            grep -E "error:|ARCHIVE FAILED|nonzero exit code" ios-logs/archive-device.log | head -40 || true
+            echo "--- last lines of the log"
+            tail -n 60 ios-logs/archive-device.log
+            exit 1
+          fi
+          tail -n 3 ios-logs/archive-device.log
+      - name: Package the unsigned IPA and the simulator app
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          mkdir -p out
+          bash mobile/package-ipa.sh "$RUNNER_TEMP/App.xcarchive" "out/Prism-Mapper-v$VERSION-iOS-unsigned.ipa"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "$DERIVED_DATA/Build/Products/Debug-iphonesimulator/App.app" "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip"
+          (cd out && shasum -a 256 "Prism-Mapper-v$VERSION-iOS-Simulator.zip" > "Prism-Mapper-v$VERSION-iOS-Simulator.zip.sha256")
+          mkdir -p smoke
+          cp "out/Prism-Mapper-v$VERSION-iOS-Simulator.zip" smoke/App-Simulator.zip
+          ls -l out
+      # The simulator job starts as soon as the app exists, in parallel with
+      # the signing steps below.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ios-smoke-app
+          path: smoke/App-Simulator.zip
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 1
+      - name: Tell the simulator job that the app is ready
+        id: simulator
+        run: echo "ready=true" >> "$GITHUB_OUTPUT"
+
+      - name: Look for the Apple signing secrets
+        id: apple
+        env:
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          if [ -n "$TEAM" ] && [ -n "$CERTIFICATE" ] && [ -n "$CERTIFICATE_PASSWORD" ] && [ -n "$PROFILE" ]; then
+            echo "signing=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signing=false" >> "$GITHUB_OUTPUT"
+            echo "No Apple signing secrets, so no signed App Store build is made."
+          fi
+          if [ -n "$API_KEY_ID" ] && [ -n "$API_ISSUER" ] && [ -n "$API_KEY" ]; then
+            echo "upload=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "upload=false" >> "$GITHUB_OUTPUT"
+          fi
+      # The signed path below is not exercised by this repository's own CI,
+      # because that needs the maintainer's Apple certificates.
+      - name: Sign the build for the App Store
+        if: steps.apple.outputs.signing == 'true'
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          TEAM: ${{ secrets.APPLE_TEAM_ID }}
+          CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          KEYCHAIN="$RUNNER_TEMP/signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          echo "$CERTIFICATE" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" -P "$CERTIFICATE_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+          echo "$PROFILE" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" > "$RUNNER_TEMP/profile.plist"
+          PROFILE_UUID="$(/usr/libexec/PlistBuddy -c 'Print :UUID' "$RUNNER_TEMP/profile.plist")"
+          PROFILE_NAME="$(/usr/libexec/PlistBuddy -c 'Print :Name' "$RUNNER_TEMP/profile.plist")"
+          mkdir -p "$HOME/Library/MobileDevice/Provisioning Profiles"
+          cp "$RUNNER_TEMP/profile.mobileprovision" "$HOME/Library/MobileDevice/Provisioning Profiles/$PROFILE_UUID.mobileprovision"
+
+          cat > "$RUNNER_TEMP/ExportOptions.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>teamID</key><string>$TEAM</string>
+            <key>signingStyle</key><string>manual</string>
+            <key>signingCertificate</key><string>Apple Distribution</string>
+            <key>provisioningProfiles</key>
+            <dict><key>org.prismmapper.mobile</key><string>$PROFILE_NAME</string></dict>
+            <key>uploadSymbols</key><true/>
+          </dict>
+          </plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/App.xcarchive" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -exportOptionsPlist "$RUNNER_TEMP/ExportOptions.plist"
+          cp "$RUNNER_TEMP/export/App.ipa" "out/Prism-Mapper-v$VERSION-iOS-appstore.ipa"
+          (cd out && shasum -a 256 "Prism-Mapper-v$VERSION-iOS-appstore.ipa" > "Prism-Mapper-v$VERSION-iOS-appstore.ipa.sha256")
+          rm -f "$RUNNER_TEMP/profile.mobileprovision" "$RUNNER_TEMP/profile.plist"
+      - name: Upload the build to TestFlight
+        if: steps.apple.outputs.signing == 'true' && steps.apple.outputs.upload == 'true' && inputs.testflight
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+          API_KEY: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+        run: |
+          mkdir -p "$HOME/.appstoreconnect/private_keys"
+          echo "$API_KEY" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
+          xcrun altool --upload-app --type ios \
+            --file "out/Prism-Mapper-v$VERSION-iOS-appstore.ipa" \
+            --apiKey "$API_KEY_ID" --apiIssuer "$API_ISSUER"
+          rm -f "$HOME/.appstoreconnect/private_keys/AuthKey_$API_KEY_ID.p8"
+
+      - uses: actions/upload-artifact@v7
+        with:
+          name: mobile-ios
+          path: out/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ios-build-logs
+          path: ios-logs
+          if-no-files-found: warn
+          retention-days: 7
+
+  ios-smoke:
+    name: iOS simulator test (${{ matrix.kind }})
+    needs: ios
+    if: ${{ !cancelled() && needs.ios.outputs.simulator == 'true' }}
+    runs-on: macos-26
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        kind:
+          - iPhone
+          - iPad
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - uses: actions/download-artifact@v8
+        with:
+          name: ios-smoke-app
+          path: smoke
+      - name: Open the app on an ${{ matrix.kind }} simulator
+        run: |
+          ditto -x -k smoke/App-Simulator.zip smoke
+          bash mobile/ios-smoke.sh smoke/App.app ios-smoke "${{ matrix.kind }}"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ios-smoke-${{ matrix.kind }}
+          path: ios-smoke
+          if-no-files-found: warn
+          retention-days: 14

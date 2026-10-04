@@ -18,3 +18,29 @@ session-backups/
 .vscode/
 *.prism.json
 !examples/*.prism.json
+
+# Native mobile apps (Capacitor). android/.gitignore and ios/.gitignore already
+# cover what `npx cap sync` regenerates (copied web assets, capacitor.config.json,
+# config.xml); these lines add build output and signing material on top.
+/android/.gradle/
+/android/.kotlin/
+/android/build/
+/android/local.properties
+/android/app/release/
+/ios/App/Pods/
+/ios/App/build/
+/ios/DerivedData/
+xcuserdata/
+__pycache__/
+*.apk
+*.aab
+*.ipa
+*.xcarchive/
+*.dSYM/
+*.dSYM.zip
+*.jks
+*.keystore
+*.mobileprovision
+*.p8
+*.cer
+*.certSigningRequest
