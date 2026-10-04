@@ -3,28 +3,49 @@
 // download. The release workflow puts the notes GitHub generates from the
 // changes below it.
 //
-//   node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app]
+//   node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app | --check-web-app]
 //
 // With a folder, the phone and tablet rows appear only for files that are in
 // it, so the notes never point at a download that does not exist. With
 // --no-web-app the notes leave out the address of the installable web app, for
-// a release made while that site is not online.
+// a release made while that site is not online. With --check-web-app the
+// script looks whether the site answers and leaves the address out when it
+// does not, so the notes never send people to a page that does not exist.
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { releaseName, releasePrefix } from "./release-name.mjs";
+import { androidName, iosName, releaseName } from "./release-name.mjs";
 
 // Where the installable web app is published. It is the way onto an iPhone or
 // iPad without an Apple developer account.
 export const WEB_APP_URL =
   "https://loneforgetechnologies.github.io/prism-mapper/";
 
+// True when the web app answers. A site that is not online (GitHub Pages is
+// not switched on, or the first deployment has not finished) or does not
+// answer in time counts as not online.
+export async function webAppIsOnline(
+  url = WEB_APP_URL,
+  fetchPage = globalThis.fetch,
+) {
+  try {
+    const response = await fetchPage(url, {
+      method: "HEAD",
+      redirect: "follow",
+      signal: AbortSignal.timeout(20_000),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
 export function releaseNotes(version, files = null, { webApp = true } = {}) {
   const windows = releaseName(version, "win32", "x64");
   const apple = releaseName(version, "darwin", "arm64");
   const intel = releaseName(version, "darwin", "x64");
-  const android = `${releasePrefix(version)}-Android.apk`;
-  const ios = `${releasePrefix(version)}-iOS-unsigned.ipa`;
+  const android = androidName(version);
+  const ios = iosName(version);
   const has = (name) => files === null || files.includes(name);
 
   const rows = [
@@ -54,7 +75,7 @@ export function releaseNotes(version, files = null, { webApp = true } = {}) {
   const phones = [];
   if (has(android))
     phones.push(
-      `**Android.** Download \`${android}\` on the phone and open it. Android asks you to allow installs from the app you opened it with (Chrome or Files). Allow that, go back and tap **Install**. Google Play Protect may say the app comes from an unknown developer, which is true: it is not on Google Play. This early build is signed with the standard Android debug key, so if a later version uses a private key you will have to uninstall this one first. The app has no internet permission, and it asks for the microphone only when you tap **Start listening**.`,
+      `**Android.** Download \`${android}\` on the phone and open it. Android asks you to allow installs from the app you opened it with (Chrome or Files). Allow that, go back and tap **Install**. Google Play Protect may say the app comes from an unknown developer, which is true: it is not on Google Play. Android installs a newer version over an older one only when both were signed with the same key, and these community builds do not promise that. If an update will not install, uninstall Prism Mapper first, but save your projects as files before that, because uninstalling deletes the app's data. The app has no internet permission, and it asks for the microphone only when you tap **Start listening**.`,
     );
   phones.push(
     [
@@ -94,12 +115,19 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const args = process.argv.slice(2);
-  const webApp = !args.includes("--no-web-app");
   const [version, folder] = args.filter((arg) => !arg.startsWith("--"));
   if (!version)
     throw new Error(
-      "Usage: node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app]",
+      "Usage: node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app | --check-web-app]",
     );
+  let webApp = !args.includes("--no-web-app");
+  if (webApp && args.includes("--check-web-app")) {
+    webApp = await webAppIsOnline();
+    if (!webApp)
+      console.error(
+        `::warning title=Release notes::${WEB_APP_URL} does not answer, so the notes leave out the web app. Switch on GitHub Pages (Settings, Pages, Source: GitHub Actions) and run the Pages workflow, then edit the release notes.`,
+      );
+  }
   process.stdout.write(
     releaseNotes(version, folder ? readdirSync(folder) : null, { webApp }),
   );

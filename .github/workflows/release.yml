@@ -1,4 +1,9 @@
-name: Release desktop apps
+name: Release
+
+# Builds, tests and publishes Prism Mapper for Windows, Mac, Android and
+# iPhone/iPad. Pushing a tag such as v0.5.0 (it must equal v plus the version in
+# package.json) builds that tag and publishes a GitHub release. Running the
+# workflow by hand with "dry run" ticked does everything except publishing.
 
 on:
   push:
@@ -104,6 +109,24 @@ jobs:
         shell: bash
         timeout-minutes: 5
         run: node tests/launcher-windows.cjs
+      # What people download is the ZIP, so the Mac app is tested after
+      # unpacking it, the way the Finder does (ditto): the signature has to
+      # survive the ZIP and the app has to start.
+      - name: Check and smoke test the application unpacked from the ZIP
+        if: ${{ matrix.platform == 'darwin' }}
+        shell: bash
+        timeout-minutes: 10
+        run: |
+          VERSION="$(node -p 'require("./package.json").version')"
+          FOLDER="Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH"
+          TARGET="$RUNNER_TEMP/unzipped"
+          rm -rf "$TARGET"
+          mkdir -p "$TARGET"
+          ditto -x -k "release/distribution/$FOLDER.zip" "$TARGET"
+          APP="$TARGET/$FOLDER/Prism Mapper.app"
+          test -d "$APP"
+          codesign --verify --deep --strict --verbose=2 "$APP"
+          node tests/packaged-smoke.cjs "$APP/Contents/MacOS/Electron"
       - name: Smoke test the application unpacked from the ZIP
         if: ${{ matrix.platform == 'win32' }}
         shell: pwsh
@@ -177,7 +200,20 @@ jobs:
     with:
       version: ${{ inputs.tag || github.ref_name }}
       ref: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && format('refs/tags/{0}', inputs.tag) || github.sha }}
-    secrets: inherit
+    # Only the secrets that the mobile workflow reads. All are optional; see
+    # docs/building-mobile.md.
+    secrets:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+      ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+      ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+      ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      APPLE_CERTIFICATE_P12_BASE64: ${{ secrets.APPLE_CERTIFICATE_P12_BASE64 }}
+      APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+      APPLE_PROVISIONING_PROFILE_BASE64: ${{ secrets.APPLE_PROVISIONING_PROFILE_BASE64 }}
+      APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+      APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+      APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
 
   # Collects what the build jobs produced and checks it, on every run. A dry
   # run therefore proves that the downloads work and still match their
@@ -198,10 +234,11 @@ jobs:
         with:
           node-version: "24"
       # Desktop builds come from the build job and mobile builds from the
-      # mobile job; they upload artifacts named desktop-* and mobile-*.
+      # mobile job. Only these artifacts are release files; the store bundles
+      # and the test results are other artifacts.
       - uses: actions/download-artifact@v8
         with:
-          pattern: "{desktop,mobile}-*"
+          pattern: "{desktop-*,mobile-android,mobile-ios}"
           merge-multiple: true
           path: downloads
       - name: Verify the downloads against their checksums
@@ -214,6 +251,17 @@ jobs:
             echo '```'
             cat downloads/SHA256SUMS.txt
             echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # A dry run shows what the release page would say, including whether
+      # the web app address is included (it is left out while that site is
+      # not online).
+      - name: Show the release notes
+        shell: bash
+        run: |
+          {
+            echo "### Release notes"
+            echo
+            node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads --check-web-app
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
@@ -240,7 +288,7 @@ jobs:
           node-version: "24"
       - uses: actions/download-artifact@v8
         with:
-          pattern: "{desktop,mobile}-*"
+          pattern: "{desktop-*,mobile-android,mobile-ios}"
           merge-multiple: true
           path: downloads
       # The same checks again on this job's own downloads; this also writes
@@ -252,15 +300,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads > release-notes.md
+          node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads --check-web-app > release-notes.md
+          # A tag with a hyphen, such as v0.6.0-beta.1, is a pre-release.
+          KIND=()
+          case "$RELEASE_TAG" in *-*) KIND=(--prerelease) ;; esac
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
             if [ "$(cat release-state.txt)" != true ]; then
               echo "This version is already published. Create a new version to update downloads."
               exit 1
             fi
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prism Mapper $RELEASE_TAG" --notes-file release-notes.md --generate-notes
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prism Mapper $RELEASE_TAG" --notes-file release-notes.md --generate-notes "${KIND[@]}"
           fi
-          # Every file found: the ZIPs, the installer, their .sha256 files and SHA256SUMS.txt.
+          # Exactly the files that were verified: the downloads, their .sha256
+          # files and SHA256SUMS.txt. verify-release-files.mjs refuses any other file.
           gh release upload "$RELEASE_TAG" downloads/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false

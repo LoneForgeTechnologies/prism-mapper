@@ -7,13 +7,18 @@ import os from "node:os";
 import path from "node:path";
 import {
   COMBINED,
+  optionalFiles,
   parseChecksumFile,
   requiredFiles,
   verifyReleaseFiles,
   // @ts-expect-error The release scripts intentionally run as plain Node ESM.
 } from "../scripts/verify-release-files.mjs";
-// @ts-expect-error The release scripts intentionally run as plain Node ESM.
-import { WEB_APP_URL, releaseNotes } from "../scripts/release-notes.mjs";
+import {
+  WEB_APP_URL,
+  releaseNotes,
+  webAppIsOnline,
+  // @ts-expect-error The release scripts intentionally run as plain Node ESM.
+} from "../scripts/release-notes.mjs";
 
 const version = "0.4.1";
 const sha = (data: string | Buffer) =>
@@ -49,9 +54,9 @@ test("a release needs the two Mac ZIPs, the Windows ZIP and the Windows installe
 
 test("matching files are accepted and listed in the combined checksum file", async () => {
   const { folder } = downloads({
-    // Whatever else the build jobs produce is released too.
+    // The phone builds are optional.
     "Prism-Mapper-v0.4.1-Android.apk": "android",
-    "Prism-Mapper-v0.4.1-iPhone-Simulator.zip": "ios",
+    "Prism-Mapper-v0.4.1-iOS-unsigned.ipa": "ios",
   });
   try {
     const { files, combined } = await verifyReleaseFiles({ folder, version });
@@ -83,6 +88,43 @@ test("matching files are accepted and listed in the combined checksum file", asy
     if (!checker.error) assert.equal(checker.status, 0, checker.stdout);
   } finally {
     done(folder);
+  }
+});
+
+test("the optional downloads are the Android APK and the unsigned iOS IPA", () => {
+  assert.deepEqual(optionalFiles("0.4.1"), [
+    "Prism-Mapper-v0.4.1-Android.apk",
+    "Prism-Mapper-v0.4.1-iOS-unsigned.ipa",
+  ]);
+});
+
+test("a file that no release carries is refused, even with a matching checksum", async () => {
+  for (const name of [
+    // Store bundles, simulator and debug builds must never reach the release.
+    "Prism-Mapper-v0.4.1-Android.aab",
+    "Prism-Mapper-v0.4.1-Android-release.apk",
+    "Prism-Mapper-v0.4.1-iOS-appstore.ipa",
+    "Prism-Mapper-v0.4.1-iOS-Simulator.zip",
+    "app-debug.apk",
+    // A leftover of another version.
+    "Prism-Mapper-v0.4.0-Android.apk",
+  ]) {
+    const { folder } = downloads({ [name]: "something else" });
+    try {
+      await assert.rejects(
+        verifyReleaseFiles({ folder, version }),
+        new RegExp(
+          `${name.replaceAll(".", "\\.")} is not a file that a 0\\.4\\.1 release carries`,
+        ),
+        name,
+      );
+      assert.ok(
+        !fs.existsSync(path.join(folder, COMBINED)),
+        "no combined file for a refused release",
+      );
+    } finally {
+      done(folder);
+    }
   }
 });
 
@@ -187,12 +229,12 @@ test("a release without one of its desktop downloads is refused", async () => {
       done(folder);
     }
   }
-  // Files of another version do not count.
+  // Files of another version are refused, they do not count.
   const { folder } = downloads();
   try {
     await assert.rejects(
       verifyReleaseFiles({ folder, version: "0.4.2" }),
-      /Missing Prism-Mapper-v0\.4\.2-/,
+      /Prism-Mapper-v0\.4\.1-.* is not a file that a 0\.4\.2 release carries/,
     );
   } finally {
     done(folder);
@@ -260,8 +302,12 @@ test("the release notes name every download and say what to expect from unsigned
     "Add to Home Screen",
     "Play Protect",
     "Sideloadly",
+    // Updating over an installed copy is not promised.
+    "uninstall Prism Mapper first",
+    "save your projects as files",
   ])
     assert.ok(notes.includes(phrase), phrase);
+  assert.doesNotMatch(notes, /debug key/, "builds get a new key each time");
   assert.ok(notes.includes(WEB_APP_URL), "the web app address");
   assert.doesNotMatch(notes, /[–—]/, "no dash punctuation");
   assert.doesNotMatch(notes, /\{\{|undefined|\$\{|false/);
@@ -300,6 +346,26 @@ test("the release notes point only at phone builds that are in the release", () 
   );
 });
 
+test("the web app counts as online only when it answers with success", async () => {
+  const answer = (ok: boolean) => async () => ({ ok }) as Response;
+  assert.equal(await webAppIsOnline(WEB_APP_URL, answer(true)), true);
+  assert.equal(await webAppIsOnline(WEB_APP_URL, answer(false)), false);
+  assert.equal(
+    await webAppIsOnline(WEB_APP_URL, async () => {
+      throw new TypeError("fetch failed");
+    }),
+    false,
+  );
+  const asked: { url: string; method?: string }[] = [];
+  await webAppIsOnline("https://example.test/app/", async (url, init) => {
+    asked.push({ url: String(url), method: init?.method });
+    return { ok: true } as Response;
+  });
+  assert.deepEqual(asked, [
+    { url: "https://example.test/app/", method: "HEAD" },
+  ]);
+});
+
 test("the release notes leave out the web app address while that site is not online", () => {
   const notes: string = releaseNotes(version, requiredFiles(version), {
     webApp: false,
@@ -332,6 +398,11 @@ test("the notes script reads the downloads folder and the --no-web-app switch", 
     const noSite = run(version, folder, "--no-web-app");
     assert.equal(noSite.status, 0, noSite.stderr);
     assert.ok(!noSite.stdout.includes(WEB_APP_URL));
+    // --no-web-app wins, and then nothing is fetched.
+    const both = run(version, folder, "--no-web-app", "--check-web-app");
+    assert.equal(both.status, 0, both.stderr);
+    assert.ok(!both.stdout.includes(WEB_APP_URL));
+    assert.equal(both.stderr, "");
     assert.notEqual(run().status, 0);
     assert.notEqual(run("not-a-version").status, 0);
   } finally {

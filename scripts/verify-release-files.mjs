@@ -9,14 +9,16 @@
 // 64 hex digits, two spaces, the file name). Nothing is published unless every
 // file still matches its checksum after the transfer between jobs, no file is
 // without a checksum or the other way round, and the four desktop downloads that
-// every release carries are present. Mobile builds are not named here: whatever
-// else is in the folder is released as it is, after the same checks.
+// every release carries are present. The Android APK and the unsigned iOS IPA
+// are optional. Any other file is refused: a release must not carry a file that
+// nobody expected, such as a debug build or a store bundle that a changed
+// workflow let into the downloads.
 import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readdir, readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { releaseName } from "./release-name.mjs";
+import { androidName, iosName, releaseName } from "./release-name.mjs";
 
 export const COMBINED = "SHA256SUMS.txt";
 
@@ -28,6 +30,11 @@ export function requiredFiles(version) {
     `${releaseName(version, "win32", "x64")}.zip`,
     `${releaseName(version, "win32", "x64")}-Setup.exe`,
   ];
+}
+
+// The phone downloads that a release may carry.
+export function optionalFiles(version) {
+  return [androidName(version), iosName(version)];
 }
 
 function sha256(file) {
@@ -61,6 +68,7 @@ export async function verifyReleaseFiles({ folder, version, write = true }) {
       `${folders.map((entry) => entry.name).join(", ")} in ${folder} is not a file. The downloads should be flat.`,
     );
   const names = new Set(entries.map((entry) => entry.name));
+  const known = new Set([...requiredFiles(version), ...optionalFiles(version)]);
   const files = [];
 
   for (const name of [...names].sort()) {
@@ -70,6 +78,10 @@ export async function verifyReleaseFiles({ folder, version, write = true }) {
         throw new Error(`${name} has no matching file`);
       continue;
     }
+    if (!known.has(name))
+      throw new Error(
+        `${name} is not a file that a ${version} release carries. Expected: ${[...known].join(", ")}`,
+      );
     if (!names.has(`${name}.sha256`))
       throw new Error(`No checksum file for ${name}`);
     const recorded = parseChecksumFile(

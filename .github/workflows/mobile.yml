@@ -16,7 +16,7 @@ name: Mobile apps
 #                   signed with the maintainer's key when the Android signing
 #                   secrets exist, and with a temporary test key otherwise.
 #   mobile-ios      Prism-Mapper-v<version>-iOS-unsigned.ipa and its .sha256
-#   mobile-android-store, mobile-ios-store
+#   store-android, store-ios
 #                   Only with signing secrets: the Android App Bundle for
 #                   Google Play and the signed IPA for the App Store. These are
 #                   never published on the release page.
@@ -274,7 +274,7 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@v7
         with:
-          name: mobile-android-store
+          name: store-android
           path: store/*
           if-no-files-found: ignore
           compression-level: 0
@@ -564,7 +564,7 @@ jobs:
           retention-days: 14
       - uses: actions/upload-artifact@v7
         with:
-          name: mobile-ios-store
+          name: store-ios
           path: store/*
           if-no-files-found: ignore
           compression-level: 0
