@@ -411,20 +411,26 @@ async function integrate([work]) {
   // the Windows commands then start the program again, which hands the file over.
   const { app, page } = await launchInstalled(where.executable, null);
   try {
-    await page.evaluate(() => {
-      window.__opened = [];
-      window.prism.onProjectOpened((result) => window.__opened.push(result));
-    });
-    const waitForCount = (count) =>
-      page.waitForFunction((count) => window.__opened.length >= count, count, {
-        timeout: 45000,
-      });
+    // The editor subscribes to opened projects itself, so the check is what the
+    // person would see: the name, the layer, and the copy held for the projector.
+    const shows = async (name) => {
+      await page.waitForFunction(
+        (name) =>
+          document.querySelector('input[aria-label="Project name"]')?.value ===
+            name &&
+          document.querySelector(".surface-select strong")?.textContent ===
+            "Only surface",
+        name,
+        { timeout: 45000 },
+      );
+      await waitFor(
+        async () =>
+          (await page.evaluate(() => window.prism.getProject()))?.name === name,
+        { timeout: 20000, label: `the projector copy of "${name}"` },
+      );
+    };
     powershell(`Start-Process -FilePath ${quote(first)} -Verb ${VERB}`, 60000);
-    await waitForCount(1);
-    let opened = await page.evaluate(() => window.__opened);
-    assert.equal(opened[0].error, undefined, opened[0].error);
-    assert.equal(opened[0].project.name, "Opened by the command");
-    assert.equal(opened[0].path, first);
+    await shows("Opened by the command");
     lines.push(
       '"Open in Prism Mapper" (Start-Process -Verb) opened the project in the running copy',
     );
@@ -440,10 +446,7 @@ async function integrate([work]) {
       stdio: "ignore",
     });
     const exited = new Promise((resolve) => child.once("exit", resolve));
-    await waitForCount(2);
-    opened = await page.evaluate(() => window.__opened);
-    assert.equal(opened[1].project.name, "Opened by Open with");
-    assert.equal(opened[1].path, second);
+    await shows("Opened by Open with");
     assert.equal(
       await Promise.race([exited, sleep(30000).then(() => "still running")]),
       0,

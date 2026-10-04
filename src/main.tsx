@@ -54,6 +54,7 @@ import {
   type Project,
   type Surface,
   type DisplayInfo,
+  type LoadedProject,
   type OutputStatus,
   type Point,
 } from "./model";
@@ -718,6 +719,37 @@ function App() {
       setSaving(false);
     }
   };
+  /**
+   * Shows what opening a project file produced. The Open button and the
+   * operating system (a double-clicked file, a second launch) both come through
+   * here, so a project replaces the current one the same way: as one undo step,
+   * with a half-drawn outline dropped.
+   */
+  const showOpened = (result: LoadedProject) => {
+    if (result.error) setError(result.error);
+    else if (result.project) {
+      setMix(false);
+      setSolo(null);
+      cancelDrawing();
+      commit(result.project);
+      setSelected(result.project.surfaces[0]?.id || "");
+      message(
+        result.missing?.length
+          ? `Opened. Relink missing media by importing: ${result.missing.join(", ")}`
+          : "Project opened.",
+      );
+    }
+  };
+  // One subscription for the life of the page: the main process holds a project
+  // that the operating system asked to open until the page has subscribed, and
+  // treats the page as away when nothing is subscribed. The callback is read
+  // through a ref so it always sees the current state.
+  const showOpenedRef = useRef(showOpened);
+  showOpenedRef.current = showOpened;
+  useEffect(() => {
+    if (!api) return;
+    return api.onProjectOpened((result) => showOpenedRef.current(result));
+  }, []);
   const open = async () => {
     setMix(false);
     setSolo(null);
@@ -727,17 +759,7 @@ function App() {
       return;
     }
     try {
-      const result = await api.loadProject();
-      if (result.error) setError(result.error);
-      else if (result.project) {
-        commit(result.project);
-        setSelected(result.project.surfaces[0]?.id || "");
-        message(
-          result.missing?.length
-            ? `Opened. Relink missing media by importing: ${result.missing.join(", ")}`
-            : "Project opened.",
-        );
-      }
+      showOpened(await api.loadProject());
     } catch (e) {
       setError(String(e));
     }

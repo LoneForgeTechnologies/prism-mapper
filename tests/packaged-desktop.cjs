@@ -25,7 +25,7 @@ function project(name) {
     surfaces: [
       {
         id: "only",
-        name: "Only surface",
+        name: `${name} layer`,
         corners: [
           { x: 0.2, y: 0.2 },
           { x: 0.8, y: 0.2 },
@@ -60,18 +60,41 @@ async function launch(profile, args = [], extra = []) {
   return { app, page };
 }
 
-// Subscribing is what tells the app the page can show an opened project.
-async function listen(page) {
-  await page.evaluate(() => {
-    window.__opened = [];
-    window.__stop = window.prism.onProjectOpened((result) =>
-      window.__opened.push(result),
-    );
-  });
+// The editor page subscribes to opened projects by itself, so these checks look
+// at what a person would see: the project name, the layers, and whether a line
+// is being drawn. The project the main process holds for the projector window
+// must agree with the editor.
+async function eventually(check, what, timeout = 20000) {
+  const deadline = Date.now() + timeout;
+  for (;;) {
+    if (await check()) return;
+    if (Date.now() > deadline) throw new Error(`${what} did not happen`);
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
 }
-const opened = (page) => page.evaluate(() => window.__opened);
-const waitForOpened = (page, count) =>
-  page.waitForFunction((count) => window.__opened.length >= count, count);
+async function showsProject(page, name) {
+  await page.waitForFunction(
+    (name) =>
+      document.querySelector('input[aria-label="Project name"]')?.value ===
+      name,
+    name,
+  );
+  await eventually(
+    async () =>
+      (await page.evaluate(() => window.prism.getProject()))?.name === name,
+    `the projector window getting "${name}"`,
+  );
+  return page.evaluate(() => ({
+    layers: Array.from(document.querySelectorAll(".surface-select strong")).map(
+      (node) => node.textContent,
+    ),
+    drawing: !!document.querySelector(".drawing-instructions"),
+  }));
+}
+const projectName = (page) =>
+  page.evaluate(
+    () => document.querySelector('input[aria-label="Project name"]')?.value,
+  );
 
 // A second launch of the program, as Explorer starts it for a double-clicked
 // file. It must hand over to the running copy and exit by itself.
@@ -99,36 +122,33 @@ function secondLaunch(profile, args) {
 
 async function openedProjects(directory) {
   const profile = path.join(directory, "profile-instances");
-  const fileA = path.join(directory, "from second launch.prism.json");
-  const fileB = path.join(directory, "from open-file.prism.json");
-  const fileC = path.join(directory, "while away.prism.json");
-  const broken = path.join(directory, "broken.prism.json");
-  await fs.writeFile(fileA, JSON.stringify(project("Second launch")));
-  await fs.writeFile(fileB, JSON.stringify(project("macOS open-file")));
-  await fs.writeFile(fileC, JSON.stringify(project("Opened while away")));
+  const file = (name) => path.join(directory, `${name}.prism.json`);
+  const burst = ["Burst one", "Burst two", "Burst three"];
+  const broken = file("broken");
+  await fs.writeFile(file("a"), JSON.stringify(project("Second launch")));
+  await fs.writeFile(file("b"), JSON.stringify(project("macOS open-file")));
+  await fs.writeFile(file("c"), JSON.stringify(project("After a reload")));
+  for (const name of burst)
+    await fs.writeFile(file(name), JSON.stringify(project(name)));
   await fs.writeFile(broken, "{ not json");
+  const windows = (app) =>
+    app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length);
   const { app, page } = await launch(profile);
   try {
-    await listen(page);
-    assert.equal(
-      await app.evaluate(
-        ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
-      ),
-      1,
-    );
+    assert.equal(await windows(app), 1);
+    assert.equal(await projectName(page), "Untitled mapping");
 
-    // A second launch with a project hands it to this copy and exits.
-    assert.equal(await secondLaunch(profile, [fileA]), 0);
-    await waitForOpened(page, 1);
-    let events = await opened(page);
-    assert.equal(events[0].path, fileA);
-    assert.equal(events[0].error, undefined);
-    assert.equal(events[0].project.name, "Second launch");
-    assert.deepEqual(events[0].missing, []);
-    assert.equal(
-      (await page.evaluate(() => window.prism.getProject())).name,
-      "Second launch",
-    );
+    // A second launch with a project hands it to this copy and exits. A line
+    // that was half drawn is dropped, as it is when the Open button is used.
+    await page.keyboard.press("p");
+    await page.locator(".drawing-instructions").waitFor();
+    assert.equal(await secondLaunch(profile, [file("a")]), 0);
+    let editor = await showsProject(page, "Second launch");
+    assert.deepEqual(editor, {
+      layers: ["Second launch layer"],
+      drawing: false,
+    });
+    await page.getByText("Project opened.", { exact: true }).waitFor();
 
     // A second launch with nothing to open only brings this copy forward.
     assert.equal(await secondLaunch(profile, []), 0);
@@ -136,14 +156,15 @@ async function openedProjects(directory) {
       await secondLaunch(profile, ["--some-switch", "notes.txt"]),
       0,
     );
+    assert.equal(await projectName(page), "Second launch");
 
     // The same checks as Open: a broken file is reported, not opened.
     assert.equal(await secondLaunch(profile, [broken]), 0);
-    await waitForOpened(page, 2);
-    events = await opened(page);
-    assert.equal(events.length, 2);
-    assert.match(events[1].error, /not valid JSON/);
-    assert.equal(events[1].path, broken);
+    await page
+      .getByRole("alert")
+      .filter({ hasText: /not valid JSON/ })
+      .waitFor();
+    assert.equal(await projectName(page), "Second launch");
     assert.equal(
       (await page.evaluate(() => window.prism.getProject())).name,
       "Second launch",
@@ -152,34 +173,33 @@ async function openedProjects(directory) {
     // macOS delivers a double-clicked file as open-file, possibly very early.
     await app.evaluate(({ app }, file) => {
       app.emit("open-file", { preventDefault() {} }, file);
-    }, fileB);
-    await waitForOpened(page, 3);
-    events = await opened(page);
-    assert.equal(events[2].project.name, "macOS open-file");
-    assert.equal(events[2].path, fileB);
+    }, file("b"));
+    editor = await showsProject(page, "macOS open-file");
+    assert.deepEqual(editor.layers, ["macOS open-file layer"]);
 
-    // While the page is not listening the project waits, then arrives.
-    await page.evaluate(() => window.__stop());
-    assert.equal(await secondLaunch(profile, [fileC]), 0);
+    // Several files in quick succession: they are shown in the order they
+    // were asked for, so the last one stays.
+    await app.evaluate(({ app }, files) => {
+      for (const name of files)
+        app.emit("open-file", { preventDefault() {} }, name);
+    }, burst.map(file));
+    editor = await showsProject(page, "Burst three");
+    assert.deepEqual(editor.layers, ["Burst three layer"]);
     await new Promise((resolve) => setTimeout(resolve, 1500));
-    assert.equal((await opened(page)).length, 3);
-    await page.evaluate(() => {
-      window.__stop = window.prism.onProjectOpened((result) =>
-        window.__opened.push(result),
-      );
-    });
-    await waitForOpened(page, 4);
-    events = await opened(page);
-    assert.equal(events[3].project.name, "Opened while away");
+    assert.equal(await projectName(page), "Burst three");
+
+    // A reloaded page subscribes again, so later files still arrive.
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Save project", exact: true })
+      .waitFor();
+    assert.equal(await secondLaunch(profile, [file("c")]), 0);
+    editor = await showsProject(page, "After a reload");
+    assert.deepEqual(editor.layers, ["After a reload layer"]);
 
     // Still exactly one editor window after all of that.
-    assert.equal(
-      await app.evaluate(
-        ({ BrowserWindow }) => BrowserWindow.getAllWindows().length,
-      ),
-      1,
-    );
-    return "second launch, open-file, errors and a page that was away";
+    assert.equal(await windows(app), 1);
+    return "second launch, open-file, errors, a half-drawn line, several files and a reload";
   } finally {
     await app.close();
   }
@@ -191,16 +211,9 @@ async function startedWithProject(directory) {
   await fs.writeFile(file, JSON.stringify(project("Cold start")));
   const { app, page } = await launch(profile, [file]);
   try {
-    // Nothing is shown before the page asks; the project is waiting.
-    await listen(page);
-    await waitForOpened(page, 1);
-    const [event] = await opened(page);
-    assert.equal(event.path, file);
-    assert.equal(event.project.name, "Cold start");
-    assert.equal(
-      (await page.evaluate(() => window.prism.getProject())).name,
-      "Cold start",
-    );
+    // The project was named before the page existed. It waits, then shows.
+    const editor = await showsProject(page, "Cold start");
+    assert.deepEqual(editor.layers, ["Cold start layer"]);
     return "project named on the command line";
   } finally {
     await app.close();
