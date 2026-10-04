@@ -9,12 +9,19 @@
 # that everything the emulator says, including the guest kernel messages, is
 # kept in <output-folder>/emulator.log. That file is the first place to look
 # when an emulator stops answering.
+#
+# Use swangle_indirect for the graphics mode. On the GitHub runners the older
+# swiftshader_indirect and the guest modes stop the whole emulator about 20
+# seconds after Prism Mapper opens. A plain page, a canvas 2D page, a single
+# WebGL triangle and the app without its WebGL drawing all survive those modes,
+# so it is the full app's drawing that they cannot take. With swangle_indirect
+# the same app stayed up for the 90 seconds that the experiment watched.
 
 set -eu
 
 API="${1:?Android API level, for example 34}"
 TARGET="${2:?system image flavour, google_apis or default}"
-GPU="${3:?graphics mode, for example swiftshader_indirect}"
+GPU="${3:?graphics mode, for example swangle_indirect}"
 OUT="${4:?folder for the emulator log}"
 CORES="${EMULATOR_CORES:-4}"
 BOOT_SECONDS="${BOOT_SECONDS:-900}"

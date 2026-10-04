@@ -282,27 +282,27 @@ jobs:
           - slug: api34
             api: 34
             target: google_apis
-            gpu: swiftshader_indirect
+            gpu: swangle_indirect
             variants: debug sideload
           - slug: api34-internet
             api: 34
             target: google_apis
-            gpu: swiftshader_indirect
+            gpu: swangle_indirect
             variants: extra
           - slug: api30
             api: 30
             target: google_apis
-            gpu: swiftshader_indirect
+            gpu: swangle_indirect
             variants: debug sideload
           - slug: api35
             api: 35
             target: google_apis
-            gpu: swiftshader_indirect
+            gpu: swangle_indirect
             variants: debug sideload
           - slug: api34-aosp
             api: 34
             target: default
-            gpu: swiftshader_indirect
+            gpu: swangle_indirect
             variants: debug sideload
     steps:
       - uses: actions/checkout@v7
