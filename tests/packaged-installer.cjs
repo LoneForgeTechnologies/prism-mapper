@@ -168,11 +168,15 @@ function shortcutTarget(file) {
     ),
   );
 }
+// Setup.exe's strings are stored padded with spaces, which Explorer does not show.
 function versionInfo(file) {
-  return JSON.parse(
+  const info = JSON.parse(
     powershell(
       `$v = (Get-Item -LiteralPath ${quote(file)}).VersionInfo; ConvertTo-Json -Compress @{ product = $v.ProductName; productVersion = $v.ProductVersion; fileVersion = $v.FileVersion; description = $v.FileDescription; company = $v.CompanyName; copyright = $v.LegalCopyright }`,
     ),
+  );
+  return Object.fromEntries(
+    Object.entries(info).map(([name, value]) => [name, String(value).trim()]),
   );
 }
 
