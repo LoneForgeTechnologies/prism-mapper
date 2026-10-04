@@ -223,6 +223,38 @@ async function crashAndRecover() {
   }
 }
 
+// Which fonts the page drew its text with, as "family: number of glyphs". An
+// Android web view can fetch a font that is not installed by the name the page
+// asks for from the font provider of Google Play services, which makes the app
+// depend on that provider (see mobile/watch-providers.sh), so this shows
+// whether the page uses only the fonts of the system.
+async function platformFonts(session) {
+  await session.send("DOM.enable");
+  await session.send("CSS.enable");
+  const { root } = await session.send("DOM.getDocument", { depth: 0 });
+  const glyphs = new Map();
+  for (const selector of ["h1", "h2", "button", "label", "p", "span", "kbd"]) {
+    const { nodeId } = await session.send("DOM.querySelector", {
+      nodeId: root.nodeId,
+      selector,
+    });
+    if (!nodeId) continue;
+    const { fonts } = await session.send("CSS.getPlatformFontsForNode", {
+      nodeId,
+    });
+    for (const font of fonts) {
+      const name = font.postScriptName
+        ? `${font.familyName} (${font.postScriptName})`
+        : font.familyName;
+      glyphs.set(name, (glyphs.get(name) ?? 0) + font.glyphCount);
+    }
+  }
+  return (
+    [...glyphs].map(([name, count]) => `${name}: ${count} glyphs`).join(", ") ||
+    "none found"
+  );
+}
+
 async function main() {
   mkdirSync(values.out, { recursive: true });
   const port = values.port
@@ -278,6 +310,12 @@ async function main() {
       `The probe failed: ${evaluated.exceptionDetails.exception?.description ?? evaluated.exceptionDetails.text}`,
     );
   }
+  const fonts = await platformFonts(session).catch(
+    (error) =>
+      `not read (${String(error?.message ?? error)
+        .replace(/\s+/g, " ")
+        .slice(0, 120)})`,
+  );
   // Give late asynchronous errors a moment to arrive before closing.
   await sleep(1500);
   session.close();
@@ -289,6 +327,7 @@ async function main() {
   );
   const report = {
     url: page.url,
+    fonts,
     probe,
     consoleErrors: [...consoleErrors],
     pageErrors: [...pageErrors],
@@ -307,6 +346,7 @@ async function main() {
       `WebGL: ${facts.webgl?.renderer} (${facts.webgl?.version})`,
       `Canvas ${facts.pixels.width}x${facts.pixels.height}: ${(facts.pixels.litFraction * 100).toFixed(1)}% lit, ${facts.pixels.distinctColors} colours`,
       `Safe area insets: ${JSON.stringify(facts.safeArea)}; page ${facts.scroll.width}x${facts.scroll.height} in a ${facts.inner.width}x${facts.inner.height} window at ${facts.devicePixelRatio}x; getUserMedia is ${facts.getUserMedia}`,
+      `Fonts used by the page: ${fonts}`,
     ];
     for (const line of lines) log(line);
     // The same facts as one annotation, readable from the run page.
