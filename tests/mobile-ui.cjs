@@ -2015,6 +2015,121 @@ async function secondTabChecks(browser) {
   );
 }
 
+// The Android 11 web view can be as old as Chrome 83 (the CI emulator has it)
+// and Safari 14 is still in use. A call to something they lack is a TypeError,
+// and in start-up code that is a blank page: crypto.randomUUID did exactly that.
+// This takes those calls away from Chromium, then uses the app. The unit test
+// tests/compat.test.ts reads the source for the same calls.
+const OLD_WEB_VIEW = () => {
+  const typed = Object.getPrototypeOf(Uint8Array.prototype);
+  const take = (owner, names) => {
+    for (const name of names) delete owner[name];
+  };
+  take(Crypto.prototype, ["randomUUID"]);
+  take(Array.prototype, ["at", "findLast", "findLastIndex", "with"]);
+  take(Array.prototype, ["toSorted", "toReversed", "toSpliced"]);
+  take(typed, ["at", "findLast", "findLastIndex", "with", "toSorted"]);
+  take(String.prototype, ["at", "replaceAll"]);
+  take(Object, ["hasOwn", "groupBy"]);
+  take(Promise, ["any", "withResolvers"]);
+  take(Element.prototype, ["replaceChildren"]);
+  take(window, ["structuredClone"]);
+};
+const ONE_PIXEL_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  "base64",
+);
+const UUID_V4 =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+async function oldWebViewChecks(browser) {
+  const app = await openApp(
+    browser,
+    { ...PHONE, dpr: 1 },
+    { init: OLD_WEB_VIEW },
+  );
+  const { page } = app;
+  assert.deepEqual(
+    await page.evaluate(() => [
+      typeof crypto.randomUUID,
+      typeof [].at,
+      typeof "".replaceAll,
+      typeof Object.hasOwn,
+      typeof structuredClone,
+    ]),
+    Array(5).fill("undefined"),
+    "the page lacks what Chrome 83 lacks",
+  );
+  const surfaceIds = async () =>
+    (await project(page)).surfaces.map((surface) => surface.id);
+
+  // It started: the first layer is made while the page loads.
+  await waitFor(
+    async () => (await surfaceIds()).length === 1,
+    "the editor did not start",
+  );
+
+  // Drawing an outline reads the last point back, many times a second.
+  await drawOutline(app, [
+    [0.25, 0.25],
+    [0.7, 0.28],
+    [0.65, 0.6],
+  ]);
+
+  // Add a layer, copy it, undo the copy.
+  await openSheet(app, "Layers");
+  await page.getByRole("button", { name: "Add square", exact: true }).click();
+  await openSheet(app, "Adjust");
+  await page.getByRole("button", { name: "Duplicate", exact: true }).click();
+  await waitFor(
+    async () => (await surfaceIds()).length === 4,
+    "a layer was not added and copied",
+  );
+  const ids = await surfaceIds();
+  for (const id of ids) assert.match(id, UUID_V4);
+  assert.equal(new Set(ids).size, ids.length, "every layer has its own id");
+  await page.keyboard.press("Control+z");
+  await waitFor(
+    async () => (await surfaceIds()).length === 3,
+    "undo did not take the copy back",
+  );
+
+  // A picture gets an id of its own.
+  await page.locator('input[type="file"][accept*="image/png"]').setInputFiles({
+    name: "dot.png",
+    mimeType: "image/png",
+    buffer: ONE_PIXEL_PNG,
+  });
+  await waitFor(
+    async () => (await project(page)).media.length === 1,
+    "the picture was not imported",
+  );
+  assert.match((await project(page)).media[0].id, UUID_V4);
+
+  // The Help window keeps Tab inside it by looking for its last button.
+  await closeSheet(app, "Adjust");
+  await page
+    .getByRole("button", { name: "Quick start and shortcuts", exact: true })
+    .click();
+  await page.locator(".help-modal").waitFor();
+  await page.locator(".help-modal button").first().focus();
+  await page.keyboard.press("Shift+Tab");
+  assert.equal(
+    await page.evaluate(() => {
+      const buttons = document.querySelectorAll(".help-modal button");
+      return document.activeElement === buttons[buttons.length - 1];
+    }),
+    true,
+    "Shift+Tab from the first button goes to the last",
+  );
+
+  assert.deepEqual(app.errors, []);
+  await app.context.close();
+  pass(
+    "old web view: with randomUUID, Array.at, replaceAll, hasOwn and structuredClone removed the editor starts, draws, adds, copies, undoes, imports and traps Tab",
+  );
+}
+
 async function resizeChecks(browser) {
   const app = await openApp(browser, {
     name: "resize",
@@ -2142,6 +2257,7 @@ const GROUPS = {
   desktop: desktopChecks,
   files: projectFileChecks,
   tabs: secondTabChecks,
+  oldWebView: oldWebViewChecks,
   resize: resizeChecks,
 };
 

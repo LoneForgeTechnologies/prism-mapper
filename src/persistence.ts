@@ -9,6 +9,7 @@
  * Nothing here ever throws into the editor. A storage failure becomes a
  * friendly message and the in-memory project keeps working.
  */
+import { newId } from "./compat";
 import { createProject, type Media, type Project } from "./model";
 import { validateBrowserProject } from "./project-validation";
 
@@ -232,7 +233,7 @@ export interface ImportedFile {
 export function mediaFromFiles(
   files: readonly File[],
   createUrl: (blob: Blob) => string = (blob) => URL.createObjectURL(blob),
-  createId: () => string = () => crypto.randomUUID(),
+  createId: () => string = () => newId(),
 ): ImportedFile[] {
   return files.map((file) => ({
     blob: file,

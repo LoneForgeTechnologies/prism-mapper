@@ -109,6 +109,7 @@ import {
   type NudgeStep,
   type SheetId,
 } from "./compact-logic";
+import { lastOf, newId } from "./compat";
 import { exitApp, onBackButton } from "./native-glue";
 import { PresentMode, requestPresentFullscreen } from "./present";
 import "./style.css";
@@ -462,7 +463,7 @@ function App() {
     () =>
       setHistory((h) => {
         if (!h.past.length) return h;
-        const previous = h.past.at(-1)!;
+        const previous = lastOf(h.past)!;
         setProject(clone(previous));
         return {
           past: h.past.slice(0, -1),
@@ -495,7 +496,7 @@ function App() {
   }, [project, solo]);
   useEffect(() => {
     if (!project.surfaces.some((s) => s.id === selected))
-      setSelected(project.surfaces.at(-1)?.id || "");
+      setSelected(lastOf(project.surfaces)?.id || "");
   }, [project.surfaces, selected]);
   useEffect(() => {
     if (!notice) return;
@@ -631,7 +632,7 @@ function App() {
     if (!surface || project.surfaces.length >= 32) return;
     const next = {
       ...translateSurface(clone(surface), { x: 0.025, y: 0.025 }),
-      id: crypto.randomUUID(),
+      id: newId(),
       name: surface.name + " copy",
       locked: false,
     };
@@ -882,7 +883,7 @@ function App() {
             document.querySelectorAll<HTMLButtonElement>(".help-modal button"),
           );
           const first = buttons[0],
-            last = buttons.at(-1);
+            last = lastOf(buttons);
           if (e.shiftKey && document.activeElement === first) {
             e.preventDefault();
             last?.focus();
@@ -992,7 +993,7 @@ function App() {
       };
     if (hold?.raw) return p;
     if (e.shiftKey && tool !== "select" && draft.length) {
-      const last = draft.at(-1)!;
+      const last = lastOf(draft)!;
       const dx = (p.x - last.x) * rect.width,
         dy = (p.y - last.y) * rect.height;
       const angle =
@@ -1896,8 +1897,8 @@ function App() {
                         vectorEffect="non-scaling-stroke"
                       />
                       <line
-                        x1={(draftCursor || draft.at(-1)!).x * project.width}
-                        y1={(draftCursor || draft.at(-1)!).y * project.height}
+                        x1={(draftCursor || lastOf(draft)!).x * project.width}
+                        y1={(draftCursor || lastOf(draft)!).y * project.height}
                         x2={draft[0].x * project.width}
                         y2={draft[0].y * project.height}
                         vectorEffect="non-scaling-stroke"

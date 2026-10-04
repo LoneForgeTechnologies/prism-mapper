@@ -1,3 +1,4 @@
+import { newId } from "./compat";
 export type Point = { x: number; y: number };
 export type Pattern = string;
 export { PATTERNS } from "./patterns";
@@ -102,7 +103,7 @@ declare global {
 export function newSurface(index: number): Surface {
   const inset = 0.12 + Math.min(index, 8) * 0.025;
   return {
-    id: crypto.randomUUID(),
+    id: newId(),
     name: `Surface ${String(index + 1).padStart(2, "0")}`,
     corners: [
       { x: inset, y: inset },
