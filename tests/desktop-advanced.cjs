@@ -238,7 +238,7 @@ async function chooseSave(app, filename) {
     // Hide the new output until it has been moved out of fullscreen into a small internal-display test window.
     await app.evaluate(({ app }) => {
       app.on("browser-window-created", (_event, window) => {
-        if (window.getTitle() === "Prism Mapper — Output") window.setOpacity(0);
+        if (window.getTitle() === "Prism Mapper Output") window.setOpacity(0);
       });
     });
     const outputPromise = app.waitForEvent("window");

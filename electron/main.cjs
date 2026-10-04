@@ -244,7 +244,7 @@ async function openOutput(displayId) {
   }
   const projection = new BrowserWindow(
     options({
-      title: "Prism Mapper — Output",
+      title: "Prism Mapper Output",
       ...target.bounds,
       frame: false,
       resizable: false,

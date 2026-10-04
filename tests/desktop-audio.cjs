@@ -110,7 +110,7 @@ const root = path.resolve(__dirname, "..");
     );
     await app.evaluate(({ app }) => {
       app.on("browser-window-created", (_event, window) => {
-        if (window.getTitle() === "Prism Mapper — Output") window.setOpacity(0);
+        if (window.getTitle() === "Prism Mapper Output") window.setOpacity(0);
       });
     });
     const outputPromise = app.waitForEvent("window");
