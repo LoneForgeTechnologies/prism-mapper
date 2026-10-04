@@ -188,10 +188,55 @@ jobs:
             Write-Host "::notice title=Installer build output (end)::$escaped"
           }
 
-  publish:
+  # Collects what the build jobs produced and checks it, on every run. A dry
+  # run therefore proves that the downloads work and still match their
+  # checksums before a tag is pushed.
+  verify:
+    name: verify release files
     needs: build
-    # A dry run stops after the builds; only a tag push or an explicit
-    # non-dry run publishes a release.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && format('refs/tags/{0}', inputs.tag) || github.sha }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      # Desktop builds come from the build job above. Mobile builds, added by a
+      # later change, upload artifacts named mobile-* in the same way.
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: "{desktop,mobile}-*"
+          merge-multiple: true
+          path: downloads
+      - name: Verify the downloads against their checksums
+        shell: bash
+        run: |
+          node scripts/verify-release-files.mjs downloads "${RELEASE_TAG#v}"
+          {
+            echo "### Release files"
+            echo
+            echo '```'
+            cat downloads/SHA256SUMS.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # TEMPORARY, removed before the branch is finished: the same listing as an
+      # annotation, because job logs cannot be downloaded from the worker's network.
+      - name: Verified files as an annotation (temporary)
+        shell: bash
+        run: |
+          text="$( (ls -l downloads; echo; cat downloads/SHA256SUMS.txt) | sed -e 's/%/%25/g' -e ':a;N;$!ba;s/\n/%0A/g' )"
+          echo "::notice title=Verified release files::$text"
+
+  publish:
+    name: publish release
+    needs: verify
+    # A dry run stops after the checks; only a tag push or an explicit non-dry
+    # run publishes a release.
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
@@ -202,54 +247,36 @@ jobs:
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
     steps:
-      # Desktop builds come from the jobs above. Mobile builds, added by a
-      # later change, upload artifacts named mobile-* in the same way.
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ format('refs/tags/{0}', inputs.tag || github.ref_name) }}
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
       - uses: actions/download-artifact@v8
         with:
           pattern: "{desktop,mobile}-*"
           merge-multiple: true
           path: downloads
-      - name: Verify and publish downloads
+      # The same checks again on this job's own downloads; this also writes
+      # SHA256SUMS.txt, which is released with the files.
+      - name: Verify the downloads against their checksums
         shell: bash
-        working-directory: downloads
+        run: node scripts/verify-release-files.mjs downloads "${RELEASE_TAG#v}"
+      - name: Publish the release
+        shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          export LC_ALL=C
-          VERSION="${RELEASE_TAG#v}"
-          has() { local item; for item in "${files[@]}"; do [ "$item" = "$1" ] && return 0; done; return 1; }
-          # Every release file must carry a SHA-256 file made by the job that
-          # built it, naming that file, and it must still match after the
-          # transfer between jobs.
-          files=()
-          for file in *; do
-            case "$file" in *.sha256|SHA256SUMS.txt) continue ;; esac
-            test -f "$file.sha256" || { echo "No checksum file for $file"; exit 1; }
-            test "$(awk '{print $2}' "$file.sha256")" = "$file" || { echo "$file.sha256 does not name $file"; exit 1; }
-            sha256sum --check "$file.sha256"
-            files+=("$file")
-          done
-          for checksum in *.sha256; do
-            test -f "${checksum%.sha256}" || { echo "$checksum has no matching file"; exit 1; }
-          done
-          # The desktop downloads that every release carries.
-          for required in \
-            "Prism-Mapper-v$VERSION-macOS-arm64.zip" \
-            "Prism-Mapper-v$VERSION-macOS-x64.zip" \
-            "Prism-Mapper-v$VERSION-Windows-x64.zip" \
-            "Prism-Mapper-v$VERSION-Windows-x64-Setup.exe"; do
-            has "$required" || { echo "Missing $required"; exit 1; }
-          done
-          for file in "${files[@]}"; do cat "$file.sha256"; done | sort -k2 > SHA256SUMS.txt
-          sha256sum --check SHA256SUMS.txt
-          cat SHA256SUMS.txt
+          node scripts/release-notes.mjs "${RELEASE_TAG#v}" > release-notes.md
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
             if [ "$(cat release-state.txt)" != true ]; then
               echo "This version is already published. Create a new version to update downloads."
               exit 1
             fi
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prism Mapper $RELEASE_TAG" --generate-notes
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Prism Mapper $RELEASE_TAG" --notes-file release-notes.md --generate-notes
           fi
-          gh release upload "$RELEASE_TAG" "${files[@]}" SHA256SUMS.txt --clobber
+          # Every file found: the ZIPs, the installer, their .sha256 files and SHA256SUMS.txt.
+          gh release upload "$RELEASE_TAG" downloads/* --clobber
           gh release edit "$RELEASE_TAG" --draft=false
