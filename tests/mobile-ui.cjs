@@ -597,6 +597,76 @@ async function safeAreaChecks(browser) {
   pass("safe areas: --safe-area-inset-* moves the header, nav rail and strip");
 }
 
+// A tablet in landscape is wide enough for the desktop layout. That layout has
+// to keep clear of the same insets, and must not move at all without them.
+async function wideSafeAreaChecks(browser) {
+  const wide = { name: "tablet 1180x820", width: 1180, height: 820, dpr: 1 };
+  const app = await openApp(browser, wide);
+  const { page } = app;
+  const shell = page.locator(".app-shell");
+  assert.equal(await shell.getAttribute("data-layout"), "desktop");
+  const rect = (selector) =>
+    page.evaluate((selector) => {
+      const { x, y, width, height } = document
+        .querySelector(selector)
+        .getBoundingClientRect();
+      return { x, y, width, height };
+    }, selector);
+  const bare = { shell: await rect(".app-shell"), top: await rect(".topbar") };
+  assert.deepEqual(bare.shell, { x: 0, y: 0, width: 1180, height: 820 });
+  assert.deepEqual(
+    { x: bare.top.x, y: bare.top.y, width: bare.top.width },
+    { x: 0, y: 0, width: 1180 },
+  );
+  await page.evaluate(() => {
+    const style = document.documentElement.style;
+    style.setProperty("--safe-area-inset-top", "24px");
+    style.setProperty("--safe-area-inset-bottom", "20px");
+    style.setProperty("--safe-area-inset-left", "10px");
+    style.setProperty("--safe-area-inset-right", "12px");
+  });
+  await settle(page);
+  const top = await rect(".topbar");
+  near(top.y, 24, 0.5, "the header starts below the status bar");
+  near(top.height, bare.top.height, 0.5, "the header is not made taller");
+  near(top.x, 10, 0.5, "the header clears the left edge");
+  near(top.x + top.width, 1180 - 12, 0.5, "the header clears the right edge");
+  const footer = await rect("footer");
+  near(
+    footer.y + footer.height,
+    820 - 20,
+    0.5,
+    "the footer sits above the home indicator",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.documentElement.scrollHeight <= window.innerHeight,
+    ),
+    true,
+    "the page does not scroll",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => getComputedStyle(document.querySelector(".app-shell")).height,
+    ),
+    "820px",
+    "the layout is exactly as tall as the visible page",
+  );
+  // A notice rises with the footer instead of sitting on the home indicator.
+  await page.getByRole("button", { name: "Save project", exact: true }).click();
+  await page.locator(".toast").waitFor();
+  const toast = await rect(".toast");
+  assert.ok(
+    toast.y + toast.height <= 820 - 20 - 47 + 0.5,
+    `the notice clears the home indicator: ${JSON.stringify(toast)}`,
+  );
+  assert.deepEqual(app.errors, []);
+  await app.context.close();
+  pass(
+    "safe areas, wide tablet: the desktop layout takes the insets and 100dvh, and is unchanged without them",
+  );
+}
+
 async function cssChecks(browser) {
   const app = await openApp(browser, PHONE);
   const { page } = app;
@@ -1959,7 +2029,10 @@ const GROUPS = {
     for (const device of [PHONE, LANDSCAPE, SMALL, TABLET, TINY])
       await layoutChecks(browser, device);
   },
-  safeArea: safeAreaChecks,
+  safeArea: async (browser) => {
+    await safeAreaChecks(browser);
+    await wideSafeAreaChecks(browser);
+  },
   css: cssChecks,
   touch: touchEditing,
   points: pointEditing,
