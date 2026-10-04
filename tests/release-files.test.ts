@@ -14,9 +14,7 @@ import {
   // @ts-expect-error The release scripts intentionally run as plain Node ESM.
 } from "../scripts/verify-release-files.mjs";
 import {
-  WEB_APP_URL,
   releaseNotes,
-  webAppIsOnline,
   // @ts-expect-error The release scripts intentionally run as plain Node ESM.
 } from "../scripts/release-notes.mjs";
 
@@ -299,16 +297,18 @@ test("the release notes name every download and say what to expect from unsigned
     // The phone and tablet builds.
     "Prism-Mapper-v0.4.1-Android.apk",
     "Prism-Mapper-v0.4.1-iOS-unsigned.ipa",
-    "Add to Home Screen",
     "Play Protect",
     "Sideloadly",
     // Updating over an installed copy is not promised.
     "uninstall Prism Mapper first",
     "save your projects as files",
+    "GitHub release assets",
+    "runs locally without an internet connection",
+    "No internet connection is required after installation",
   ])
     assert.ok(notes.includes(phrase), phrase);
   assert.doesNotMatch(notes, /debug key/, "builds get a new key each time");
-  assert.ok(notes.includes(WEB_APP_URL), "the web app address");
+  assert.doesNotMatch(notes, /https?:\/\/|web app|Safari|Add to Home Screen/i);
   assert.doesNotMatch(notes, /[–—]/, "no dash punctuation");
   assert.doesNotMatch(notes, /\{\{|undefined|\$\{|false/);
   assert.ok(notes.endsWith("\n"));
@@ -322,8 +322,8 @@ test("the release notes point only at phone builds that are in the release", () 
     bare,
     /Android\.apk|iOS-unsigned|Sideloadly|Play Protect/,
   );
-  assert.match(bare, /\| iPhone or iPad \| The web app \|/);
-  assert.ok(bare.includes("Add to Home Screen"));
+  assert.match(bare, /\| iPhone or iPad \| Build it with Xcode on a Mac \|/);
+  assert.ok(bare.includes("docs/building-mobile.md"));
 
   const android: string = releaseNotes(version, [
     ...desktop,
@@ -334,6 +334,19 @@ test("the release notes point only at phone builds that are in the release", () 
     /\| Android phone or tablet \| `Prism-Mapper-v0\.4\.1-Android\.apk` \|/,
   );
   assert.doesNotMatch(android, /iOS-unsigned/);
+  assert.match(android, /\| iPhone or iPad \| Build it with Xcode on a Mac \|/);
+
+  const ios: string = releaseNotes(version, [
+    ...desktop,
+    "Prism-Mapper-v0.4.1-iOS-unsigned.ipa",
+  ]);
+  assert.doesNotMatch(ios, /Android\.apk|Play Protect/);
+  assert.match(
+    ios,
+    /\| iPhone or iPad \| `Prism-Mapper-v0\.4\.1-iOS-unsigned\.ipa` for sideloading \|/,
+  );
+  assert.ok(ios.includes("The `.ipa` file is unsigned."));
+  assert.ok(ios.includes("Sideloadly"));
 
   const both: string = releaseNotes(version, [
     ...desktop,
@@ -342,42 +355,11 @@ test("the release notes point only at phone builds that are in the release", () 
   ]);
   assert.match(
     both,
-    /The web app, or `Prism-Mapper-v0\.4\.1-iOS-unsigned\.ipa` for sideloading/,
+    /\| iPhone or iPad \| `Prism-Mapper-v0\.4\.1-iOS-unsigned\.ipa` for sideloading \|/,
   );
 });
 
-test("the web app counts as online only when it answers with success", async () => {
-  const answer = (ok: boolean) => async () => ({ ok }) as Response;
-  assert.equal(await webAppIsOnline(WEB_APP_URL, answer(true)), true);
-  assert.equal(await webAppIsOnline(WEB_APP_URL, answer(false)), false);
-  assert.equal(
-    await webAppIsOnline(WEB_APP_URL, async () => {
-      throw new TypeError("fetch failed");
-    }),
-    false,
-  );
-  const asked: { url: string; method?: string }[] = [];
-  await webAppIsOnline("https://example.test/app/", async (url, init) => {
-    asked.push({ url: String(url), method: init?.method });
-    return { ok: true } as Response;
-  });
-  assert.deepEqual(asked, [
-    { url: "https://example.test/app/", method: "HEAD" },
-  ]);
-});
-
-test("the release notes leave out the web app address while that site is not online", () => {
-  const notes: string = releaseNotes(version, requiredFiles(version), {
-    webApp: false,
-  });
-  assert.ok(!notes.includes(WEB_APP_URL));
-  assert.doesNotMatch(notes, /Add to Home Screen/);
-  assert.match(notes, /\| iPhone or iPad \| Build it with Xcode on a Mac \|/);
-  assert.ok(notes.includes("docs/building-mobile.md"));
-  assert.doesNotMatch(notes, /[–—]/);
-});
-
-test("the notes script reads the downloads folder and the --no-web-app switch", () => {
+test("the notes script reads local downloads without fetching a hosted site", () => {
   const { folder } = downloads({
     "Prism-Mapper-v0.4.1-Android.apk": "android",
   });
@@ -388,21 +370,35 @@ test("the notes script reads the downloads folder and the --no-web-app switch", 
       "scripts",
       "release-notes.mjs",
     );
+    // Fail the subprocess even if a future network check catches fetch errors.
+    const noFetch =
+      "data:text/javascript,globalThis.fetch=()=>{process.stderr.write('Unexpected network request');process.exit(99)}";
     const run = (...args: string[]) =>
-      spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
-    const withSite = run(version, folder);
-    assert.equal(withSite.status, 0, withSite.stderr);
-    assert.ok(withSite.stdout.includes("Prism-Mapper-v0.4.1-Android.apk"));
-    assert.ok(!withSite.stdout.includes("iOS-unsigned"));
-    assert.ok(withSite.stdout.includes(WEB_APP_URL));
-    const noSite = run(version, folder, "--no-web-app");
-    assert.equal(noSite.status, 0, noSite.stderr);
-    assert.ok(!noSite.stdout.includes(WEB_APP_URL));
-    // --no-web-app wins, and then nothing is fetched.
-    const both = run(version, folder, "--no-web-app", "--check-web-app");
-    assert.equal(both.status, 0, both.stderr);
-    assert.ok(!both.stdout.includes(WEB_APP_URL));
-    assert.equal(both.stderr, "");
+      spawnSync(process.execPath, ["--import", noFetch, script, ...args], {
+        encoding: "utf8",
+      });
+    const notes = run(version, folder);
+    assert.equal(notes.status, 0, notes.stderr);
+    assert.ok(notes.stdout.includes("Prism-Mapper-v0.4.1-Android.apk"));
+    assert.ok(!notes.stdout.includes("iOS-unsigned"));
+    assert.doesNotMatch(
+      notes.stdout,
+      /https?:\/\/|web app|Add to Home Screen/i,
+    );
+    assert.match(
+      notes.stdout,
+      /\| iPhone or iPad \| Build it with Xcode on a Mac \|/,
+    );
+    assert.equal(notes.stderr, "");
+    const withoutFolder = run(version);
+    assert.equal(withoutFolder.status, 0, withoutFolder.stderr);
+    assert.ok(
+      withoutFolder.stdout.includes("Prism-Mapper-v0.4.1-iOS-unsigned.ipa"),
+    );
+    assert.equal(withoutFolder.stderr, "");
+    // Retired hosted-site switches are rejected instead of enabling a request.
+    assert.notEqual(run(version, folder, "--no-web-app").status, 0);
+    assert.notEqual(run(version, folder, "--check-web-app").status, 0);
     assert.notEqual(run().status, 0);
     assert.notEqual(run("not-a-version").status, 0);
   } finally {

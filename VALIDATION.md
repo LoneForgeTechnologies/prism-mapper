@@ -1,3 +1,9 @@
+# Distribution update, October 4, 2026
+
+Prism Mapper is distributed through GitHub Releases as locally installed applications. The hosted GitHub Pages app has been retired. Download the installer, application ZIP, APK or unsigned IPA on a connected device, then copy it to the project device if needed. The desktop and native mobile apps bundle their editor and assets; using them does not require the retired website or an internet connection. iPhone and iPad installation still requires signing or sideloading.
+
+The browser and offline-cache checks below record testing of the shared editor and its former browser distribution. They do not describe a currently hosted product. Native installation and signing limits remain as recorded below.
+
 # Version 0.5.0 validation
 
 Tested October 3 and 4, 2026, by automation only. Nobody has tried this version on a physical Windows PC, Mac, phone, tablet or projector. The tests ran in a Linux container, on GitHub-hosted Windows, macOS and Linux machines, and on Android emulators and iOS simulators. Their results are in the Checks, Mobile apps and Release (dry run) workflow runs of the pull request for this version.

@@ -1,6 +1,6 @@
 # Prism Mapper
 
-**Free, open-source projection mapping for Windows, Mac, Android, iPhone and iPad.** Draw shapes over a wall or an object, fill them with moving light, pictures or video, and send the result to a projector. No account, no subscription, no telemetry, and normal playback needs no internet.
+**Free, open-source projection mapping for Windows, Mac, Android, iPhone and iPad.** Draw shapes over a wall or an object, fill them with moving light, pictures or video, and send the result to a projector. Download it from GitHub, install it on your device, and use it locally with no internet. No account, no subscription, no telemetry.
 
 [![Checks](https://github.com/LoneForgeTechnologies/prism-mapper/actions/workflows/checks.yml/badge.svg)](https://github.com/LoneForgeTechnologies/prism-mapper/actions/workflows/checks.yml)
 [![MIT license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
@@ -20,10 +20,11 @@ Open the **[latest release](https://github.com/LoneForgeTechnologies/prism-mappe
 | Mac with an Apple M-series chip | The file ending in `-macOS-arm64.zip` |
 | Mac with an Intel processor | The file ending in `-macOS-x64.zip` |
 | Android 7 or newer, phone or tablet | The file ending in `-Android.apk` |
-| iPhone or iPad (iOS 15 or newer) | The [web app](https://loneforgetechnologies.github.io/prism-mapper/): open it in Safari, tap **Share**, then **Add to Home Screen** |
-| Any current browser | The same [web app](https://loneforgetechnologies.github.io/prism-mapper/). Browsers that offer to install it, such as Chrome and Edge, can put it on the desktop or home screen. It works offline once it has loaded |
+| iPhone or iPad (iOS 15 or newer) | The file ending in `-iOS-unsigned.ipa`, for re-signing and sideloading with your own Apple ID, or build with Xcode on a Mac. It cannot be installed directly; see the steps below. |
 
-The source-code ZIP that GitHub offers next to the assets is for developers, it is not an app. Prism Mapper is not in the Google Play Store or the App Store. These community builds are not code-signed, so Windows, macOS and Android warn you the first time. That is expected, and the steps below say what to do. Every file has a SHA-256 checksum, see [Check a download](#check-a-download).
+The Windows, Mac and Android downloads bundle the app, its runtime and all generated animations. They need no Node.js, account, server or internet during use. For a project with no internet, download the app on another computer, check its checksum, and copy it with your project and media files onto a USB drive or other local storage. Install or extract it on the offline device using the steps below. iPhone and iPad need the signing setup described below.
+
+The **Source code** ZIP that GitHub offers next to the assets is for developers and must be built before use. Installing its dependencies initially needs internet access; use the prebuilt downloads for an offline project. Prism Mapper is not in the Google Play Store or the App Store. These community builds are not code-signed, so Windows, macOS and Android warn you the first time. That is expected, and the steps below say what to do. Every file has a SHA-256 checksum, see [Check a download](#check-a-download).
 
 <details>
 <summary><b>Windows</b></summary>
@@ -56,11 +57,12 @@ The source-code ZIP that GitHub offers next to the assets is for developers, it 
 <details>
 <summary><b>iPhone and iPad</b></summary>
 
-iOS only runs apps that are signed through an Apple developer account, and Prism Mapper is not in the App Store. There are three ways in.
+iOS only runs apps signed through an Apple account, and Prism Mapper is not in the App Store. The release IPA is unsigned and cannot be installed directly.
 
-- **The web app (easiest, no account needed).** Open <https://loneforgetechnologies.github.io/prism-mapper/> in Safari, tap **Share**, then **Add to Home Screen**. It runs full screen and works offline. Safari may clear the saved data of a website after about a week without a visit, but an app added to the Home Screen is kept.
-- **Sideload the unsigned `.ipa`** from the release, if it has one, with a tool such as AltStore or Sideloadly and your own Apple ID. A free Apple ID gives an app that has to be refreshed every 7 days.
-- **Build it with Xcode on a Mac**, see [docs/building-mobile.md](docs/building-mobile.md).
+- **Re-sign and sideload the unsigned `.ipa`** from the release with a tool such as AltStore or Sideloadly and your own Apple ID. A free Apple ID gives an app that has to be refreshed every 7 days. Plan for that expiry before relying on it for an extended offline project.
+- **Build and sign it with Xcode on a Mac**, see [docs/building-mobile.md](docs/building-mobile.md).
+
+The installed app bundles the editor and animations for local use. Downloading an IPA alone does not complete the signing and installation process.
 
 </details>
 
@@ -75,7 +77,7 @@ Each file has a `.sha256` file, and `SHA256SUMS.txt` lists them all. On Windows 
 - **Masks, blend modes and soft edges.** Keep a window dark, overlap layers with Add or Screen, feather edges, and rotate or zoom the content inside a shape without moving the outline.
 - **React to sound.** Layers can pulse with the volume, bass, mids, treble or beats of a microphone or (on desktops) the system output.
 - **A real projector output.** On a desktop the output opens in its own window on the projector, with live edits, guides, blackout and display-sleep prevention. On a phone or tablet, **Present** fills the screen with the mapped light.
-- **One app on every device.** Windows, Mac, Android, iPhone, iPad and the browser share the same editor, and the same `.prism.json` project files move between them.
+- **The same editor across installed apps.** Windows, Mac, Android, iPhone and iPad share the editor, and the same `.prism.json` project files move between them.
 - **Yours.** MIT licensed, local files only, nothing leaves the device.
 
 ## Quick start
@@ -102,11 +104,11 @@ Honestly: partly. This is what has been checked, and by what. [VALIDATION.md](VA
 
 | | Checked by automation | Not checked |
 | --- | --- | --- |
-| **Everything** | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout and the offline web app. All on every push. | Real graphics cards, long sessions, every picture and video format. |
+| **Everything** | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout, plus offline cache and storage regression checks in a local browser preview. All on every push. | Real graphics cards, long sessions, every picture and video format. |
 | **Windows** | The packaged app and the Setup installer on GitHub's Windows machines, on every release: install, start, open a project, update over a running copy, uninstall, and the portable ZIP. | A real Windows PC with a real projector. SmartScreen. |
 | **Mac** | The packaged app on GitHub's Apple silicon and Intel Macs, on every release: start, signature, and the app unpacked from the ZIP. Version 0.4.1 was also checked on an Apple silicon Mac before its release. | Gatekeeper, notarization, a Mac of your own. |
 | **Android** | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed and Google Play services being crashed. | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
-| **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The web app was tested in headless Chrome. | A real iPhone or iPad, Safari itself, the App Store. |
+| **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The shared editor is tested in headless Chrome. | A real iPhone or iPad, full editor behavior in iOS WebKit, the App Store. |
 
 The last recorded test with a physical projector was version 0.2 on a Mac, and capturing the computer's own audio output has never been verified on real hardware. The phone and tablet apps were never run on a physical device.
 
@@ -120,7 +122,7 @@ The last recorded test with a physical projector was version 0.2 on a Mac, and c
 
 ## Build from source
 
-You need **Node.js 22.12 or newer** and npm, and a computer with a graphics chip. Get the source with `git clone` or the source ZIP, then run in the project folder:
+You need **Node.js 22.12 or newer** and npm, and a computer with a graphics chip. Get the source with `git clone` or the source ZIP. The first `npm ci` downloads dependencies, including the desktop runtime, so do this while online. Then run in the project folder:
 
 ```sh
 npm ci
@@ -132,10 +134,10 @@ On a Mac, **Launch Prism Mapper.command** does the same, and on Windows **Launch
 ```sh
 npm run package:mac       # a Mac app in release/ (on a Mac)
 npm run package:release   # the release ZIP for the platform you are on
-npm run cap:sync          # the web app copied into the Android and iOS projects
+npm run cap:sync          # bundled editor assets copied into the Android and iOS projects
 ```
 
-The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) and is built by `node scripts/build-windows-installer.mjs`. The published downloads are built by the workflows in [`.github/workflows`](.github/workflows): `release.yml` for the desktop apps and the release page, `mobile.yml` for Android and iOS, and `pages.yml` for the web app.
+The Windows installer needs [Inno Setup 6](https://jrsoftware.org/isinfo.php) and is built by `node scripts/build-windows-installer.mjs`. The published downloads are built by the workflows in [`.github/workflows`](.github/workflows): `release.yml` for the desktop apps and the release page, and `mobile.yml` for Android and iOS. GitHub hosts the source and downloadable releases; the app runs on your device.
 
 ## Development
 
@@ -152,7 +154,7 @@ npm run test:mapping          # polygon, mask and blend GPU checks and the editi
 npm run test:mix              # the automatic animation mix
 npm run test:audio            # synthetic audio response and capture interface
 npm run test:mobile           # phone and tablet layout, touch editing, Present mode
-npm run test:pwa              # the installable, offline web app (builds and serves dist/ itself)
+npm run test:pwa              # local browser cache and storage regression (builds and serves dist/ itself)
 npm run test:animations       # every material: animation, pause, speed, detail, blackout (slow)
 ```
 

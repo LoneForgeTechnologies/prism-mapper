@@ -1,6 +1,6 @@
 # Prism Mapper user guide
 
-The reference for the editor: what every tool does and where the limits are. If you have never used the app, start with [Getting started](getting-started.md), which walks through a first projection. The numbers below describe version 0.5.
+The reference for the editor: what every tool does and where the limits are. Install a download from [GitHub Releases](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest) before starting. The installed app runs locally without internet. If you have never used the app, start with [Getting started](getting-started.md), which covers installation, transferring downloads to an offline device, and a first projection. The numbers below describe version 0.5.
 
 Prism Mapper is a half vibe-coded, half-tested project (see the [README](../README.md#how-well-is-it-tested)). Where this guide says something works, it works as far as the automated checks and the testing described in [VALIDATION.md](../VALIDATION.md) go. Where something has not been tried on real hardware, the guide says so.
 
@@ -54,7 +54,7 @@ Space and Enter act on the button or control that has the keyboard focus. Click 
 
 ## Phones and tablets
 
-Prism Mapper switches to a touch layout when its window is narrower than 1050 pixels. Every phone and most tablets in portrait are narrower than that, and a narrow desktop window or browser tab gets the same layout.
+Prism Mapper switches to a touch layout when its window is narrower than 1050 pixels. Every phone and most tablets in portrait are narrower than that, and a narrow desktop app window gets the same layout.
 
 - Five tabs at the bottom open sheets: **Layers**, **Looks** (the animations and your own pictures and videos), **Adjust** (the settings of the selected layer), **Audio** and **Show** (output and brightness).
 - **Select** and **Line tool** sit at the top with undo, redo, pause and blackout. Drag corners with a finger. Tap the first point again to close an outline. Touch targets are at least 44 pixels.
@@ -115,23 +115,23 @@ On Android, iPhone and iPad the microphone is the only source. The desktop apps 
 
 **Save project** writes a `.prism.json` file with your layout and settings. It does not contain the pictures and videos: it only remembers each one by name and relative path. Keep the media files in a folder together with the project, and move or share the whole folder. Media that cannot be found stays black until you import and assign a replacement.
 
-Generated-pattern drafts and, in the web app and the phone apps, imported media are kept in the device's own storage, so a reload or a restart normally brings the work back. That storage can be cleared by the system (Safari may clear a website's saved data after about a week without a visit, while an app added to the Home Screen is kept), so **Save project** is the only reliable backup. If the storage refuses to save, the app says so and keeps the open project.
+Generated-pattern drafts and, in the phone apps, imported media are kept in the device's own storage, so a restart normally brings the work back. App storage can be cleared by the system or by uninstalling, so **Save project** and copies of your original media are the reliable backup. If the storage refuses to save, the app says so and keeps the open project.
 
-Projects move between the apps in both directions. A project saved on a desktop opens in the web app and on a phone, and the other way round, but the media files do not travel with it: pictures and videos show as missing until you add them again on the new device.
+Projects move between the apps in both directions. A project saved in a desktop app opens in a mobile app, and the other way round, but the media files do not travel with it: pictures and videos show as missing until you add them again on the new device.
 
 Projects open with **Open** in the app, and on a phone through the system's file picker. On Windows the installer (unless you untick the option) adds **Open in Prism Mapper** to the right-click menu of `.prism.json` files and lists Prism Mapper under **Open With** for JSON files. On a Mac, Prism Mapper is listed under **Open With**. Double-clicking is not set up on purpose, because that would make Prism Mapper the default program for every JSON file.
 
-How to update:
+Updates are manual. Download the new app and checksum from [GitHub Releases](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest) on a computer with internet, check the checksum, and transfer the download to the offline device if needed. Save your projects and media before changing the app. Then:
 
 | Where | How |
 | --- | --- |
 | Windows installer | Close Prism Mapper and run the newer `Setup.exe`. It updates the installed copy. |
 | Windows ZIP | Extract the new ZIP and run the new copy. Delete the old folder when you are done. |
 | Mac | Quit Prism Mapper, then replace **Prism Mapper.app** with the new copy. |
-| Android | Install the newer APK. If Android refuses, uninstall the old version first (save your projects as files before that, because uninstalling removes the app's data). |
-| iPhone, iPad and the web app | Open the app while online. It tells you when a new version is ready and asks you to reload. |
+| Android | Builds with temporary signatures need the old version uninstalled first (save your projects as files and keep your media before that, because uninstalling removes the app's data). Then install the new APK. Builds signed with the same key can update the installed copy. |
+| iPhone or iPad | Re-sign and sideload the new unsigned IPA, or build and sign the new source with Xcode. A free Apple ID requires a refresh every 7 days. |
 
-There is no automatic updater in the desktop apps. **Help, then Download updates** opens the release page. The apps keep the same identity between releases, so drafts normally survive an update on the same computer and user account. Do not keep your only copy of a project or its media inside the application folder.
+There is no automatic updater. **Help, then Download updates** opens the release page. The apps keep the same identity between releases, so drafts normally survive an update on the same computer and user account. Do not keep your only copy of a project or its media inside the application folder.
 
 Version 0.5 reads schema versions 1 and 2 and saves version 2. Prism Mapper 0.1 and 0.2 cannot open version-2 projects. Version 0.3 understands their mapping geometry but drops audio response settings when it saves. Use 0.4 or later to keep those settings, and keep a separate copy before you open a project in an older app.
 
@@ -143,12 +143,12 @@ Polygon content uses the outline's bounding rectangle; arbitrary polygons do not
 
 The editor and the projector output animate independently: procedural phases can differ and video is not frame-locked between windows. Video is muted with no seek or scrub control. The projector output does not reopen automatically after a restart.
 
-The desktop apps show the output on a second display through a separate window. The phone apps and the web app have no second window, so they use **Present on this screen** and rely on the device's own screen mirroring or cable output.
+The desktop apps show the output on a second display through a separate window. The phone apps have no second window, so they use **Present on this screen** and rely on the device's own screen mirroring or cable output.
 
-The web app and the phone apps keep their data in browser storage, which has a limit that depends on the device. A very large video may not fit; the app says so instead of failing silently.
+The phone apps keep their data in the local web view's storage, which has a limit that depends on the device. A very large video may not fit; the app says so instead of failing silently.
 
 On Android phones with Google Play services, Android's web view asks Play services for fonts when the app starts. If Play services restart in those first seconds, for example right after the phone has booted, Android can close Prism Mapper once. Open it again: nothing is lost, because the app was only starting. [VALIDATION.md](../VALIDATION.md) has the details.
 
-`npm run dev` starts a browser preview at http://127.0.0.1:5178. Native display selection and native file dialogs need a desktop app.
+For developers, `npm run dev` starts a local browser preview at http://127.0.0.1:5178. Native display selection and native file dialogs need a desktop app.
 
 Physical system-output audio capture has not been verified on any platform. No version has been tested with a physical projector on Windows, Android, iPhone or iPad.
