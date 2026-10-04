@@ -1,6 +1,6 @@
 # Security policy
 
-Prism Mapper runs on your own device. It has no accounts and no server, normal playback uses no network, and the Android app does not even have the internet permission. The places where something can still go wrong are the reading of project and media files, the connection between the desktop app's windows, and the way the downloads are built.
+Prism Mapper runs on your own device. It has no accounts and no server, the installed app bundles its assets and runs without network access, and the Android app does not even have the internet permission. The places where something can still go wrong are the reading of project and media files, the connection between the desktop app's windows, and the way the downloads are built.
 
 ## Reporting a problem
 
@@ -20,4 +20,5 @@ Only the latest release. Prism Mapper is a half vibe-coded, half-tested project 
 - The release files are built on GitHub's machines from the tagged source by the workflows in [`.github/workflows`](.github/workflows). Every file has a SHA-256 checksum on the release page.
 - The Windows, Mac and Android builds are **not code-signed with a publisher certificate**, and the Mac app is not notarized. Windows, macOS and Android warn about that the first time. Only run a download if you got it from the release page of this repository and its checksum matches.
 - Android builds made by the project carry a temporary signature, so Android does not treat a newer build as an update of an older one.
-- The iPhone and iPad web app is served from GitHub Pages and cached for offline use by a service worker. It stores your drafts and imported media in the browser's own storage on your device.
+- The iPhone and iPad download is an unsigned IPA. It cannot be installed directly and must be signed with your Apple account before use. The installed mobile apps keep drafts and imported media in local app storage.
+- Download releases and their checksums while online, then transfer them to an offline device if needed. Updates are manual; the app does not depend on a hosted website.

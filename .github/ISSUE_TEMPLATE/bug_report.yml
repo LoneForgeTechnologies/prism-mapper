@@ -32,9 +32,8 @@ body:
         - macOS Apple silicon ZIP
         - macOS Intel ZIP
         - Android APK
-        - iPhone or iPad, web app added to the Home Screen
         - iPhone or iPad, sideloaded IPA or built with Xcode
-        - Web app in a browser tab
+        - Local browser development preview
         - Built from source
     validations:
       required: true

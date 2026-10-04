@@ -1,6 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Local installation and distribution
+
+- GitHub Releases is the installation route: Windows Setup or portable ZIP, Mac ZIP, Android APK, and an unsigned iOS IPA that requires signing and sideloading or an Xcode build.
+- The hosted browser app and GitHub Pages deployment are retired. Installed apps bundle the editor, runtime and generated animations for local use without internet.
+- Installation and update guides now cover downloading on another computer, checking checksums, and transferring the app, project and media to an offline device. Updates are manual.
+- The source-code ZIP remains available for developers, with an initial dependency installation and build required before use.
+
 ## 0.5.0 (2026-10-04)
+
+These historical release notes include the hosted browser app that was offered at release and has since been retired. Use the installation routes in the current README.
 
 Prism Mapper leaves the Mac. Windows, Android, iPhone and iPad join macOS, and the project now says plainly what it is: a half vibe-coded, half-tested open-source tool. Much of the code was written by directing AI coding assistants, the automated tests are real but partial, and none of the new platforms has been tried on a physical device or with a physical projector.
 

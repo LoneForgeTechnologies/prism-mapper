@@ -3,44 +3,17 @@
 // download. The release workflow puts the notes GitHub generates from the
 // changes below it.
 //
-//   node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app | --check-web-app]
+//   node scripts/release-notes.mjs <version> [downloads folder]
 //
 // With a folder, the phone and tablet rows appear only for files that are in
-// it, so the notes never point at a download that does not exist. With
-// --no-web-app the notes leave out the address of the installable web app, for
-// a release made while that site is not online. With --check-web-app the
-// script looks whether the site answers and leaves the address out when it
-// does not, so the notes never send people to a page that does not exist.
+// it, so the notes never point at a download that does not exist. Every app
+// runs locally after installation; generating the notes needs no network.
 import { readdirSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { androidName, iosName, releaseName } from "./release-name.mjs";
 
-// Where the installable web app is published. It is the way onto an iPhone or
-// iPad without an Apple developer account.
-export const WEB_APP_URL =
-  "https://loneforgetechnologies.github.io/prism-mapper/";
-
-// True when the web app answers. A site that is not online (GitHub Pages is
-// not switched on, or the first deployment has not finished) or does not
-// answer in time counts as not online.
-export async function webAppIsOnline(
-  url = WEB_APP_URL,
-  fetchPage = globalThis.fetch,
-) {
-  try {
-    const response = await fetchPage(url, {
-      method: "HEAD",
-      redirect: "follow",
-      signal: AbortSignal.timeout(20_000),
-    });
-    return response.ok;
-  } catch {
-    return false;
-  }
-}
-
-export function releaseNotes(version, files = null, { webApp = true } = {}) {
+export function releaseNotes(version, files = null) {
   const windows = releaseName(version, "win32", "x64");
   const apple = releaseName(version, "darwin", "arm64");
   const intel = releaseName(version, "darwin", "x64");
@@ -60,13 +33,7 @@ export function releaseNotes(version, files = null, { webApp = true } = {}) {
   if (has(android)) rows.push(["Android phone or tablet", `\`${android}\``]);
   rows.push([
     "iPhone or iPad",
-    webApp
-      ? has(ios)
-        ? `The web app, or \`${ios}\` for sideloading`
-        : "The web app"
-      : has(ios)
-        ? `\`${ios}\` for sideloading`
-        : "Build it with Xcode on a Mac",
+    has(ios) ? `\`${ios}\` for sideloading` : "Build it with Xcode on a Mac",
   ]);
   const table = rows
     .map(([device, file]) => `| ${device} | ${file} |`)
@@ -80,17 +47,17 @@ export function releaseNotes(version, files = null, { webApp = true } = {}) {
   phones.push(
     [
       "**iPhone and iPad.** iOS only runs apps that are signed through an Apple developer account, and Prism Mapper is not in the App Store.",
-      webApp &&
-        `The easy way is the web app: open ${WEB_APP_URL} in Safari, tap **Share**, then **Add to Home Screen**. It works offline once it has loaded.`,
       has(ios) &&
-        "The `.ipa` file is unsigned. It is for people who sideload with a tool such as AltStore or Sideloadly and their own Apple ID, or who sign it themselves.",
-      "You can also build the app with Xcode on a Mac, see docs/building-mobile.md in the source.",
+        "The `.ipa` file is unsigned. It is for people who sideload with a tool such as AltStore or Sideloadly and their own Apple ID, or who sign it themselves. A free Apple ID installation needs refreshing every 7 days, so plan for that expiry before relying on it for an extended offline project.",
+      `${has(ios) ? "You can also build" : "Build"} the app with Xcode on a Mac, see docs/building-mobile.md in the source. Once installed, the app runs locally without an internet connection.`,
     ]
       .filter(Boolean)
       .join(" "),
   );
 
   return `## Downloads
+
+Download an app from the GitHub release assets below, install or extract it, and use it locally. The apps include everything needed to run Prism Mapper offline. No internet connection is required after installation. To build from source, download or clone the GitHub project and follow README.md and docs/building-mobile.md in the source; acquiring build tools and dependencies requires internet access before going offline.
 
 | Your device | Download |
 | --- | --- |
@@ -115,20 +82,12 @@ if (
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   const args = process.argv.slice(2);
-  const [version, folder] = args.filter((arg) => !arg.startsWith("--"));
-  if (!version)
+  const [version, folder] = args;
+  if (!version || args.length > 2 || args.some((arg) => arg.startsWith("--")))
     throw new Error(
-      "Usage: node scripts/release-notes.mjs <version> [downloads folder] [--no-web-app | --check-web-app]",
+      "Usage: node scripts/release-notes.mjs <version> [downloads folder]",
     );
-  let webApp = !args.includes("--no-web-app");
-  if (webApp && args.includes("--check-web-app")) {
-    webApp = await webAppIsOnline();
-    if (!webApp)
-      console.error(
-        `::warning title=Release notes::${WEB_APP_URL} does not answer, so the notes leave out the web app. Switch on GitHub Pages (Settings, Pages, Source: GitHub Actions) and run the Pages workflow, then edit the release notes.`,
-      );
-  }
   process.stdout.write(
-    releaseNotes(version, folder ? readdirSync(folder) : null, { webApp }),
+    releaseNotes(version, folder ? readdirSync(folder) : null),
   );
 }

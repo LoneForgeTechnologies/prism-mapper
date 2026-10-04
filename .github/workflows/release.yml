@@ -252,16 +252,15 @@ jobs:
             cat downloads/SHA256SUMS.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # A dry run shows what the release page would say, including whether
-      # the web app address is included (it is left out while that site is
-      # not online).
+      # A dry run shows the local installation instructions for the downloads
+      # that are present, without requiring a hosted site.
       - name: Show the release notes
         shell: bash
         run: |
           {
             echo "### Release notes"
             echo
-            node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads --check-web-app
+            node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads
           } >> "$GITHUB_STEP_SUMMARY"
 
   publish:
@@ -300,7 +299,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads --check-web-app > release-notes.md
+          node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads > release-notes.md
           # A tag with a hyphen, such as v0.6.0-beta.1, is a pre-release.
           KIND=()
           case "$RELEASE_TAG" in *-*) KIND=(--prerelease) ;; esac

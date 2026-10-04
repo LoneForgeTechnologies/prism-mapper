@@ -60,6 +60,6 @@ jobs:
       - run: npm run test:audio
       # The phone and tablet layout, touch editing and Present mode.
       - run: npm run test:mobile
-      # The installable, offline web app. It builds and serves dist/ itself.
+      # Local browser cache and storage regressions. Builds and serves dist/
+      # on localhost; no public deployment is involved.
       - run: npm run test:pwa
-

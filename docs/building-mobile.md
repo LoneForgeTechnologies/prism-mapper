@@ -1,6 +1,8 @@
 # Building the Android and iPhone/iPad apps
 
-Prism Mapper also runs as an app on Android phones and tablets, and on iPhone and iPad. The apps are the same offline web app that runs in the browser and in the desktop app, packed into a small native shell with [Capacitor](https://capacitorjs.com/) 8. There is no server, no account and no network access: everything is inside the app.
+Prism Mapper also runs as an app on Android phones and tablets, and on iPhone and iPad. The mobile apps bundle the same editor and renderer used by the desktop apps, inside a small native shell with [Capacitor](https://capacitorjs.com/) 8. They use a local web view internally. There is no server or account, and app use needs no internet: the editor and generated animations are inside the installed app.
+
+For installation without a development toolchain, use the APK or unsigned IPA from [GitHub Releases](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest). Downloading the source ZIP alone does not produce an installed app. Initial source builds need internet to obtain npm, Android or Xcode dependencies. The unsigned iOS IPA still requires Apple signing before installation.
 
 This page explains how to build the apps yourself, how the automatic builds work, how to install them, and what has and has not been tested. Prism Mapper is a half vibe-coded, half-tested project, and the phone and tablet apps have never been run on a physical device, see [What has been tested, and what has not](#what-has-been-tested-and-what-has-not).
 
@@ -16,7 +18,7 @@ This page explains how to build the apps yourself, how the automatic builds work
 
 The app id is `org.prismmapper.mobile`. It is the Android application id and the iOS bundle id. **It can never be changed once the app has been published** on Google Play or the App Store, so pick it carefully before the first publication.
 
-The web app is never copied by hand. `npm run build` writes it to `dist/`, and `npx cap sync` copies `dist/` into `android/` and `ios/`. The copies are not committed. Always build the web app and sync before you open or build a native project. The npm scripts below do this for you.
+The editor assets are never copied by hand. `npm run build` writes them to `dist/`, and `npx cap sync` copies `dist/` into `android/` and `ios/`. The copies are not committed. Always build the editor assets and sync before you open or build a native project. The npm scripts below do this for you.
 
 ## Version numbers
 
@@ -37,7 +39,7 @@ When you change the version, also change `MARKETING_VERSION` in `ios/App/App.xco
 
 | Command | What it does |
 | --- | --- |
-| `npm run cap:sync` | Builds the web app and copies it into both native projects |
+| `npm run cap:sync` | Builds the editor assets and copies them into both native projects |
 | `npm run android:open` | Builds, syncs and opens the project in Android Studio |
 | `npm run android:run` | Builds and runs on a connected Android device or emulator |
 | `npm run android:debug` | Builds a debug APK on the command line |
@@ -50,7 +52,7 @@ When you change the version, also change `MARKETING_VERSION` in `ios/App/App.xco
 
 You need:
 
-- Node 22 or newer and `npm install` done once in the project folder.
+- Node 22.12 or newer and `npm ci` done once in the project folder while online.
 - [Android Studio](https://developer.android.com/studio) Narwhal 3 (2025.1.3) or newer. It brings Java 21 and the Android SDK manager. Android SDK Platform 36 is needed, and Android Studio offers to install it the first time you open the project.
 
 Then:
@@ -75,13 +77,13 @@ Run the `./gradlew` commands inside the `android/` folder, after `npm run cap:sy
 You need a Mac with:
 
 - [Xcode](https://developer.apple.com/xcode/) 26 or newer. Capacitor 8 requires it. The app itself runs on iOS and iPadOS 15 and newer.
-- Node 22 or newer and `npm install` done once.
+- Node 22.12 or newer and `npm ci` done once while online.
 
 Then:
 
 1. Run `npm run ios:open`. Xcode opens `ios/App/App.xcodeproj` and fetches the Swift packages the first time.
 2. To try it in the simulator, pick an iPhone or iPad simulator at the top and press Run. No account is needed.
-3. To run it on your own iPhone or iPad, open the **App** target, then **Signing & Capabilities**, choose your team (a free Apple ID works) and change the bundle identifier to something unique to you, because `org.prismmapper.mobile` belongs to the project's own Apple developer account. Connect the device and press Run. With a free Apple ID the app stops working after 7 days and has to be installed again.
+3. To run it on your own iPhone or iPad, open the **App** target, then **Signing & Capabilities**, choose your team (a free Apple ID works) and change the bundle identifier to something unique to your build. Connect the device and press Run. With a free Apple ID the app stops working after 7 days and has to be installed again.
 
 You cannot build the iOS app on Windows or Linux. Use the automatic build (below) to get an unsigned IPA from GitHub instead.
 
@@ -126,11 +128,11 @@ TestFlight builds go through the same upload, and are the easiest way to test on
 
 The workflow `.github/workflows/mobile.yml` ("Mobile apps") runs on every push to `main` and to the `claude/mobile-native` branch and on pull requests that touch the app, the native projects or the workflow. It can also be started by hand from the Actions tab, and the release workflow calls it. It has four jobs:
 
-**Android build.** Builds the web app, syncs it into `android/` and builds the `debug` and `sideload` APKs with Gradle. It then checks both with `aapt2`: application id, version name and code, SDK levels, no backups, no cleartext traffic, only the microphone permissions, and debuggable or not as expected. It also tries the release signing with a throwaway key made on the spot, so the signing setup keeps working even though the real key is not in CI.
+**Android build.** Builds the editor assets, syncs them into `android/` and builds the `debug` and `sideload` APKs with Gradle. It then checks both with `aapt2`: application id, version name and code, SDK levels, no backups, no cleartext traffic, only the microphone permissions, and debuggable or not as expected. It also tries the release signing with a throwaway key made on the spot, so the signing setup keeps working even though the real key is not in CI.
 
 **Android emulator test.** Starts an Android emulator (x86_64, 4 GB of memory, the `swangle_indirect` software graphics mode) on four setups: Android 14, Android 11, Android 15 and Android 14 with the plain open-source image. Android 14 and Android 11 must pass, the other two still run and show their result but do not fail the workflow. A build whose check fails is checked once more, because emulators on shared machines now and then stop an app that is fine: the first attempt shows as warnings and is kept in an `attempt-1` folder of the artifact, and the run says that it needed a second attempt. A build that fails both attempts fails the job. On each setup it installs the debug build and the sideload build and opens each one. For the debug build it connects to the app's web view and checks that the app interface and the preview canvas exist, that the preview is not blank and that the page logged no errors (one harmless Capacitor message about the safe area is ignored). It then stops the web view's process on purpose and checks that the app stays alive in the same process and draws its preview again. Both builds get a screenshot, the sideload build is rotated to landscape, and the system log is checked for crashes. On the sideload build the persistent process of Google Play services is then crashed and the rest of Play services is stopped, and the app must stay alive in the same process. Last, the app is started again and Play services are crashed at the first moment the app holds a stable connection to one of their providers. Android's web view makes that connection on Android 14 with Google apps, and Android stops an app whose provider dies, so the app does not always live through it. That result is shown as a warning and never fails the build (see `VALIDATION.md`). The older graphics modes (`swiftshader_indirect` and the guest modes) stop the whole emulator on the GitHub machines about 20 seconds after Prism Mapper opens, which is why `start-emulator.sh` insists on `swangle_indirect`.
 
-**iOS and iPadOS build.** Builds the web app, syncs it into `ios/`, builds for the iOS Simulator and checks the app bundle (bundle id, version, microphone text, orientations, privacy manifest). It then builds the app for real devices without signing, checks the app inside that archive the same way, and packs it into an unsigned IPA.
+**iOS and iPadOS build.** Builds the editor assets, syncs them into `ios/`, builds for the iOS Simulator and checks the app bundle (bundle id, version, microphone text, orientations, privacy manifest). It then builds the app for real devices without signing, checks the app inside that archive the same way, and packs it into an unsigned IPA.
 
 **iOS simulator test.** Installs and opens the simulator app on an iPhone simulator and on an iPad simulator, takes a screenshot of each and checks that the screen is not blank, that the app is still running and that no crash report exists.
 
@@ -169,6 +171,8 @@ The release workflow passes them to this one by name. TestFlight upload happens 
 
 ## Install the Android app
 
+Download the APK and its checksum from [GitHub Releases](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest). Check the checksum, then copy the APK onto the device with USB or other local storage if it has no internet. The APK bundles the app and animations; installing and using it does not require Node.js or a hosted website.
+
 1. Download `Prism-Mapper-v<version>-Android.apk` from the release page (or unzip the build artifact) onto the phone, or copy it over by USB.
 2. Open the file. Android asks for permission to install apps from this source (Chrome, Files or whichever app you used to open it). Allow it for that app, then go back and tap **Install**. The setting is called "Install unknown apps" and you can turn it off again afterwards.
 3. Play Protect may say the app is from an unknown developer. That is expected for an app that did not come from Google Play.
@@ -182,12 +186,11 @@ Android installs an update over an installed app only when both were signed with
 The unsigned IPA cannot be installed directly: iOS only runs apps that are signed by an Apple account. Pick one of these ways:
 
 - **Simulator on a Mac.** Run `npm run ios:simulator`, start a simulator from Xcode, and drag `ios/App/build/DerivedData/Build/Products/Debug-iphonesimulator/App.app` onto its window (or run `xcrun simctl install booted <that App.app>`).
-- **The web app, on any iPhone or iPad, without a Mac or an account.** Open the web app in Safari, tap **Share**, then **Add to Home Screen**. See the README for the address.
 - **Your own device, with a Mac.** Build from source as described above.
-- **Your own device, without a Mac.** Tools such as AltStore or Sideloadly can re-sign the unsigned IPA with your own Apple ID and install it. A free Apple ID gives an app that has to be refreshed every 7 days.
+- **Your own device, without a Mac.** Tools such as AltStore or Sideloadly can re-sign the unsigned IPA with your own Apple ID and install it. A free Apple ID gives an app that has to be refreshed every 7 days. Plan for that expiry before relying on the app for an extended offline project.
 - **TestFlight or the App Store.** Needs the signed build from the Apple developer account.
 
-## What the apps do differently from the browser
+## Features of the installed mobile apps
 
 - **The screen stays on.** The apps keep the display awake while Prism Mapper is in front, because a projection that dims is useless. Normal sleep returns when you leave the app.
 - **Microphone.** Android and iOS ask for permission the first time you tap Start listening. The audio is analyzed on the device to animate effects. It is never recorded or uploaded. Phones cannot capture the sound of other apps, so the microphone is the only audio source.
@@ -200,11 +203,11 @@ The unsigned IPA cannot be installed directly: iOS only runs apps that are signe
 
 Tested by the automatic build on every push (when the app, the native projects or the workflow change):
 
-- The web app builds, and `npx cap sync` runs for Android and iOS.
+- The editor assets build, and `npx cap sync` runs for Android and iOS.
 - The Android app builds as a debug and a sideload APK, with the expected version, permissions and manifest settings.
 - Both APKs install and start on Android emulators: Android 11 (with an old web view, version 83), Android 14, Android 15 and Android 14 with the plain open-source image. The preview is drawn, the page check passes, the screen rotates, and the app survives the death of its web view process and a crash of Google Play services (see "How the automatic build works").
 - The iOS app builds for the simulator and for devices (without signing), the app inside the device archive passes the same bundle checks, and the simulator build starts on an iPhone and an iPad simulator.
-- The web app is also tested in headless Chromium, on a phone-sized and a tablet-sized screen with touch emulation (`npm run test:mobile`), and as an installable offline web app (`npm run test:pwa`).
+- The shared editor is also tested in headless Chromium on a phone-sized and a tablet-sized screen with touch emulation (`npm run test:mobile`). `npm run test:pwa` retains local browser cache and storage regression coverage for development; installed mobile apps load their own bundled assets.
 
 Not tested, and not claimed:
 
@@ -215,11 +218,11 @@ Not tested, and not claimed:
 - **TestFlight and the signed Apple path**, and the signed Android path with a real key. Only the parts that run without secrets are tested.
 - **Google Play services restarting while the app starts.** On Android 14 with Google apps the web view holds a connection to the font provider of Play services for the first seconds, and Android closes an app whose provider process dies. An emulator test shows it, the app cannot prevent it, and the details are in `VALIDATION.md`.
 - **Old devices.** The emulators in CI have fixed web views (version 83 on Android 11, version 113 on Android 14). Real devices usually have a newer one, and their behavior can differ.
-- **Safari and WebKit.** The web app was never run in Safari. The iOS app uses the system web view, which the simulator test only starts, it does not exercise the editor from the inside.
+- **iOS WebKit.** The iOS app uses the system web view, which the simulator test only starts; it does not exercise the editor from the inside.
 
 ## If something goes wrong
 
 - *Gradle or Android Studio cannot find the project's plugins.* Run `npm run cap:sync` first. It creates files in `android/` that Gradle needs.
 - *Xcode says a package is missing.* Run `npm run cap:sync`, then in Xcode choose **File > Packages > Resolve Package Versions**.
-- *The app shows a blank screen after a code change.* The web app was not rebuilt. Run `npm run cap:sync` and run the app again.
+- *The app shows a blank screen after a code change.* The editor assets were not rebuilt. Run `npm run cap:sync` and run the app again.
 - *The build says "must look like MAJOR.MINOR.PATCH".* The `version` in `package.json` has to be three numbers, such as `0.5.1`.
