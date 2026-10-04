@@ -8,8 +8,10 @@
  *  - install:  precache the app shell (HTML, scripts, styles, icons, manifest).
  *  - fetch:    cache-first for same-origin GET requests inside the app folder.
  *              Preview images are not precached; they are cached the first
- *              time they are shown. A page navigation falls back to the cached
- *              index.html when the network is unavailable.
+ *              time they are shown, in a cache of their own that a new release
+ *              keeps as long as the pictures themselves did not change. A page
+ *              navigation falls back to the cached index.html when the network
+ *              is unavailable.
  *  - activate: delete caches left by earlier versions of this app folder.
  *
  * Every URL is resolved against the worker's own scope, so the app works from
@@ -17,14 +19,25 @@
  */
 const CACHE_NAME = "__PRISM_CACHE_NAME__";
 const PRECACHE = "__PRISM_PRECACHE__";
+// Named for the preview pictures, not for the release (see scripts/build-pwa.mjs).
+const LAZY_CACHE_NAME = "__PRISM_LAZY_CACHE_NAME__";
+const LAZY_PREFIXES = "__PRISM_LAZY_PREFIXES__";
 const CACHE_PREFIX = "prism-mapper-";
 
 const scope = new URL(self.registration.scope);
 // One cache per app folder, so two copies on one origin never clear each other.
 const CACHE_SUFFIX = "@" + scope.pathname;
 const CACHE = CACHE_NAME + CACHE_SUFFIX;
+// Pictures seen online stay available offline after an update that leaves them alone.
+const LAZY_CACHE = LAZY_CACHE_NAME + CACHE_SUFFIX;
 const toUrl = (path) => new URL(path, scope).href;
 const INDEX_URL = toUrl("index.html");
+
+// Files cached when first shown. The URL is inside the app folder already.
+function isLazy(url) {
+  const path = url.slice(scope.href.length);
+  return LAZY_PREFIXES.some((prefix) => path.startsWith(prefix));
+}
 
 // A response that followed a redirect cannot answer a page navigation.
 async function plain(response) {
@@ -71,7 +84,8 @@ self.addEventListener("activate", (event) => {
             (name) =>
               name.startsWith(CACHE_PREFIX) &&
               name.endsWith(CACHE_SUFFIX) &&
-              name !== CACHE,
+              name !== CACHE &&
+              name !== LAZY_CACHE,
           )
           .map((name) => caches.delete(name)),
       );
@@ -83,7 +97,9 @@ self.addEventListener("activate", (event) => {
 async function respond(event) {
   const request = event.request;
   const navigating = request.mode === "navigate";
-  const cache = await caches.open(CACHE);
+  const cache = await caches.open(
+    !navigating && isLazy(request.url) ? LAZY_CACHE : CACHE,
+  );
   const cached = await cache.match(request, {
     ignoreSearch: navigating,
     ignoreVary: true,

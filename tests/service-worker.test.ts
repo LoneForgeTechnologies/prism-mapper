@@ -15,6 +15,7 @@ import {
   checkManifest,
   fingerprint,
   isShippable,
+  lazyCacheNameFor,
   listDistFiles,
   renderServiceWorker,
 } from "../scripts/build-pwa.mjs";
@@ -162,6 +163,55 @@ test("the cache name tracks the version and every file's path and content", asyn
     assert.throws(() => cacheNameFor(bad, entries), /Invalid app version/, bad);
 });
 
+test("the cache for preview pictures is named for the pictures alone", async () => {
+  const dist = await makeDist(SHIPPED);
+  const pictures = async () =>
+    (await fingerprint(dist, await listDistFiles(dist))).filter(
+      (entry: { path: string }) => entry.path.startsWith("previews/"),
+    );
+  const name = lazyCacheNameFor(await pictures());
+  assert.match(name, /^prism-mapper-lazy-[0-9a-f]{12}$/);
+  assert.equal(lazyCacheNameFor([...(await pictures())].reverse()), name);
+
+  const build = (version = "0.4.1") =>
+    buildServiceWorker({ dist, version, template });
+  const first = await build();
+  assert.equal(first.lazyCacheName, name);
+
+  // A release that does not touch the pictures keeps their cache: a new
+  // version number, a changed script, a new file.
+  await writeFile(path.join(dist, "assets/index-aaa.js"), "console.log('2')");
+  await writeFile(path.join(dist, "assets/extra.js"), "export {}");
+  const release = await build("0.4.2");
+  assert.notEqual(release.cacheName, first.cacheName);
+  assert.equal(release.lazyCacheName, first.lazyCacheName);
+
+  // One that changes a picture, adds one, or removes one starts it over.
+  await writeFile(path.join(dist, "previews/shape-circle.png"), "new picture");
+  const changed = await build("0.4.2");
+  assert.notEqual(changed.lazyCacheName, first.lazyCacheName);
+  await writeFile(path.join(dist, "previews/new.png"), "one more");
+  const added = await build("0.4.2");
+  assert.notEqual(added.lazyCacheName, changed.lazyCacheName);
+  await rm(path.join(dist, "previews/halloween/bat.png"));
+  const removed = await build("0.4.2");
+  assert.notEqual(removed.lazyCacheName, added.lazyCacheName);
+  // A rename is a change too.
+  const renamed = lazyCacheNameFor([
+    { path: "previews/a.png", hash: "1" },
+    { path: "previews/b.png", hash: "2" },
+  ]);
+  assert.notEqual(
+    renamed,
+    lazyCacheNameFor([
+      { path: "previews/a.png", hash: "2" },
+      { path: "previews/b.png", hash: "1" },
+    ]),
+  );
+  // No pictures at all is a cache name too, and the worker still builds.
+  assert.match(lazyCacheNameFor([]), /^prism-mapper-lazy-[0-9a-f]{12}$/);
+});
+
 test("generated worker lists every shipped file once and nothing else", async () => {
   const dist = await makeDist({ ...SHIPPED, ...NEVER_SHIPPED });
   const built = await buildServiceWorker({ dist, version: "0.4.1", template });
@@ -256,31 +306,54 @@ test("the generated worker changes when any file or the version changes, and onl
   assert.notEqual(trimmed.cacheName, bumped.cacheName);
 });
 
-test("rendering needs both placeholders exactly once and inserts text literally", () => {
+test("rendering needs all four placeholders exactly once and inserts text literally", () => {
   const out = renderServiceWorker(template, {
     cacheName: "prism-mapper-v1.0.0-abcdefabcdef",
     precache: ["index.html", "weird$&name.js", "a$`b.js"],
+    lazyCacheName: "prism-mapper-lazy-abcdefabcdef",
+    lazyPrefixes: ["previews/", "odd$&folder/"],
   });
   assert.ok(out.includes('"prism-mapper-v1.0.0-abcdefabcdef"'));
+  assert.ok(out.includes('"prism-mapper-lazy-abcdefabcdef"'));
   assert.ok(out.includes('"weird$&name.js"'));
   assert.ok(out.includes('"a$`b.js"'));
+  assert.ok(out.includes('"odd$&folder/"'));
   assert.ok(!out.includes("__PRISM_"));
+  const values = {
+    cacheName: "x",
+    precache: [],
+    lazyCacheName: "y",
+    lazyPrefixes: [],
+  };
   for (const broken of [
     "const A = 1;",
     'const CACHE_NAME = "__PRISM_CACHE_NAME__";',
-    '"__PRISM_CACHE_NAME__" "__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__"',
-    '"__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__" "__PRISM_PRECACHE__"',
+    '"__PRISM_CACHE_NAME__" "__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__" "__PRISM_LAZY_CACHE_NAME__" "__PRISM_LAZY_PREFIXES__"',
+    '"__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__" "__PRISM_PRECACHE__" "__PRISM_LAZY_CACHE_NAME__" "__PRISM_LAZY_PREFIXES__"',
+    '"__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__" "__PRISM_LAZY_PREFIXES__"',
+    '"__PRISM_CACHE_NAME__" "__PRISM_PRECACHE__" "__PRISM_LAZY_CACHE_NAME__"',
   ])
     assert.throws(
-      () => renderServiceWorker(broken, { cacheName: "x", precache: [] }),
+      () => renderServiceWorker(broken, values),
       /exactly once/,
       broken,
     );
+  // A value that is missing is an error, not the word "undefined" in the worker.
+  assert.throws(
+    () =>
+      renderServiceWorker(template, { ...values, lazyCacheName: undefined }),
+    /needs a value/,
+  );
 });
 
-test("the shipped template has both placeholders once and never names another server", () => {
-  assert.equal(template.split('"__PRISM_CACHE_NAME__"').length, 2);
-  assert.equal(template.split('"__PRISM_PRECACHE__"').length, 2);
+test("the shipped template has all four placeholders once and never names another server", () => {
+  for (const token of [
+    "__PRISM_CACHE_NAME__",
+    "__PRISM_PRECACHE__",
+    "__PRISM_LAZY_CACHE_NAME__",
+    "__PRISM_LAZY_PREFIXES__",
+  ])
+    assert.equal(template.split(`"${token}"`).length, 2, token);
   // Privacy: the worker only handles this app's own folder.
   assert.doesNotMatch(template, /https?:\/\//);
   assert.doesNotMatch(
@@ -451,6 +524,7 @@ class FakeNetwork {
 interface Worker {
   scope: string;
   cache: string;
+  lazyCache: string;
   skipped: number;
   claimed: number;
   dispatch(
@@ -470,6 +544,7 @@ interface Worker {
 function startWorker(options: {
   source: string;
   cacheName: string;
+  lazyCacheName?: string;
   scope: string;
   storage: FakeCacheStorage;
   network: FakeNetwork;
@@ -478,6 +553,7 @@ function startWorker(options: {
   const worker = {
     scope: options.scope,
     cache: `${options.cacheName}@${new URL(options.scope).pathname}`,
+    lazyCache: `${options.lazyCacheName ?? LAZY_NAME}@${new URL(options.scope).pathname}`,
     skipped: 0,
     claimed: 0,
   } as Worker;
@@ -535,6 +611,19 @@ function startWorker(options: {
 
 const SCOPES = ["https://app.example/prism-mapper/", "https://app.example/"];
 const PRECACHE = ["index.html", "assets/app.js", "manifest.webmanifest"];
+const LAZY_NAME = "prism-mapper-lazy-aaaaaaaaaaaa";
+/** The worker text for these names, with previews/ cached on first use. */
+const render = (
+  cacheName: string,
+  precache: string[] = PRECACHE,
+  lazyCacheName = LAZY_NAME,
+) =>
+  renderServiceWorker(template, {
+    cacheName,
+    precache,
+    lazyCacheName,
+    lazyPrefixes: ["previews/"],
+  });
 
 function world(
   scope: string,
@@ -547,7 +636,7 @@ function world(
   network.serve(`${scope}assets/app.js`, "app v1");
   network.serve(`${scope}manifest.webmanifest`, "{}");
   network.serve(`${scope}previews/shape.png`, "preview bytes");
-  const source = renderServiceWorker(template, { cacheName, precache });
+  const source = render(cacheName, precache);
   const worker = startWorker({ source, cacheName, scope, storage, network });
   return { storage, network, worker, source };
 }
@@ -697,10 +786,7 @@ for (const [first, second] of [
       network.serve(`${scope}assets/app.js`, "app");
       network.serve(`${scope}manifest.webmanifest`, "{}");
       const name = "prism-mapper-v1.0.0-aaaaaaaaaaaa";
-      const source = renderServiceWorker(template, {
-        cacheName: name,
-        precache: PRECACHE,
-      });
+      const source = render(name);
       workers.push(
         startWorker({ source, cacheName: name, scope, storage, network }),
       );
@@ -714,10 +800,7 @@ for (const [first, second] of [
     for (const [index, scope] of [first, second].entries()) {
       const name = `prism-mapper-v1.${index + 1}.0-bbbbbbbbbbbb`;
       const next = startWorker({
-        source: renderServiceWorker(template, {
-          cacheName: name,
-          precache: PRECACHE,
-        }),
+        source: render(name),
         cacheName: name,
         scope,
         storage,
@@ -753,6 +836,7 @@ test("a version bump builds a new cache, switches to it and deletes the old one"
     const worker = startWorker({
       source: built.source,
       cacheName: built.cacheName,
+      lazyCacheName: built.lazyCacheName,
       scope,
       storage,
       network,
@@ -805,10 +889,194 @@ test("files that were not cached at install are kept the first time they load", 
   const first = worker.get(url);
   assert.equal(await (await first.response).text(), "preview bytes");
   await first.settled();
-  assert.equal(storage.stores.get(worker.cache)!.text(url), "preview bytes");
+  assert.equal(
+    storage.stores.get(worker.lazyCache)!.text(url),
+    "preview bytes",
+    "kept in the cache for pictures",
+  );
+  assert.equal(
+    storage.stores.get(worker.cache)!.text(url),
+    undefined,
+    "and not in the release's own cache",
+  );
   network.offline = true;
   const again = worker.get(url);
   assert.equal(await (await again.response).text(), "preview bytes");
+});
+
+/** Build the files in `dist` into a worker, serve them, and install it over whatever is already there. */
+async function deploy(
+  dist: string,
+  version: string,
+  scope: string,
+  storage: FakeCacheStorage,
+  network: FakeNetwork,
+) {
+  const built = await buildServiceWorker({ dist, version, template });
+  network.served.clear();
+  for (const file of await listDistFiles(dist))
+    network.serve(
+      `${scope}${file}`,
+      await readFile(path.join(dist, file), "utf8"),
+    );
+  const worker = startWorker({
+    source: built.source,
+    cacheName: built.cacheName,
+    lazyCacheName: built.lazyCacheName,
+    scope,
+    storage,
+    network,
+  });
+  await install(worker);
+  return { built, worker };
+}
+const show = async (worker: Worker, scope: string, file: string) => {
+  const result = worker.get(`${scope}${file}`);
+  const response = await result.response;
+  await result.settled();
+  return response.ok ? await response.text() : response.status;
+};
+
+test("preview pictures seen before an update are still there after one that leaves them alone", async () => {
+  const scope = SCOPES[0];
+  const dist = await makeDist(SHIPPED);
+  const storage = new FakeCacheStorage();
+  const network = new FakeNetwork();
+
+  const one = await deploy(dist, "0.4.1", scope, storage, network);
+  assert.equal(
+    await show(one.worker, scope, "previews/shape-circle.png"),
+    "preview",
+  );
+  assert.deepEqual(
+    [...storage.stores.keys()].sort(),
+    [one.worker.cache, one.worker.lazyCache].sort(),
+  );
+
+  // A new release: another script and a new version number, the same pictures.
+  await writeFile(path.join(dist, "assets/index-aaa.js"), "console.log('2')");
+  const two = await deploy(dist, "0.4.2", scope, storage, network);
+  assert.notEqual(two.worker.cache, one.worker.cache);
+  assert.equal(two.worker.lazyCache, one.worker.lazyCache);
+  assert.deepEqual(
+    [...storage.stores.keys()].sort(),
+    [two.worker.cache, two.worker.lazyCache].sort(),
+    "the old release is gone, the pictures stay",
+  );
+  network.offline = true;
+  const before = network.log.length;
+  assert.equal(
+    await show(two.worker, scope, "previews/shape-circle.png"),
+    "preview",
+  );
+  assert.equal(network.log.length, before, "no request was needed");
+  // One that was never seen is simply absent, as before.
+  await assert.rejects(
+    two.worker.get(`${scope}previews/halloween/bat.png`).response,
+    TypeError,
+  );
+});
+
+test("a release that changes a picture starts the pictures over and never shows the old one", async () => {
+  const scope = SCOPES[0];
+  const dist = await makeDist(SHIPPED);
+  const storage = new FakeCacheStorage();
+  const network = new FakeNetwork();
+
+  const one = await deploy(dist, "0.4.1", scope, storage, network);
+  await show(one.worker, scope, "previews/shape-circle.png");
+  await show(one.worker, scope, "previews/halloween/bat.png");
+
+  await writeFile(path.join(dist, "previews/shape-circle.png"), "redrawn");
+  const two = await deploy(dist, "0.4.2", scope, storage, network);
+  assert.notEqual(two.worker.lazyCache, one.worker.lazyCache);
+  assert.deepEqual(
+    [...storage.stores.keys()],
+    [two.worker.cache],
+    "both old caches are deleted",
+  );
+  // Offline, nothing old is shown in place of the new picture.
+  network.offline = true;
+  await assert.rejects(
+    two.worker.get(`${scope}previews/shape-circle.png`).response,
+    TypeError,
+  );
+  // Online, the new picture is fetched and kept.
+  network.offline = false;
+  assert.equal(
+    await show(two.worker, scope, "previews/shape-circle.png"),
+    "redrawn",
+  );
+  network.offline = true;
+  assert.equal(
+    await show(two.worker, scope, "previews/shape-circle.png"),
+    "redrawn",
+  );
+});
+
+test("activation keeps the current picture cache and removes earlier ones of this folder only", async () => {
+  const { storage, worker } = world(
+    SCOPES[0],
+    "prism-mapper-v1.1.0-bbbbbbbbbbbb",
+  );
+  const keep = [
+    worker.lazyCache, // the one this release uses
+    "prism-mapper-lazy-aaaaaaaaaaaa@/other-copy/", // another folder on the same origin
+    "prism-mapper-v1.0.0-aaaaaaaaaaaa@/other-copy/",
+    "somebody-elses-lazy-cache@/prism-mapper/",
+  ];
+  const remove = [
+    "prism-mapper-v1.0.0-aaaaaaaaaaaa@/prism-mapper/",
+    "prism-mapper-lazy-cccccccccccc@/prism-mapper/", // pictures that have since changed
+    "prism-mapper-lazy-dddddddddddd@/prism-mapper/",
+  ];
+  for (const name of [...keep, ...remove]) await storage.open(name);
+  await worker.dispatch("install").settled();
+  await worker.dispatch("activate").settled();
+  assert.deepEqual(
+    [...storage.stores.keys()].sort(),
+    [...keep, worker.cache].sort(),
+  );
+});
+
+test("everything else that is not installed still goes into the release's own cache", async () => {
+  const { network, storage, worker } = world(SCOPES[0]);
+  await install(worker);
+  const url = `${SCOPES[0]}assets/late.js`;
+  network.serve(url, "late script");
+  const result = worker.get(url);
+  assert.equal(await (await result.response).text(), "late script");
+  await result.settled();
+  assert.equal(storage.stores.get(worker.cache)!.text(url), "late script");
+  assert.equal(storage.stores.get(worker.lazyCache), undefined);
+  // A folder whose name merely starts like the pictures' folder is not theirs.
+  const lookalike = `${SCOPES[0]}previews-extra/a.png`;
+  network.serve(lookalike, "x");
+  const other = worker.get(lookalike);
+  await other.response;
+  await other.settled();
+  assert.equal(storage.stores.get(worker.cache)!.text(lookalike), "x");
+});
+
+test("two copies on one origin keep their own pictures through each other's updates", async () => {
+  const [a, b] = ["https://app.example/a/", "https://app.example/b/"];
+  const dist = await makeDist(SHIPPED);
+  const storage = new FakeCacheStorage();
+  const network = new FakeNetwork();
+  const first = await deploy(dist, "0.4.1", a, storage, network);
+  await show(first.worker, a, "previews/shape-circle.png");
+  const second = await deploy(dist, "0.4.1", b, storage, network);
+  await show(second.worker, b, "previews/shape-circle.png");
+  assert.equal(storage.stores.size, 4);
+
+  // Copy a gets a release with a redrawn picture.
+  await writeFile(path.join(dist, "previews/shape-circle.png"), "redrawn");
+  const update = await deploy(dist, "0.4.2", a, storage, network);
+  assert.deepEqual(
+    [...storage.stores.keys()].sort(),
+    [update.worker.cache, second.worker.cache, second.worker.lazyCache].sort(),
+    "copy b still has its release and its pictures; copy a started over",
+  );
 });
 
 test("errors and opaque answers are passed on but never kept", async () => {
@@ -823,7 +1091,9 @@ test("errors and opaque answers are passed on but never kept", async () => {
   const opaque = worker.get(`${SCOPES[0]}previews/opaque.png`);
   await opaque.response;
   await Promise.all([missing.settled(), broken.settled(), opaque.settled()]);
-  const kept = [...storage.stores.get(worker.cache)!.records.keys()];
+  const kept = [worker.cache, worker.lazyCache].flatMap((name) => [
+    ...(storage.stores.get(name)?.records.keys() ?? []),
+  ]);
   assert.ok(!kept.some((url) => url.includes("previews/")), kept.join(", "));
 });
 

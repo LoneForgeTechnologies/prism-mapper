@@ -57,6 +57,8 @@ class Hosting {
     this.mounts = mounts;
     this.port = port;
     this.log = [];
+    /** While true every request fails like a lost connection. */
+    this.down = false;
   }
   async start() {
     this.server = http.createServer((req, res) => this.handle(req, res));
@@ -76,6 +78,7 @@ class Hosting {
     return `${this.origin}${mount}${rest}`;
   }
   handle(req, res) {
+    if (this.down) return req.socket.destroy();
     const url = new URL(req.url, "http://localhost");
     const pathname = decodeURIComponent(url.pathname);
     const done = (status, headers = {}, body = "") => {
@@ -241,6 +244,17 @@ async function openPage(context, url, { ready = true } = {}) {
 const controlled = (page) =>
   page.waitForFunction(() => Boolean(navigator.serviceWorker.controller));
 const cacheNames = (page) => page.evaluate(() => caches.keys());
+/** Poll until `check` gives something truthy. (waitForFunction does not poll an async predicate.) */
+async function eventually(check, what, timeout = 20000) {
+  const end = Date.now() + timeout;
+  let last;
+  while (Date.now() < end) {
+    last = await check();
+    if (last) return last;
+    await new Promise((resolve) => setTimeout(resolve, 100));
+  }
+  assert.fail(`${what} (last: ${JSON.stringify(last)})`);
+}
 const cacheUrls = (page, name) =>
   page.evaluate(
     async (cacheName) =>
@@ -437,7 +451,8 @@ async function main() {
           );
         const worker = await fs.readFile(path.join(DIST, "sw.js"), "utf8");
         assert.ok(
-          worker.includes(JSON.stringify(expected.cacheName)),
+          worker.includes(JSON.stringify(expected.cacheName)) &&
+            worker.includes(JSON.stringify(expected.lazyCacheName)),
           "dist/sw.js is out of date for the files in dist/. Run npm run build.",
         );
         const html = await fs.readFile(path.join(DIST, "index.html"), "utf8");
@@ -687,12 +702,17 @@ async function main() {
         await page.evaluate(() =>
           fetch("./previews/comet.png").then((r) => r.arrayBuffer()),
         );
+        // They go into a cache of their own, named for the pictures.
         await page.waitForFunction(
           async (n) =>
             (await (await caches.open(n)).keys()).some((r) =>
               r.url.endsWith("/previews/comet.png"),
             ),
-          name,
+          `${expected.lazyCacheName}@/`,
+        );
+        assert.ok(
+          !(await cacheUrls(page, name)).some((u) => u.includes("/previews/")),
+          "and not into the release's cache",
         );
         await context.close();
       },
@@ -765,7 +785,115 @@ async function main() {
           await again.getByText("A new version is ready").count(),
           0,
         );
-        assert.deepEqual(await cacheNames(page), [`${second.cacheName}@/`]);
+        // The library asked for its pictures meanwhile, and they stay across the update.
+        assert.deepEqual(
+          (await cacheNames(page)).filter(
+            (name) => name !== `${second.lazyCacheName}@/`,
+          ),
+          [`${second.cacheName}@/`],
+        );
+        await context.close();
+      },
+    );
+
+    await scenario(
+      "pictures seen before an update are still there offline after it, unless the update changes them",
+      async () => {
+        const temp = await fs.mkdtemp(path.join(os.tmpdir(), "prism-pwa-e2e-"));
+        tempFolders.push(temp);
+        const dist = path.join(temp, "dist");
+        await fs.cp(DIST, dist, { recursive: true });
+        const packageFile = path.join(temp, "package.json");
+        const templateFile = path.join(root, "scripts", "sw-template.js");
+        const release = async (version) => {
+          await fs.writeFile(packageFile, JSON.stringify({ version }));
+          return buildPwa({ dist, packageFile, templateFile });
+        };
+        const first = await release("0.4.1-e2e.3");
+        const releases = await track(new Hosting(dist));
+        const context = await openContext(browser);
+        const page = await openPage(context, releases.url());
+        await controlled(page);
+        const cachesAre = (names) =>
+          eventually(
+            async () =>
+              JSON.stringify((await cacheNames(page)).sort()) ===
+              JSON.stringify([...names].sort()),
+            `the caches should be ${names.join(" and ")}`,
+          );
+        const update = () =>
+          page.evaluate(async () =>
+            (await navigator.serviceWorker.getRegistration()).update(),
+          );
+        // The size of a picture, or what went wrong asking for it.
+        const picture = (name) =>
+          page.evaluate(
+            (n) =>
+              fetch(`./previews/${n}.png`).then(
+                async (r) =>
+                  r.ok ? (await r.arrayBuffer()).byteLength : r.status,
+                () => "network error",
+              ),
+            name,
+          );
+
+        // Two pictures are seen online and kept in the pictures' cache.
+        const lazy = `${first.lazyCacheName}@/`;
+        const cometSize = await picture("comet");
+        assert.ok(cometSize > 100, "the picture has content");
+        await picture("aurora");
+        await eventually(
+          async () =>
+            (await cacheUrls(page, lazy)).filter(
+              (u) => u.endsWith("/comet.png") || u.endsWith("/aurora.png"),
+            ).length === 2,
+          "both pictures should be kept",
+        );
+
+        // Release two changes the page and the version, not the pictures.
+        const index = path.join(dist, "index.html");
+        await fs.writeFile(
+          index,
+          (await fs.readFile(index, "utf8")).replace(
+            "<title>Prism Mapper</title>",
+            "<title>Prism Mapper (two)</title>",
+          ),
+        );
+        const second = await release("0.4.2-e2e.4");
+        assert.notEqual(second.cacheName, first.cacheName);
+        assert.equal(second.lazyCacheName, first.lazyCacheName);
+        await update();
+        await cachesAre([`${second.cacheName}@/`, lazy]);
+        releases.down = true;
+        try {
+          assert.equal(await picture("comet"), cometSize);
+          assert.ok(Number.isInteger(await picture("aurora")));
+          assert.equal(
+            await picture("never-visited"),
+            "network error",
+            "a picture never seen is simply absent",
+          );
+        } finally {
+          releases.down = false;
+        }
+
+        // Release three redraws one picture, so the old pictures are dropped.
+        await fs.appendFile(path.join(dist, "previews", "comet.png"), "\0");
+        const third = await release("0.4.3-e2e.5");
+        assert.notEqual(third.lazyCacheName, first.lazyCacheName);
+        await update();
+        await cachesAre([`${third.cacheName}@/`]);
+        releases.down = true;
+        try {
+          assert.equal(
+            await picture("comet"),
+            "network error",
+            "the old picture is not shown in place of the new one",
+          );
+        } finally {
+          releases.down = false;
+        }
+        assert.equal(await picture("comet"), cometSize + 1);
         await context.close();
       },
     );

@@ -63,26 +63,49 @@ export async function fingerprint(dist, files) {
   );
 }
 
-/** `prism-mapper-v<version>-<12 hex>`: changes when the version or any file's path or content changes. */
-export function cacheNameFor(version, entries) {
-  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
-    throw new Error(`Invalid app version: ${version}`);
+/** Twelve hex digits that change when any of these files' paths or contents change. */
+function digestOf(entries) {
   const digest = createHash("sha256");
   for (const { path: file, hash } of [...entries].sort((a, b) =>
     a.path < b.path ? -1 : a.path > b.path ? 1 : 0,
   ))
     digest.update(`${file}\0${hash}\n`);
-  return `prism-mapper-v${version}-${digest.digest("hex").slice(0, 12)}`;
+  return digest.digest("hex").slice(0, 12);
 }
 
-/** Fill the two placeholders of sw-template.js. */
-export function renderServiceWorker(template, { cacheName, precache }) {
+/** `prism-mapper-v<version>-<12 hex>`: changes when the version or any file's path or content changes. */
+export function cacheNameFor(version, entries) {
+  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
+    throw new Error(`Invalid app version: ${version}`);
+  return `prism-mapper-v${version}-${digestOf(entries)}`;
+}
+
+/**
+ * `prism-mapper-lazy-<12 hex>`: the cache for the files that are kept the first
+ * time they are shown. It is named for those files alone, so a release that does
+ * not touch them keeps what was downloaded (offline, a preview that was seen
+ * before an update would otherwise be blank until seen online again) and one
+ * that changes a picture starts the cache over rather than show the old picture.
+ */
+export function lazyCacheNameFor(entries) {
+  return `prism-mapper-lazy-${digestOf(entries)}`;
+}
+
+/** Fill the four placeholders of sw-template.js. */
+export function renderServiceWorker(
+  template,
+  { cacheName, precache, lazyCacheName, lazyPrefixes },
+) {
   const values = {
     '"__PRISM_CACHE_NAME__"': JSON.stringify(cacheName),
     '"__PRISM_PRECACHE__"': JSON.stringify(precache, null, 2),
+    '"__PRISM_LAZY_CACHE_NAME__"': JSON.stringify(lazyCacheName),
+    '"__PRISM_LAZY_PREFIXES__"': JSON.stringify(lazyPrefixes),
   };
   let output = template;
   for (const [token, value] of Object.entries(values)) {
+    if (value === undefined)
+      throw new Error(`The service worker needs a value for ${token}`);
     if (output.split(token).length !== 2)
       throw new Error(
         `The service worker template needs ${token} exactly once`,
@@ -96,17 +119,27 @@ export async function buildServiceWorker({ dist, version, template }) {
   const files = await listDistFiles(dist);
   if (!files.includes("index.html"))
     throw new Error(`${dist} has no index.html. Run vite build first.`);
-  const cacheName = cacheNameFor(version, await fingerprint(dist, files));
+  const entries = await fingerprint(dist, files);
+  const cacheName = cacheNameFor(version, entries);
   const lazy = files.filter((file) =>
     LAZY_PREFIXES.some((prefix) => file.startsWith(prefix)),
+  );
+  const lazyCacheName = lazyCacheNameFor(
+    entries.filter((entry) => lazy.includes(entry.path)),
   );
   const precache = files.filter((file) => !lazy.includes(file));
   return {
     cacheName,
+    lazyCacheName,
     files,
     precache,
     lazy,
-    source: renderServiceWorker(template, { cacheName, precache }),
+    source: renderServiceWorker(template, {
+      cacheName,
+      precache,
+      lazyCacheName,
+      lazyPrefixes: LAZY_PREFIXES,
+    }),
   };
 }
 
@@ -150,6 +183,6 @@ if (
 ) {
   const result = await buildPwa();
   console.log(
-    `PWA: wrote dist/${WORKER_FILE} (${result.cacheName}), ${result.precache.length} files precached, ${result.lazy.length} cached on first use.`,
+    `PWA: wrote dist/${WORKER_FILE} (${result.cacheName}), ${result.precache.length} files precached, ${result.lazy.length} cached on first use (${result.lazyCacheName}).`,
   );
 }
