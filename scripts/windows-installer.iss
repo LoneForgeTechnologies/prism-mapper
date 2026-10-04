@@ -13,8 +13,8 @@
 ;   OutputDir          where Setup.exe is written
 ;
 ; The installer is not code-signed. It installs for the current user without
-; administrator rights; the first wizard page offers "all users" for people who
-; want that.
+; administrator rights; a dialog when Setup starts offers "all users" for people
+; who want that.
 
 #ifndef AppVersion
   #error AppVersion is not defined. Build the installer with: node scripts/build-windows-installer.mjs
@@ -68,8 +68,8 @@ UninstallDisplayIcon={app}\{#AppExe}
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
 OutputBaseFilename=Prism-Mapper-v{#AppVersion}-Windows-x64-Setup
-; Per user by default, without an administrator prompt. The first page lets the
-; person choose all users instead.
+; Per user by default, without an administrator prompt. A dialog when Setup
+; starts lets the person choose all users instead.
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
