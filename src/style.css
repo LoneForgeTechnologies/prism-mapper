@@ -630,7 +630,10 @@ h2 {
 }
 .mapping-overlay {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   width: 100%;
   height: 100%;
   overflow: visible;
@@ -736,7 +739,10 @@ h2 {
 }
 .canvas-empty {
   position: absolute;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -1162,7 +1168,10 @@ footer > span:last-child {
 }
 .modal-backdrop {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: #07110ba8;
   backdrop-filter: blur(8px);
   z-index: 30;
@@ -1232,7 +1241,10 @@ footer > span:last-child {
 }
 .projector {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
   background: #000;
   cursor: none;
 }
