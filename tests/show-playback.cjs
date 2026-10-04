@@ -1,6 +1,23 @@
 const { launchBrowser, baseUrl } = require("./browser.cjs");
 const assert = require("node:assert/strict");
 
+async function bounded(promise, label, milliseconds = 15000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${milliseconds}ms`)),
+          milliseconds,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function color(samples, expected, label) {
   assert.equal(samples.length, 2);
   for (const [index, sample] of samples.entries()) {
@@ -29,16 +46,23 @@ function color(samples, expected, label) {
     page.on("pageerror", (error) => errors.push(error.message));
     await page.goto(`${baseUrl()}/tests/show-harness.html`);
     await page.waitForFunction(() => window.showHarness);
-    const frame = (position, options) =>
-      page.evaluate(
-        ([position, options]) => window.showHarness.frame(position, options),
-        [position, options || {}],
+    const frame = (position, expected, options = {}) =>
+      bounded(
+        page.evaluate(
+          ([position, options, expected]) =>
+            window.showHarness.frame(position, options, expected),
+          [position, options, expected],
+        ),
+        `Decoded frame ${expected} at show position ${position}`,
       );
 
-    let result = await frame(0.2);
+    let result = await frame(0.2, [255, 0, 0]);
+    console.error(
+      `First local H.264 frame readiness: ${JSON.stringify(result.readiness)}`,
+    );
     color(result.samples, [255, 0, 0], "first local H.264 MP4");
     assert.ok(result.samples.every((sample) => sample.videos[0].paused));
-    result = await frame(1.4, { token: "paused-seek" });
+    result = await frame(1.4, [255, 255, 0], { token: "paused-seek" });
     color(
       result.samples,
       [255, 255, 0],
@@ -52,7 +76,7 @@ function color(samples, expected, label) {
     await page.evaluate(() => {
       window.showHarness.project.show.cues[1].sceneId = "warm";
     });
-    result = await frame(2.1);
+    result = await frame(2.1, [255, 0, 0]);
     color(
       result.samples,
       [255, 0, 0],
@@ -61,16 +85,16 @@ function color(samples, expected, label) {
     await page.evaluate(() => {
       window.showHarness.project.show.cues[1].sceneId = "blue";
     });
-    result = await frame(2.4);
+    result = await frame(2.4, [0, 0, 255]);
     color(result.samples, [0, 0, 255], "ordered second scene");
     assert.equal(result.resolved.key, "run:blue:0");
-    result = await frame(4.2);
+    result = await frame(4.2, [255, 0, 0]);
     color(result.samples, [255, 0, 0], "same MP4 repeats from its start");
     assert.equal(result.resolved.key, "run:warm-repeat:0");
-    result = await frame(5.4);
+    result = await frame(5.4, [255, 255, 0]);
     color(result.samples, [255, 255, 0], "repeated MP4 can seek independently");
 
-    result = await frame(7.8, { playing: true });
+    result = await frame(7.8, [0, 255, 0], { playing: true });
     color(
       result.samples,
       [0, 255, 0],
@@ -85,14 +109,17 @@ function color(samples, expected, label) {
           ) < 0.01,
       ),
     );
-    result = await frame(9, { playing: true });
+    result = await frame(9, [0, 255, 0], { playing: true });
     color(result.samples, [0, 255, 0], "non-loop show holds its final scene");
     assert.equal(result.resolved.playing, false);
-    result = await frame(9, { playing: true, loop: true });
+    result = await frame(9, [255, 0, 0], { playing: true, loop: true });
     color(result.samples, [255, 0, 0], "loop boundary restarts first MP4");
     assert.equal(result.resolved.key, "run:warm-first:1");
 
-    result = await frame(0, { playing: true, now: 1_700_000_005_400 });
+    result = await frame(0, [255, 255, 0], {
+      playing: true,
+      now: 1_700_000_005_400,
+    });
     color(
       result.samples,
       [255, 255, 0],
@@ -100,14 +127,17 @@ function color(samples, expected, label) {
     );
     assert.ok(Math.abs(result.resolved.position - 1.4) < 0.001);
     assert.ok(result.samples.every((sample) => !sample.videos[0].paused));
-    result = await frame(5.4, { token: "pause", playing: false });
+    result = await frame(5.4, [255, 255, 0], {
+      token: "pause",
+      playing: false,
+    });
     const held = result.samples.map((sample) => sample.videos[0].time);
     await page.waitForTimeout(250);
     const paused = await page.evaluate(() => window.showHarness.sample());
     paused.forEach((sample, index) =>
       assert.equal(sample.videos[0].time, held[index]),
     );
-    result = await frame(5.4, { token: "pause", playing: true });
+    result = await frame(5.4, [255, 255, 0], { token: "pause", playing: true });
     assert.ok(result.samples.every((sample) => !sample.videos[0].paused));
     await page.waitForTimeout(120);
     const resumed = await page.evaluate(() => window.showHarness.sample());
@@ -115,7 +145,7 @@ function color(samples, expected, label) {
       assert.ok(sample.videos[0].time > held[index]),
     );
 
-    result = await frame(9 * 1000 + 2.4, { loop: true });
+    result = await frame(9 * 1000 + 2.4, [0, 0, 255], { loop: true });
     color(
       result.samples,
       [0, 0, 255],
@@ -127,13 +157,13 @@ function color(samples, expected, label) {
         { id: "solo", sceneId: "warm", duration: 2 },
       ];
     });
-    result = await frame(1.4, { loop: true });
+    result = await frame(1.4, [255, 255, 0], { loop: true });
     color(
       result.samples,
       [255, 255, 0],
       "single-scene rotation before its boundary",
     );
-    result = await frame(2, { loop: true });
+    result = await frame(2, [255, 0, 0], { loop: true });
     color(
       result.samples,
       [255, 0, 0],

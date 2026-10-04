@@ -45,18 +45,25 @@ const entries = ["editor", "output"].map((id) => {
 });
 
 function sample() {
-  return entries.map(({ renderer, canvas, gl }) => {
-    const pixel = new Uint8Array(4);
-    gl.readPixels(32, 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
-    const assets = Array.from((renderer as any).assets.values()) as {
-      element: HTMLVideoElement;
-      timelineKey: string;
-    }[];
-    return {
-      pixel: Array.from(pixel),
-      error: gl.getError(),
-      renderError: canvas.dataset.renderError,
-      videos: assets.map(({ element, timelineKey }) => ({
+  return entries.map(sampleEntry);
+}
+
+function sampleEntry({ renderer, canvas, gl }: (typeof entries)[number]) {
+  const pixel = new Uint8Array(4);
+  gl.readPixels(32, 32, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, pixel);
+  const assets = Array.from((renderer as any).assets.values()) as {
+    element: HTMLVideoElement;
+    timelineKey: string;
+    uploaded: boolean;
+    lastTime: number;
+    ready: boolean;
+  }[];
+  return {
+    pixel: Array.from(pixel),
+    error: gl.getError(),
+    renderError: canvas.dataset.renderError,
+    videos: assets.map(
+      ({ element, timelineKey, uploaded, lastTime, ready }) => ({
         time: element.currentTime,
         duration: element.duration,
         paused: element.paused,
@@ -65,9 +72,12 @@ function sample() {
         muted: element.muted,
         loop: element.loop,
         key: timelineKey,
-      })),
-    };
-  });
+        uploaded,
+        lastTime,
+        assetReady: ready,
+      }),
+    ),
+  };
 }
 
 (window as any).showHarness = {
@@ -83,6 +93,7 @@ function sample() {
       now?: number;
       blackout?: boolean;
     } = {},
+    expected: [number, number, number],
   ) {
     project.transport = {
       active: true,
@@ -96,11 +107,23 @@ function sample() {
     const now = options.now ?? epoch;
     // Resolve each independent renderer using the same transmitted session clock.
     // Unequal procedural timestamps model an output created after the editor.
-    for (let attempt = 0; attempt < 240; attempt++) {
-      entries.forEach(({ renderer }, index) =>
-        renderer.render(project, 1000 * index, now),
-      );
-      const samples = sample();
+    const deadline = performance.now() + 12000;
+    let attempts = 0;
+    let firstReadySamples: ReturnType<typeof sample> | undefined;
+    let latest: ReturnType<typeof sample> | undefined;
+    while (performance.now() < deadline) {
+      attempts++;
+      // Read each buffer directly after its own draw; production canvases do
+      // not preserve their drawing buffers after the browser presents them.
+      const samples = entries.map((entry, index) => {
+        entry.renderer.render(project, 1000 * index, now);
+        return sampleEntry(entry);
+      });
+      latest = samples;
+      if (errors.length || samples.some((entry) => entry.error !== 0))
+        throw new Error(
+          `Renderer failed: ${JSON.stringify(samples)}; ${errors.join("; ")}`,
+        );
       if (
         samples.every(
           (entry) =>
@@ -109,21 +132,29 @@ function sample() {
             !entry.videos[0].seeking,
         )
       ) {
-        // A final render uploads the decoded frame delivered by seeked.
-        entries.forEach(({ renderer }, index) =>
-          renderer.render(project, 1000 * index, now),
-        );
-        return {
-          samples: sample(),
-          resolved: resolveShowFrame(project, now).video,
-        };
+        // Media properties can settle before seeked invalidates the texture or
+        // its decoded image reaches WebGL. Keep the production render loop and
+        // fixed session clock running until both actual pixels reach the cue.
+        if (!firstReadySamples) firstReadySamples = samples;
+        if (
+          samples.every((entry) =>
+            expected.every(
+              (channel, index) => Math.abs(channel - entry.pixel[index]) < 12,
+            ),
+          )
+        )
+          return {
+            samples,
+            resolved: resolveShowFrame(project, now).video,
+            readiness: { attempts, firstReadySamples },
+          };
       }
       await new Promise<void>((resolve) =>
         requestAnimationFrame(() => resolve()),
       );
     }
     throw new Error(
-      `Video frame did not become ready: ${JSON.stringify(sample())}; ${errors.join("; ")}`,
+      `Expected decoded frame ${expected} at fixed show position ${position} did not arrive: ${JSON.stringify({ firstReadySamples, latest, attempts })}; ${errors.join("; ")}`,
     );
   },
   async inactive() {
