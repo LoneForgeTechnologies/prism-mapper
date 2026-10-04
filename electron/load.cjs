@@ -18,8 +18,18 @@ async function loadProjectFile(
     throw new Error("Project files must be smaller than 5 MB");
   const parsed = parseProject(await fs.readFile(filename, "utf8"));
   const missing = [];
+  // The web app saves media it imported without a path: the picture lived in
+  // the browser, so there is no file to look for. That is not a reason to
+  // refuse the whole project. The entry is dropped, its layers show the grid
+  // until the file is imported again, and it is reported like a missing file.
+  const dropped = new Set();
   for (const media of parsed.media) {
-    if (!media.path || media.path.includes("\0"))
+    if (!media.path) {
+      dropped.add(media.id);
+      missing.push(media.name);
+      continue;
+    }
+    if (media.path.includes("\0"))
       throw new Error("A media entry has no valid local path");
     const candidates = mediaPathCandidates(filename, media.path, pathApi);
     if (mediaKind(candidates[0], pathApi) !== media.kind)
@@ -44,6 +54,11 @@ async function loadProjectFile(
       media.url = "";
       missing.push(media.name);
     }
+  }
+  if (dropped.size) {
+    parsed.media = parsed.media.filter((media) => !dropped.has(media.id));
+    for (const surface of parsed.surfaces)
+      if (dropped.has(surface.source)) surface.source = "grid";
   }
   return { project: parsed, missing };
 }

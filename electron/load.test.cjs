@@ -4,29 +4,27 @@ const path = require("node:path");
 const { loadProjectFile } = require("./load.cjs");
 const { serializeProject } = require("./project.cjs");
 
-function projectText(media) {
+function projectText(media, sources = ["grid"]) {
   return JSON.stringify({
     version: 2,
     name: "Loader test",
     width: 1920,
     height: 1080,
-    surfaces: [
-      {
-        id: "s1",
-        name: "Surface",
-        corners: [
-          { x: 0.1, y: 0.1 },
-          { x: 0.9, y: 0.1 },
-          { x: 0.9, y: 0.9 },
-          { x: 0.1, y: 0.9 },
-        ],
-        source: "grid",
-        visible: true,
-        locked: false,
-        opacity: 1,
-        color: "#ffffff",
-      },
-    ],
+    surfaces: sources.map((source, index) => ({
+      id: `s${index + 1}`,
+      name: `Surface ${index + 1}`,
+      corners: [
+        { x: 0.1, y: 0.1 },
+        { x: 0.9, y: 0.1 },
+        { x: 0.9, y: 0.9 },
+        { x: 0.1, y: 0.9 },
+      ],
+      source,
+      visible: true,
+      locked: false,
+      opacity: 1,
+      color: "#ffffff",
+    })),
     media: media.map((entry, index) => ({
       id: `m${index}`,
       name: entry.name ?? `clip${index}`,
@@ -72,8 +70,16 @@ function registry() {
   };
 }
 
-const win = (files, entries, project = "D:\\Shows\\Night\\show.prism.json") => {
-  const fs = fakeFs({ ...files, [project]: projectText(entries) }, path.win32);
+const win = (
+  files,
+  entries,
+  project = "D:\\Shows\\Night\\show.prism.json",
+  sources,
+) => {
+  const fs = fakeFs(
+    { ...files, [project]: projectText(entries, sources) },
+    path.win32,
+  );
   const media = registry();
   return {
     fs,
@@ -175,7 +181,6 @@ test("rejects what Open has always rejected", async () => {
     win({}, [{ path: "media/a\0.png" }]).load(),
     /media path must be text/,
   );
-  await assert.rejects(win({}, [{ path: "" }]).load(), /no valid local path/);
   const huge = "D:\\Shows\\big.prism.json";
   const fs = fakeFs({ [huge]: "x".repeat(5 * 1024 * 1024 + 1) }, path.win32);
   await assert.rejects(
@@ -194,6 +199,50 @@ test("rejects what Open has always rejected", async () => {
       registerMedia: registry().registerMedia,
     }),
     /smaller than 5 MB/,
+  );
+});
+
+test("media the web app saved has no path: it is dropped, its layers show the grid and it is reported", async () => {
+  const { load, media } = win(
+    { "D:\\Shows\\Night\\media\\a.png": "png" },
+    [
+      { name: "from the phone.png" },
+      { path: "media/a.png" },
+      { name: "empty.mp4", kind: "video", path: "" },
+    ],
+    undefined,
+    ["m0", "m1", "m2", "aurora"],
+  );
+  const { project, missing } = await load();
+  assert.deepEqual(missing, ["from the phone.png", "empty.mp4"]);
+  assert.deepEqual(
+    project.media.map((m) => [m.id, m.path]),
+    [["m1", "D:\\Shows\\Night\\media\\a.png"]],
+  );
+  assert.deepEqual(
+    project.surfaces.map((s) => s.source),
+    ["grid", "m1", "grid", "aurora"],
+  );
+  assert.deepEqual(media.registered, ["D:\\Shows\\Night\\media\\a.png"]);
+});
+
+test("a project whose media all came from the web opens with every layer on the grid", async () => {
+  const { load } = win(
+    {},
+    [{ name: "a.png" }, { name: "b.mp4", kind: "video" }],
+    undefined,
+    ["m0", "m1"],
+  );
+  const { project, missing } = await load();
+  assert.deepEqual(missing, ["a.png", "b.mp4"]);
+  assert.deepEqual(project.media, []);
+  assert.deepEqual(
+    project.surfaces.map((s) => s.source),
+    ["grid", "grid"],
+  );
+  // What is left is a project the desktop can run and save again.
+  assert.doesNotThrow(() =>
+    serializeProject(project, "D:\\Shows\\Night\\show.prism.json", path.win32),
   );
 });
 
