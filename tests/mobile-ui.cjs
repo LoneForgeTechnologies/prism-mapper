@@ -2177,6 +2177,96 @@ async function helpTextChecks(browser) {
   );
 }
 
+// Space and Enter press the control that has the focus. Space used to pause the
+// animation and Enter used to close an outline even from a focused button.
+async function keyOwnershipChecks(browser) {
+  const app = await openApp(browser, {
+    name: "keys 1280x800",
+    width: 1280,
+    height: 800,
+    touch: false,
+    dpr: 1,
+  });
+  const { page } = app;
+  const layers = async () => (await project(page)).surfaces.length;
+  const clickStage = async (fx, fy) => {
+    const box = await page.locator(".stage").boundingBox();
+    await page.mouse.click(box.x + fx * box.width, box.y + fy * box.height);
+  };
+  const drawTriangle = async () => {
+    await page.getByRole("button", { name: "Line tool", exact: true }).click();
+    for (const [fx, fy] of [
+      [0.3, 0.3],
+      [0.7, 0.3],
+      [0.5, 0.7],
+    ])
+      await clickStage(fx, fy);
+    await waitFor(
+      async () => (await page.locator(".draft-handle").count()) === 3,
+      "three points were not placed",
+    );
+  };
+  assert.equal((await project(page)).playing, true);
+
+  // Space on a focused button presses that button.
+  const blackout = page.locator(".blackout-button");
+  await blackout.focus();
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).blackout === true,
+    "Space did not press the focused Blackout button",
+  );
+  assert.equal((await project(page)).playing, true, "and did not pause");
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).blackout === false,
+    "Space did not press the Blackout button again",
+  );
+
+  // Space on a summary opens and closes its section.
+  const summary = page.locator(".content-transform summary");
+  const details = page.locator(".content-transform");
+  await summary.focus();
+  assert.equal(await details.evaluate((node) => node.open), false);
+  await page.keyboard.press("Space");
+  await waitFor(
+    () => details.evaluate((node) => node.open),
+    "Space did not open the focused summary",
+  );
+  assert.equal((await project(page)).playing, true, "and did not pause");
+
+  // Space anywhere else still plays and pauses.
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).playing === false,
+    "Space on the page no longer pauses",
+  );
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).playing === true,
+    "Space on the page no longer plays",
+  );
+
+  // Enter on a focused button presses it and does not close the outline.
+  await drawTriangle();
+  await page.getByRole("button", { name: "Select tool", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await page.locator(".draft-handle").first().waitFor({ state: "detached" });
+  assert.equal(await layers(), 1, "Enter on Select did not make a layer");
+
+  // Enter on the page still closes an outline.
+  await drawTriangle();
+  await page.evaluate(() => document.activeElement?.blur());
+  await page.keyboard.press("Enter");
+  await waitFor(async () => (await layers()) === 2, "Enter did not close");
+  assert.deepEqual(app.errors, []);
+  await app.context.close();
+  pass(
+    "keys: Space and Enter go to a focused button or summary; on the page they still play and close an outline",
+  );
+}
+
 async function resizeChecks(browser) {
   const app = await openApp(browser, {
     name: "resize",
@@ -2306,6 +2396,7 @@ const GROUPS = {
   tabs: secondTabChecks,
   oldWebView: oldWebViewChecks,
   help: helpTextChecks,
+  keys: keyOwnershipChecks,
   resize: resizeChecks,
 };
 

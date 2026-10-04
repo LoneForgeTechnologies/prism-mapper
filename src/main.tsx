@@ -88,6 +88,7 @@ import {
   shortcutLabel,
 } from "./platform";
 import { helpGuide } from "./help-text";
+import { ownsActivationKeys } from "./keys";
 import { usePersistence } from "./usePersistence";
 import { DeviceSection } from "./DeviceSection";
 import {
@@ -922,6 +923,8 @@ function App() {
         return;
       }
       if ((e.target as HTMLElement).matches("input,textarea,select")) return;
+      // A focused button, link or summary keeps Space and Enter for itself.
+      const owned = ownsActivationKeys(e.target as HTMLElement);
       const mod = e.metaKey || e.ctrlKey;
       if (mod && e.key.toLowerCase() === "z") {
         e.preventDefault();
@@ -941,7 +944,7 @@ function App() {
         e.preventDefault();
         blackout();
       }
-      if (e.code === "Space") {
+      if (e.code === "Space" && !owned) {
         e.preventDefault();
         setProject((p) => ({ ...p, playing: !p.playing }));
       }
@@ -951,7 +954,7 @@ function App() {
           cancelDrawing();
           return;
         }
-        if (e.key === "Enter") {
+        if (e.key === "Enter" && !owned) {
           e.preventDefault();
           finishDrawing();
           return;

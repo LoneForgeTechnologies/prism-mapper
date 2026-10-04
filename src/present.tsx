@@ -9,6 +9,7 @@ import {
   fitAspect,
   type NudgeStep,
 } from "./compact-logic";
+import { ownsActivationKeys } from "./keys";
 import { hideStatusBar, onBackButton } from "./native-glue";
 
 export interface PresentGuide {
@@ -247,7 +248,7 @@ export function PresentMode(props: PresentProps) {
         e.preventDefault();
         latest.current.onBlackout();
         poke();
-      } else if (e.code === "Space" && !target?.closest?.("button")) {
+      } else if (e.code === "Space" && !ownsActivationKeys(target)) {
         e.preventDefault();
         latest.current.onTogglePlay();
         poke();
