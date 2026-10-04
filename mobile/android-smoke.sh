@@ -10,8 +10,9 @@
 # that the app comes back. The sideload build is the APK people install, so it
 # only gets the outside checks: it starts, stays alive, shows something,
 # survives a rotation and survives Google Play services crashing and being
-# stopped. Both get a screenshot and a filtered system log. Every check that
-# fails is reported, then the script exits with 1.
+# stopped, also at the moment it is starting (mobile/watch-providers.sh). Both
+# get a screenshot and a filtered system log. Every check that fails is
+# reported, then the script exits with 1.
 #
 # Every adb command has a time limit, so a stuck emulator fails a check
 # instead of hanging the job. Results and, for failures, an excerpt of the
@@ -55,7 +56,7 @@ fail() {
   failures=$((failures + 1))
 }
 note() { echo "[android-smoke] $*"; }
-notice() { echo "::notice title=$TITLE::$(echo "$*" | tr '\n' ' ' | head -c 1500)"; }
+notice() { echo "::notice title=$TITLE::$(echo "$*" | tr '\n' ' ' | head -c 2500)"; }
 
 # adb with a time limit (seconds) so that nothing can hang the job.
 adbt() {
@@ -148,7 +149,8 @@ device_report() {
     echo "Screen: $(adbt 20 shell wm size | tr -d '\r' | tail -1), $(adbt 20 shell wm density | tr -d '\r' | tail -1)"
     adbt 30 shell dumpsys webviewupdate | tr -d '\r' | grep -E "Current WebView package" || true
   } | tee "$OUT/device.txt"
-  notice "Device: $(cat "$OUT/device.txt")"
+  # One annotation for both: GitHub shows no more than ten of each kind per step.
+  notice "Device: $(cat "$OUT/device.txt") Host: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }')"
 }
 
 install_apk() {
@@ -173,9 +175,85 @@ install_apk() {
   note "$label: installed version $EXPECTED_VERSION (code $EXPECTED_CODE)."
 }
 
-# Starts the app from a cold start and waits until it should have drawn.
+# Turns the output of mobile/watch-providers.sh into one short line: how many
+# questions were asked, and every provider the app was connected to, with its
+# highest number of stable connections and when it was first seen and when it
+# was gone. Connections to Google Play services are marked, because Android
+# stops an app that holds a stable one when the process of the provider dies.
+summarize_watch() {
+  awk '
+    /^t=[0-9]+ CRASHED / { crashed = substr($1, 3) + 0; next }
+    /^t=[0-9]+ / {
+      t = substr($1, 3) + 0
+      line = $0
+      sub(/^t=[0-9]+ ?/, "", line)
+      delete now
+      n = split(line, entries, ";")
+      for (i = 1; i <= n; i++) {
+        if (entries[i] == "") continue
+        split(entries[i], f, " ")
+        key = f[1]
+        stable = f[2]
+        sub(/^s/, "", stable)
+        sub(/\/.*/, "", stable)
+        now[key] = 1
+        if (!(key in first)) { first[key] = t; order[++m] = key }
+        if (stable + 0 > top[key]) top[key] = stable + 0
+        gone[key] = ""
+      }
+      for (i = 1; i <= m; i++) { k = order[i]; if (!(k in now) && gone[k] == "") gone[k] = t }
+    }
+    /^samples=/ { samples = substr($0, 9) }
+    /^probe:/ { probe = $0 }
+    END {
+      printf "%s questions. ", (samples == "" ? "?" : samples)
+      if (m == 0) printf "No connection was recognised. %s ", substr(probe, 1, 600)
+      for (i = 1; i <= m; i++) {
+        k = order[i]
+        printf "%s%s with %d stable, from %ds%s; ", (k ~ /^com[.]google[.]android[.]gms\// ? "PLAY SERVICES " : ""), k, top[k], first[k], (gone[k] != "" ? " until " gone[k] "s" : " to the end")
+      }
+      if (crashed != "") printf "Play services were crashed at %ds while the app held a stable connection to them.", crashed
+    }'
+}
+
+# Watches the content providers the app connects to while it starts, for the
+# given number of seconds. mobile/watch-providers.sh runs on the device, so that
+# it can ask as often as the system answers: a connection to a provider of
+# Google Play services exists only for the moments an emoji font is fetched,
+# and that is when the app is exposed. The summary is left in $WATCH_SUMMARY.
+# With "crash", the persistent process of Google Play services is crashed the
+# first moment the app holds a stable connection to one of its providers, and
+# the app must live on.
+#   watch_providers <label> <seconds> [crash]
+WATCH_SUMMARY=""
+watch_providers() {
+  local label="$1" seconds="$2" crash="${3:-}" before output started left
+  WATCH_SUMMARY=""
+  before="$(app_pid)"
+  started=$SECONDS
+  if ! adbt 60 push "$HERE/watch-providers.sh" /data/local/tmp/watch-providers.sh > /dev/null 2>&1; then
+    note "$label: the provider watcher could not be copied to the device, so the app is only given time to start."
+    sleep "$seconds"
+    return
+  fi
+  output="$(adbt $((seconds + 90)) shell sh /data/local/tmp/watch-providers.sh "$PACKAGE" "$seconds" $crash 2> /dev/null | tr -d '\r')"
+  echo "$output" > "$OUT/providers-start-$label.txt"
+  WATCH_SUMMARY="$(summarize_watch <<< "$output")"
+  note "$label: content providers while starting: $WATCH_SUMMARY"
+  left=$((seconds - (SECONDS - started)))
+  if [ "$left" -gt 0 ]; then sleep "$left"; fi
+  if grep -q "^t=[0-9]* CRASHED " <<< "$output" && [ -n "$before" ]; then
+    play_services_aftermath "$label" "$before" "the persistent process of Google Play services crashed while the app held a stable connection to one of its providers" || true
+  fi
+}
+
+# Starts the app from a cold start and waits until it should have drawn. During
+# the wait it watches which content providers the app connects to (see
+# watch_providers). With "crash" as the second argument, Google Play services
+# are crashed at the worst moment for the app.
+#   launch <label> [crash]
 launch() {
-  local label="$1"
+  local label="$1" crash="${2:-}"
   adbt 30 shell am broadcast -a android.intent.action.CLOSE_SYSTEM_DIALOGS > /dev/null 2>&1 || true
   adbt 30 logcat -c
   adbt 180 shell am start -W -n "$PACKAGE/.MainActivity" 2>&1 | tr -d '\r' | tee "$OUT/am-start-$label.txt"
@@ -183,8 +261,8 @@ launch() {
     fail "$label: the activity did not start: $(tr '\n' ' ' < "$OUT/am-start-$label.txt" | head -c 300)"
   fi
   note "$label: waiting $SETTLE_SECONDS seconds for the first frames."
-  sleep "$SETTLE_SECONDS"
-  report_load "after starting $label"
+  watch_providers "$label" "$SETTLE_SECONDS" "$crash"
+  report_load "after starting $label" "$WATCH_SUMMARY"
 }
 
 # Takes a screenshot into <name>.png, checks that it is not blank and leaves
@@ -321,10 +399,13 @@ play_services_aftermath() {
 # Google Play services restarts now and then: an update, a crash, a stop by the
 # system when memory is short, and often on the emulator images. Android stops
 # every app that is connected to one of its content providers when its process
-# dies, and a stopped app is a dark projector. So crash the persistent process
-# of Play services, the one a crash takes down with all of its providers, then
-# stop the rest of it, and check after each that the app lives on in the same
-# process. (am force-stop alone would not do, it spares persistent processes.)
+# dies, and a stopped app is a dark projector. launch() has already crashed
+# Play services at the moment the app was starting, which is the only time the
+# app should be connected to them. This check comes later, when the app has
+# settled: crash the persistent process of Play services, the one a crash
+# takes down with all of its providers, then stop the rest of it, and check
+# after each that the app lives on in the same process. (am force-stop alone
+# would not do, it spares persistent processes.)
 #   check_play_services_restart <label> <app process>
 check_play_services_restart() {
   local label="$1" before="$2" persistent restarted
@@ -398,7 +479,7 @@ check_sideload() {
   install_apk "$SIDELOAD_APK" sideload || return
   if is_debuggable; then fail "sideload: the shared APK must not be debuggable."; fi
   stage "sideload: launch"
-  launch sideload
+  launch sideload crash
   before="$(app_pid)"
   if [ -z "$before" ]; then
     fail "sideload: no process after launch."
@@ -456,7 +537,7 @@ report_load() {
   local load busiest
   load="$(adbt 10 shell cat /proc/loadavg 2> /dev/null | tr -d '\r' | awk '{ print $1 ", " $2 ", " $3 }')"
   busiest="$(adbt 30 shell top -b -n 2 -d 2 -m 6 2> /dev/null | tr -d '\r' | tail -n 7 | cut -c1-120 | tr '\n' '|')"
-  notice "Load $1: ${load:-unknown}. Busiest: ${busiest:-unknown}"
+  notice "Load $1: ${load:-unknown}. Busiest: ${busiest:-unknown}${2:+ Content providers while starting: $2}"
 }
 
 # --- Device ---------------------------------------------------------------
@@ -471,7 +552,6 @@ watchdog &
 WATCHDOG_PID=$!
 trap 'kill $WATCHDOG_PID $LOGCAT_PID 2> /dev/null' EXIT
 device_report
-notice "Host: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }')"
 adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
 report_load "at the start"
 
