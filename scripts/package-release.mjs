@@ -13,6 +13,7 @@ import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { releaseName } from "./release-name.mjs";
 import { createZip, verifyZip } from "./zip.mjs";
 import {
   assertStamped,
@@ -20,6 +21,8 @@ import {
   iconSizes,
   stampExecutableFile,
 } from "./windows-exe.mjs";
+
+export { releaseName };
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 export const applicationFiles = [
@@ -58,19 +61,6 @@ export const macDocumentTypes = Object.freeze([
     LSItemContentTypes: ["public.json"],
   },
 ]);
-
-export function releaseName(version, platform, arch) {
-  if (!/^\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(version))
-    throw new Error("Invalid release version");
-  if (!(
-    (platform === "darwin" && ["arm64", "x64"].includes(arch)) ||
-    (platform === "win32" && arch === "x64")
-  ))
-    throw new Error(
-      "Release packaging supports macOS arm64/x64 and Windows x64",
-    );
-  return `Prism-Mapper-v${version}-${platform === "darwin" ? "macOS" : "Windows"}-${arch}`;
-}
 
 // Reject sensitive development folders and any archive path that could escape
 // the containing folder. These checks also run against the finished ZIP.
