@@ -17,12 +17,24 @@ const path = require("node:path");
       active: 0,
       stopped: 0,
       deny: false,
-      delay: 0,
+      gate: null,
       silence: false,
       empty: false,
       frequency: 120,
       tracks: [],
     });
+    // hold() makes the next capture requests wait until release(). A fixed
+    // delay is a race on a slow machine: the pending state can be over before
+    // the test has had time to click Cancel.
+    state.hold = () => {
+      state.gate = new Promise((resolve) => {
+        state.open = resolve;
+      });
+    };
+    state.release = () => {
+      state.open?.();
+      state.gate = null;
+    };
     const devices = navigator.mediaDevices;
     Object.defineProperty(devices, "enumerateDevices", {
       value: async () => [
@@ -44,8 +56,7 @@ const path = require("node:path");
             "Permission denied by test",
             "NotAllowedError",
           );
-        if (state.delay)
-          await new Promise((resolve) => setTimeout(resolve, state.delay));
+        if (state.gate) await state.gate;
         if (state.empty) return new MediaStream();
         const audio = new AudioContext();
         const oscillator = audio.createOscillator();
@@ -251,16 +262,12 @@ const path = require("node:path");
     await waitStopped();
 
     // Cancelling a pending permission/capture result also stops its eventual stream.
-    await page.evaluate(() => {
-      window.__audioTest.delay = 400;
-    });
+    await page.evaluate(() => window.__audioTest.hold());
     await button("Start listening").click();
     await button("Cancel listening").click();
+    await page.evaluate(() => window.__audioTest.release());
     await page.waitForFunction(() => window.__audioTest.stopped >= 5);
     await waitStopped();
-    await page.evaluate(() => {
-      window.__audioTest.delay = 0;
-    });
     await button("Start listening").waitFor();
 
     await page.evaluate(() => {
