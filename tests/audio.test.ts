@@ -197,3 +197,150 @@ test("controller never starts on construction or subscription and Stop immediate
   unsubscribe();
   controller.dispose();
 });
+
+// A call, Siri or a locked screen stops the audio engine of a phone. The
+// controller must say so, keep the lights from freezing on the last sound, and
+// start again at the next tap. These fakes stand in for the browser.
+test("an interrupted audio engine pauses listening, silences the lights and the next tap resumes it", async () => {
+  class FakeContext {
+    state = "suspended";
+    sampleRate = sampleRate;
+    onstatechange: (() => void) | null = null;
+    closed = false;
+    analyser = {
+      fftSize,
+      frequencyBinCount: fftSize / 2,
+      smoothingTimeConstant: 0,
+      minDecibels: -100,
+      maxDecibels: 0,
+      getFloatTimeDomainData: (target: Float32Array) =>
+        target.set(tone(120, 0.38)),
+      getFloatFrequencyData: (target: Float32Array) =>
+        target.set(spectrum(120, 0.38)),
+      connect() {},
+      disconnect() {},
+    };
+    createAnalyser() {
+      return this.analyser;
+    }
+    createMediaStreamSource() {
+      return { connect() {}, disconnect() {} };
+    }
+    async resume() {
+      this.change("running");
+    }
+    async close() {
+      this.closed = true;
+    }
+    /** What the device does to the engine. */
+    change(state: string) {
+      this.state = state;
+      this.onstatechange?.();
+    }
+  }
+  const contexts: FakeContext[] = [];
+  const track = { readyState: "live", onended: null, stop() {} };
+  const stream = {
+    getTracks: () => [track],
+    getAudioTracks: () => [track],
+    getVideoTracks: () => [],
+  };
+  const listeners = new Map<string, Set<() => void>>();
+  const fakes: Record<string, unknown> = {
+    navigator: {
+      mediaDevices: {
+        getUserMedia: async () => stream,
+        enumerateDevices: async () => [],
+        addEventListener() {},
+        removeEventListener() {},
+      },
+    },
+    AudioContext: class extends FakeContext {
+      constructor() {
+        super();
+        contexts.push(this);
+      }
+    },
+    MediaStream: class {},
+    document: {
+      addEventListener: (type: string, listener: () => void) => {
+        if (!listeners.has(type)) listeners.set(type, new Set());
+        listeners.get(type)!.add(listener);
+      },
+      removeEventListener: (type: string, listener: () => void) =>
+        listeners.get(type)?.delete(listener),
+    },
+  };
+  const saved = new Map<string, PropertyDescriptor | undefined>();
+  for (const [key, value] of Object.entries(fakes)) {
+    saved.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
+    Object.defineProperty(globalThis, key, {
+      value,
+      configurable: true,
+      writable: true,
+    });
+  }
+  const waiting = () =>
+    ["click", "touchend", "keydown"].reduce(
+      (sum, type) => sum + (listeners.get(type)?.size ?? 0),
+      0,
+    );
+  const tap = () => {
+    for (const listener of [...(listeners.get("click") ?? [])]) listener();
+  };
+  const later = (ms = 120) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  const controller = new AudioController();
+  try {
+    await controller.start({ kind: "input" });
+    const context = contexts[0];
+    assert.equal(controller.getSnapshot().status, "listening");
+    assert.equal(controller.getSnapshot().paused, false);
+    assert.equal(readAudioFrame().active, true, "the tone is heard");
+    assert.equal(waiting(), 0, "nothing waits for a tap while listening");
+
+    // The device takes the engine away.
+    context.change("interrupted");
+    assert.equal(controller.getSnapshot().paused, true);
+    assert.equal(controller.getSnapshot().status, "listening");
+    assert.deepEqual(readAudioFrame(), SILENT_AUDIO, "the lights go quiet");
+    assert.equal(waiting(), 3, "a tap, a touch or a key will resume it");
+    await later();
+    assert.deepEqual(readAudioFrame(), SILENT_AUDIO, "and stay quiet");
+
+    // The next tap starts it again, and nothing waits any more.
+    tap();
+    await later();
+    assert.equal(context.state, "running");
+    assert.equal(controller.getSnapshot().paused, false);
+    assert.equal(readAudioFrame().active, true, "the tone is heard again");
+    assert.equal(waiting(), 0);
+
+    // "suspended" is the same thing on other browsers, and can repeat.
+    context.change("suspended");
+    assert.equal(controller.getSnapshot().paused, true);
+    context.change("suspended");
+    assert.equal(waiting(), 3, "a repeated state adds no second listener");
+    context.change("running");
+    assert.equal(controller.getSnapshot().paused, false);
+    assert.equal(waiting(), 0);
+
+    // Stopping while paused leaves nothing behind.
+    context.change("interrupted");
+    assert.equal(controller.getSnapshot().paused, true);
+    controller.stop();
+    assert.equal(controller.getSnapshot().paused, false);
+    assert.equal(controller.getSnapshot().status, "idle");
+    assert.equal(waiting(), 0);
+    assert.equal(context.closed, true);
+    assert.equal(context.onstatechange, null);
+    context.change("running"); // a late event from the closed engine
+    assert.equal(controller.getSnapshot().paused, false);
+  } finally {
+    controller.dispose();
+    for (const [key, descriptor] of saved) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+});

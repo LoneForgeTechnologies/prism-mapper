@@ -39,6 +39,8 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
   const canReact = !!surface && surface.kind !== "mask";
   const busy = snapshot.status === "starting";
   const listening = snapshot.status === "listening";
+  // The device stopped the audio engine (a call, Siri, a locked screen).
+  const paused = listening && snapshot.paused;
   const capturing = busy || listening;
   const error = unsupported || deviceError || snapshot.error;
 
@@ -71,11 +73,13 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
   const options = snapshot.options;
   const stateLabel = busy
     ? "STARTING"
-    : listening
-      ? "LIVE"
-      : error
-        ? "CHECK SOURCE"
-        : "OFF";
+    : paused
+      ? "PAUSED"
+      : listening
+        ? "LIVE"
+        : error
+          ? "CHECK SOURCE"
+          : "OFF";
 
   return (
     <details id="audio-react-panel" className="audio-panel" open>
@@ -83,7 +87,7 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
         <span>
           <AudioLines size={15} /> Audio react
         </span>
-        <span className={`audio-state ${listening ? "active" : ""}`}>
+        <span className={`audio-state ${listening && !paused ? "active" : ""}`}>
           {stateLabel}
         </span>
       </summary>
@@ -179,6 +183,12 @@ export function AudioPanel({ surface, onChange }: AudioPanelProps) {
             ? "Responds to sound playing through your current system output."
             : "Choose an input, then start listening. Audio is never recorded."}
         </p>
+        {paused && (
+          <p className="audio-help" role="status">
+            Audio paused by your device, for example by a call or a locked
+            screen. Tap anywhere to start listening again.
+          </p>
+        )}
         {error && (
           <p className="audio-error" role="alert">
             {error}

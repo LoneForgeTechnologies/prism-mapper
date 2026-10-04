@@ -22,7 +22,17 @@ const path = require("node:path");
       empty: false,
       frequency: 120,
       tracks: [],
+      contexts: [],
     });
+    // Remember every audio engine the page creates, so the test can take one
+    // away the way a phone call does.
+    const RealAudioContext = window.AudioContext;
+    window.AudioContext = class extends RealAudioContext {
+      constructor(...args) {
+        super(...args);
+        state.contexts.push(this);
+      }
+    };
     // hold() makes the next capture requests wait until release(). A fixed
     // delay is a race on a slow machine: the pending state can be over before
     // the test has had time to click Cancel.
@@ -200,6 +210,41 @@ const path = require("node:path");
     );
     await button("Refresh audio inputs").click();
     assert.equal(await page.evaluate(() => window.__audioTest.calls.length), 1);
+
+    // A call, Siri or a locked screen takes the audio engine away. The panel
+    // says so, the meters fall silent, and the next tap starts it again.
+    const level = () =>
+      page.evaluate(() =>
+        Number(
+          document
+            .querySelector('[aria-label="Level audio level"]')
+            .getAttribute("aria-valuenow"),
+        ),
+      );
+    const pausedNote = page
+      .getByRole("status")
+      .filter({ hasText: "Audio paused by your device" });
+    await page.evaluate(() => window.__audioTest.contexts.at(-1).suspend());
+    await pausedNote.waitFor();
+    assert.equal(await page.locator(".audio-state").innerText(), "PAUSED");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[aria-label="Level audio level"]')
+          .getAttribute("aria-valuenow") === "0",
+    );
+    await button("Stop listening").waitFor();
+    await page.mouse.click(2, 2);
+    await pausedNote.waitFor({ state: "detached" });
+    assert.equal(await page.locator(".audio-state").innerText(), "LIVE");
+    await waitSignal();
+    assert.ok((await level()) > 20, "the meters move again");
+    assert.equal(
+      await page.evaluate(() => window.__audioTest.calls.length),
+      1,
+      "resuming does not ask for the microphone again",
+    );
+
     await button("Stop listening").click();
     await waitStopped();
     assert.equal(
