@@ -7,9 +7,9 @@
 # It checks the application id, the version (versionName from package.json and
 # the versionCode derived from it), the SDK levels, that the manifest turns off
 # backups and cleartext traffic, that the only permissions are the microphone
-# ones, that no start-up step connects to Google Play services, and whether
-# the app is debuggable. With "signed" it also verifies the
-# signature. Needs ANDROID_HOME (or ANDROID_SDK_ROOT) to point at the SDK.
+# ones, that the app does not start EmojiCompat, and whether the app is
+# debuggable. With "signed" it also verifies the signature. Needs ANDROID_HOME
+# (or ANDROID_SDK_ROOT) to point at the SDK.
 
 set -eu
 
@@ -57,11 +57,13 @@ expect "application label is Prism Mapper" has "application-label:'Prism Mapper'
 expect "backups are turned off" attr_false allowBackup
 expect "cleartext traffic is turned off" attr_false usesCleartextTraffic
 expect "the microphone is optional" has "uses-feature-not-required: name='android.hardware.microphone'" "$badging"
-# EmojiCompat (from AppCompat) would connect to a content provider of Google
-# Play services at start-up, and Android stops an app whose provider connection
-# dies with the provider's process, for example when Play services updates.
+# AppCompat would start EmojiCompat with the app, which asks a content provider
+# of Google Play services for an emoji font. Android stops an app whose
+# connection to a provider dies with the provider's process (for example when
+# Play services updates), so the app does not add that request to the ones the
+# web view makes by itself.
 no_emoji_start() { ! has "EmojiCompatInitializer" "$manifest"; }
-expect "EmojiCompat does not start with the app, so it holds no connection to Google Play services" no_emoji_start
+expect "the app does not start EmojiCompat (no emoji font request of its own to Google Play services)" no_emoji_start
 
 # The declared permissions must be exactly the microphone ones. The last entry
 # is a signature permission that androidx.core adds for itself.

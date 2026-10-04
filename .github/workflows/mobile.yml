@@ -346,9 +346,6 @@ jobs:
         run: bash mobile/start-emulator.sh "$API" "$TARGET" "$GPU" android-smoke
       - name: Install, open and inspect the apps
         timeout-minutes: 20
-        env:
-          # One-off diagnosis on one leg: which code talks to Google Play services.
-          DIAGNOSE_CLIENT: ${{ matrix.slug == 'api34' && '1' || '' }}
         run: bash mobile/android-smoke.sh smoke/debug.apk smoke/sideload.apk android-smoke
       - uses: actions/upload-artifact@v7
         if: always()

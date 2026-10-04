@@ -49,6 +49,7 @@ The source-code ZIP that GitHub offers next to the assets is for developers, it 
 2. Google Play Protect may say the app comes from an unknown developer. That is true, it does not come from Google Play.
 3. The app has no internet permission at all. It asks for the microphone only when you tap **Start listening**.
 4. Every build carries its own temporary signature, so a newer APK cannot be installed over an older one. Uninstall the old version first, after saving your projects as files, because uninstalling deletes the app's data.
+5. If the app closes by itself right after it starts, which can happen when Google Play services restart at that moment, open it again.
 
 </details>
 
@@ -104,7 +105,7 @@ Honestly: partly. This is what has been checked, and by what. [VALIDATION.md](VA
 | **Everything** | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout and the offline web app. All on every push. | Real graphics cards, long sessions, every picture and video format. |
 | **Windows** | The packaged app and the Setup installer on GitHub's Windows machines, on every release: install, start, open a project, update over a running copy, uninstall, and the portable ZIP. | A real Windows PC with a real projector. SmartScreen. |
 | **Mac** | The packaged app on GitHub's Apple silicon and Intel Macs, on every release: start, signature, and the app unpacked from the ZIP. Version 0.4.1 was also checked on an Apple silicon Mac before its release. | Gatekeeper, notarization, a Mac of your own. |
-| **Android** | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed. | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
+| **Android** | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed and Google Play services being crashed. | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
 | **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The web app was tested in headless Chrome. | A real iPhone or iPad, Safari itself, the App Store. |
 
 The last recorded test with a physical projector was version 0.2 on a Mac, and capturing the computer's own audio output has never been verified on real hardware. The phone and tablet apps were never run on a physical device.

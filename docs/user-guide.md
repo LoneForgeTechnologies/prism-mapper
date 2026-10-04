@@ -147,6 +147,8 @@ The desktop apps show the output on a second display through a separate window. 
 
 The web app and the phone apps keep their data in browser storage, which has a limit that depends on the device. A very large video may not fit; the app says so instead of failing silently.
 
+On Android phones with Google Play services, Android's web view asks Play services for fonts when the app starts. If Play services restart in those first seconds, for example right after the phone has booted, Android can close Prism Mapper once. Open it again: nothing is lost, because the app was only starting. [VALIDATION.md](../VALIDATION.md) has the details.
+
 `npm run dev` starts a browser preview at http://127.0.0.1:5178. Native display selection and native file dialogs need a desktop app.
 
 Physical system-output audio capture has not been verified on any platform. No version has been tested with a physical projector on Windows, Android, iPhone or iPad.

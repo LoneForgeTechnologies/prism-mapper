@@ -38,6 +38,8 @@ Prism Mapper leaves the Mac. Windows, Android, iPhone and iPad join macOS, and t
 ### Building and releasing
 
 - One release workflow builds and tests the Windows, Intel Mac and Apple silicon apps, builds the Android and iOS apps, starts the Android app on four emulator setups and the iOS app on an iPhone and an iPad simulator, checks every download against its SHA-256 checksum and publishes the release. A dry-run mode does all of it except publishing. Files that nobody expected are refused. An emulator check that fails is repeated once, and a run that needed the second attempt says so.
+- The Android emulator test also crashes Google Play services, after the app has settled (the app must survive) and at the moment the app starts. The second one found that Android's web view can get the app closed once when Play services restart in the app's first seconds. That is reported as a known limitation and does not fail a build (see VALIDATION.md).
+- The Android app no longer starts AppCompat's emoji font request to Google Play services, and a check of every APK keeps it that way.
 - A separate workflow publishes the web app to GitHub Pages once Pages is switched on.
 - Release notes list the right download for every device, explain the first-launch warnings and state the testing limits.
 
@@ -46,6 +48,7 @@ Prism Mapper leaves the Mac. Windows, Android, iPhone and iPad join macOS, and t
 - No physical projector test of any version after 0.2, and none at all on Windows, Android, iPhone or iPad.
 - Real phones and tablets have not been used. The microphone, a cable or cast to a projector and real-world performance are untested on them.
 - Physical system-output audio capture has not been verified on any platform.
+- On Android phones with Google Play services, the app can be closed once by Android if Play services restart in its first seconds after it starts, for example right after a phone has booted. Opening it again works. It was reproduced on an emulator and it comes from Android's web view, not from the app.
 - Windows, Mac and Android builds are not code-signed, and the Mac app is not notarized. Each Android build carries a new temporary signature, so an update needs the old version uninstalled first.
 
 ## 0.4.1 (2026-09-16)
