@@ -45,6 +45,29 @@
 
         </activity>
 
+        <!--
+            AppCompat brings in EmojiCompat, which starts with the app and
+            connects to the font provider of Google Play services to fetch an
+            emoji font. Android stops an app that is connected to a provider
+            whose process dies, and Play services restarts now and then (an
+            update, a crash), so the app could go down with it in its first
+            seconds. The page is drawn by the web view with the fonts of the
+            system and the app has no native text that needs the emoji font,
+            so the start-up step is removed. mobile/verify-apk.sh checks that
+            it stays removed, and mobile/android-smoke.sh crashes Play
+            services on an emulator, also while the app is starting, and checks
+            that the app lives on.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="androidx.emoji2.text.EmojiCompatInitializer"
+                tools:node="remove" />
+        </provider>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.fileprovider"
