@@ -446,6 +446,93 @@ check_play_services_restart() {
   screenshot "$label-after-play-services"
 }
 
+# --- Diagnosis: what talks to the font provider of Google Play services? ------
+# Only with DIAGNOSE_CLIENT=1 (the workflow sets it for one emulator leg). It
+# changes nothing that is tested. It adds warnings (not notices, so that they do
+# not use up the ten notices a step can show) that say which code of the app, or
+# of its web view, connected to a provider of Google Play services while the
+# app was starting.
+DIAGNOSE_CLIENT="${DIAGNOSE_CLIENT:-}"
+
+# Android can record the stack of every binder call that every process makes.
+trace_ipc_start() {
+  [ -n "$DIAGNOSE_CLIENT" ] || return 0
+  note "binder tracing: $(adbt 30 shell am trace-ipc start 2>&1 | tr -d '\r' | tr '\n' ' ' | head -c 200)"
+}
+
+# The recorded calls whose stack matches a pattern, the most frequent first,
+# each as "<count> x <frame> < <frame> ...", from the call upwards.
+#   ipc_calls <pattern> <how many>
+ipc_calls() {
+  awk -v pattern="$1" '
+    BEGIN { RS = "" }
+    $0 ~ pattern {
+      n = split($0, l, "\n")
+      count = l[1]
+      sub(/^Count: */, "", count)
+      frames = ""
+      shown = 0
+      for (i = 3; i <= n && shown < 18; i++) {
+        f = l[i]
+        sub(/^[ \t]*at /, "", f)
+        sub(/\(.*$/, "", f)
+        if (f == "" || f ~ /^android[.]os[.]Binder/ || f ~ /Stub[$]Proxy/) continue
+        frames = frames " < " f
+        shown++
+      }
+      print count + 0 " x" frames
+    }' "$OUT/ipc-trace.txt" | sort -rn | head -n "$2" | cut -c1-560
+}
+
+# Stops the recording and reports the calls that have to do with fonts, the
+# calls that acquire a content provider from code of the app or its web view,
+# and the calls that open a file from a provider (a stable connection to the
+# provider lasts until that file is closed).
+trace_ipc_report() {
+  [ -n "$DIAGNOSE_CLIENT" ] || return 0
+  local answer fonts acquired opened total
+  answer="$(adbt 120 shell am trace-ipc stop --dump-file /data/local/tmp/ipc-trace.txt 2>&1 | tr -d '\r' | tr '\n' ' ' | head -c 300)"
+  sleep 2
+  if ! adbt 120 pull /data/local/tmp/ipc-trace.txt "$OUT/ipc-trace.txt" > /dev/null 2>&1 || [ ! -s "$OUT/ipc-trace.txt" ]; then
+    echo "::warning title=$TITLE binder trace::There is no trace. am said: $answer"
+    return
+  fi
+  total="$(grep -c '^Count: ' "$OUT/ipc-trace.txt")"
+  fonts="$(ipc_calls '[Ff]ont|[Ee]moji' 10)"
+  acquired="$(ipc_calls 'getContentProvider' 400 | grep -E 'chromium|capacitor|getcapacitor|prismmapper|webkit|androidx|ContentResolver' | head -n 14)"
+  opened="$(ipc_calls 'openFile|openAssetFile|openTypedAssetFile' 10)"
+  echo "::warning title=$TITLE binder trace (fonts)::$total distinct stacks were recorded. am said: $answer%0AStacks that mention fonts or emoji:%0A$(escape <<< "${fonts:-none}")"
+  echo "::warning title=$TITLE binder trace (providers acquired)::$(escape <<< "${acquired:-none}")"
+  echo "::warning title=$TITLE binder trace (files opened)::$(escape <<< "${opened:-none}")"
+}
+
+# Does the code of the web view know about the font provider of Google Play
+# services? Looks for its name in the web view that the emulator uses.
+webview_report() {
+  [ -n "$DIAGNOSE_CLIENT" ] || return 0
+  local info package path n=0 hits=""
+  info="$(adbt 30 shell dumpsys webviewupdate 2> /dev/null | tr -d '\r' | grep -i "Current WebView package" | head -n 1 | cut -c1-200)"
+  package="$(sed -n 's/.*(\([A-Za-z0-9_.]*\), .*/\1/p' <<< "$info")"
+  : "${package:=com.google.android.webview}"
+  for path in $(adbt 30 shell pm path "$package" 2> /dev/null | tr -d '\r' | sed -n 's/^package://p'); do
+    n=$((n + 1))
+    adbt 300 pull "$path" "$OUT/webview-$n.apk" > /dev/null 2>&1 || continue
+    hits="$hits $(basename "$path") ($(du -h "$OUT/webview-$n.apk" | cut -f1)): $(unzip -p "$OUT/webview-$n.apk" 'classes*.dex' 2> /dev/null \
+      | grep -a -o -i -E '[A-Za-z0-9_/.$]*(gms[./]fonts|FontsContract|FontRequest|DownloadableFont|AndroidFont|FontLookup)[A-Za-z0-9_/.$]*' \
+      | sort | uniq -c | sort -rn | head -n 12 | awk '{ printf "%s x%s, ", $2, $1 }')"
+    rm -f "$OUT/webview-$n.apk"
+  done
+  echo "::warning title=$TITLE web view code::${info:-no WebView package found}.${hits:- No file could be read.}"
+}
+
+# The lines of the system log that mention fonts or emoji.
+font_log_report() {
+  [ -n "$DIAGNOSE_CLIENT" ] || return 0
+  local lines
+  lines="$(adbt 90 logcat -b all -d -v threadtime 2> /dev/null | tr -d '\r' | grep -i -E 'font|emoji' | cut -c1-230 | head -n 25)"
+  echo "::warning title=$TITLE log lines about fonts::$(escape <<< "${lines:-none}")"
+}
+
 is_debuggable() {
   adbt 60 shell dumpsys package "$PACKAGE" | tr -d '\r' | grep -E "pkgFlags=|flags=" | grep -q "DEBUGGABLE"
 }
@@ -458,7 +545,10 @@ check_debug() {
   install_apk "$apk" "$label" || return
   if ! is_debuggable; then fail "$label: expected a debuggable build."; fi
   stage "$label: launch"
+  trace_ipc_start
   launch "$label"
+  trace_ipc_report
+  font_log_report
   before="$(app_pid)"
   if [ -z "$before" ]; then
     fail "$label: no process after launch."
@@ -568,6 +658,7 @@ trap 'kill $WATCHDOG_PID $LOGCAT_PID 2> /dev/null' EXIT
 device_report
 adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
 report_load "at the start"
+webview_report
 
 # A control: if the emulator cannot show and screenshot the Settings app, then
 # the environment is broken and the results for Prism Mapper mean nothing.
