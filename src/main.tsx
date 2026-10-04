@@ -2648,7 +2648,9 @@ function App() {
                 ? "Output is live. Press Esc to close it."
                 : api
                   ? "A clean, fullscreen window on your projector."
-                  : "Fills this screen with only your mapped light. Tap for controls, Esc or Exit to leave."}
+                  : compact
+                    ? "Fills this screen with just your mapped light. Tap the screen to show the controls."
+                    : "Only your mapped light, fullscreen on this screen."}
             </p>
           </div>
         </aside>

@@ -548,6 +548,39 @@
   display: flex;
   align-items: center;
 }
+/* A flex summary loses the browser's own triangle, so the two plain
+   disclosures get a chevron that turns when they open. */
+.app-shell[data-layout="compact"] .content-transform > summary,
+.app-shell[data-layout="compact"] .audio-tuning > summary,
+.app-shell[data-layout="compact"] .audio-panel > summary {
+  justify-content: space-between;
+  gap: 8px;
+}
+.app-shell[data-layout="compact"] .audio-panel > summary {
+  justify-content: flex-start;
+}
+.app-shell[data-layout="compact"] .audio-panel > summary .audio-state {
+  margin-left: auto;
+}
+.app-shell[data-layout="compact"] .content-transform > summary::after,
+.app-shell[data-layout="compact"] .audio-tuning > summary::after,
+.app-shell[data-layout="compact"] .audio-panel > summary::after {
+  content: "";
+  flex: none;
+  width: 8px;
+  height: 8px;
+  margin: -4px 6px 0 0;
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  opacity: 0.75;
+  transform: rotate(45deg);
+}
+.app-shell[data-layout="compact"] .content-transform[open] > summary::after,
+.app-shell[data-layout="compact"] .audio-tuning[open] > summary::after,
+.app-shell[data-layout="compact"] .audio-panel[open] > summary::after {
+  margin-top: 4px;
+  transform: rotate(-135deg);
+}
 
 /* Layers */
 .app-shell[data-layout="compact"] .surface-list {
@@ -633,6 +666,7 @@
 }
 .app-shell[data-layout="compact"] .empty {
   font-size: 13px;
+  padding: 16px 4px;
 }
 
 /* Looks */
@@ -1204,17 +1238,18 @@
    the tool strip. */
 .app-shell[data-layout="compact"] .toast,
 .app-shell[data-layout="compact"] .error-toast {
-  top: calc(var(--inset-top) + 4px);
+  top: calc(var(--inset-top) + 1px);
   bottom: auto;
   width: max-content;
   max-width: calc(100vw - 16px - var(--inset-left) - var(--inset-right));
-  min-height: 48px;
-  padding: 4px 4px 4px 14px;
+  min-height: 46px;
+  padding: 0 0 0 14px;
   font-size: 13px;
+  line-height: 1.35;
   z-index: 40;
 }
 .app-shell[data-layout="compact"] .error-toast {
-  top: calc(var(--inset-top) + 60px);
+  top: calc(var(--inset-top) + 54px);
 }
 .app-shell[data-layout="compact"] .modal-backdrop {
   align-items: flex-start;
