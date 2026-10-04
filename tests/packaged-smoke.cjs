@@ -32,6 +32,12 @@ const catalog = require("../shared/patterns.json");
     await page
       .getByRole("button", { name: "Save project", exact: true })
       .waitFor();
+    // The virtual screens of the CI computers are as small as 1024 x 768, and a
+    // page under 1050 pixels wide switches to the compact layout (which has its
+    // own tests). This test walks through the desktop layout, so give the page
+    // the width it needs whatever the screen is.
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await page.locator('.app-shell[data-layout="desktop"]').waitFor();
     assert.match(
       await page.locator(".alpha").innerText(),
       new RegExp(pkg.version.replaceAll(".", "\\.")),

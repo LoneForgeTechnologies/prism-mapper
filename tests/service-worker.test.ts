@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import vm from "node:vm";
 // The build script intentionally runs as plain Node ESM.
 // @ts-expect-error No type declarations for a .mjs script.
@@ -341,8 +342,10 @@ test("buildPwa writes dist/sw.js and running it again gives the same worker", as
   );
   created.push(packageFile);
   await writeFile(packageFile, JSON.stringify({ version: "2.3.4" }));
-  const templateFile = new URL("../scripts/sw-template.js", import.meta.url)
-    .pathname;
+  // fileURLToPath, not .pathname: on Windows the pathname is "/D:/a/...".
+  const templateFile = fileURLToPath(
+    new URL("../scripts/sw-template.js", import.meta.url),
+  );
   const first = await buildPwa({ dist, packageFile, templateFile });
   const written = await readFile(path.join(dist, "sw.js"), "utf8");
   assert.equal(written, first.source);
