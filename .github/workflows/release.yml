@@ -90,25 +90,22 @@ jobs:
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
-      # TEMPORARY: the steps below also run after a failure, so one run shows
-      # every problem. Restored to the default before the branch is finished.
       - name: Test opening projects and the window size in the packaged application
-        if: ${{ !cancelled() }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-desktop.cjs "$PACKAGED_EXE"
       - name: Test Windows paths in the packaged application
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-windows.cjs "$PACKAGED_EXE"
       - name: Test the Windows source launcher
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 5
         run: node tests/launcher-windows.cjs
       - name: Smoke test the application unpacked from the ZIP
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: pwsh
         run: |
           $version = node -p "require('./package.json').version"
@@ -120,7 +117,7 @@ jobs:
       # The installer is compiled with Inno Setup 6, which GitHub's Windows
       # runners have installed; it is added when a runner image does not.
       - name: Build the Windows installer
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: pwsh
         timeout-minutes: 20
         run: |
@@ -129,39 +126,38 @@ jobs:
             choco install innosetup --yes --no-progress --limit-output
             if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           }
-          node scripts/build-windows-installer.mjs *>&1 | Tee-Object -FilePath (Join-Path $env:RUNNER_TEMP 'installer-build.txt')
+          node scripts/build-windows-installer.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Install with the Windows installer
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-installer.cjs install "$SETUP_EXE" "$INSTALL_WORK"
       - name: Smoke test the installed application
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         run: node tests/packaged-smoke.cjs "$INSTALLED_EXE"
       - name: Test opening projects and the window size in the installed application
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-desktop.cjs "$INSTALLED_EXE"
       - name: Open projects through the Windows commands of the installed application
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 10
         run: node tests/packaged-installer.cjs integrate "$INSTALL_WORK"
       - name: Update a running copy with a second Setup
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-installer.cjs upgrade "$SETUP_EXE" "$INSTALL_WORK"
       - name: Uninstall
-        if: ${{ !cancelled() && matrix.platform == 'win32' }}
+        if: ${{ matrix.platform == 'win32' }}
         shell: bash
         timeout-minutes: 10
         run: node tests/packaged-installer.cjs uninstall "$INSTALL_WORK"
       - uses: actions/upload-artifact@v7
-        if: ${{ !cancelled() }}
         with:
           name: desktop-${{ matrix.platform }}-${{ matrix.arch }}
           path: |
@@ -172,28 +168,23 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
-      - name: Release files and installer build output as annotations (temporary)
-        if: always() && matrix.platform == 'win32'
-        shell: pwsh
-        run: |
-          $files = Get-ChildItem release/distribution -File | ForEach-Object { '{0,14:N0}  {1}' -f $_.Length, $_.Name }
-          $sums = Get-ChildItem release/distribution -Filter *.sha256 | ForEach-Object { (Get-Content $_.FullName -Raw).Trim() }
-          $text = (($files + '' + $sums) -join "`n").Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-          Write-Host "::notice title=Release files::$text"
-          $path = Join-Path $env:RUNNER_TEMP 'installer-build.txt'
-          if (Test-Path $path) {
-            $text = Get-Content $path -Raw
-            if ($text.Length -gt 3500) { $text = $text.Substring($text.Length - 3500) }
-            $escaped = $text.Replace('%', '%25').Replace("`r", '%0D').Replace("`n", '%0A')
-            Write-Host "::notice title=Installer build output (end)::$escaped"
-          }
+
+  # The Android and iOS apps. The called workflow builds them and uploads
+  # mobile-* artifacts that the verify job collects with the desktop ones.
+  mobile:
+    name: mobile apps
+    uses: ./.github/workflows/mobile.yml
+    with:
+      version: ${{ inputs.tag || github.ref_name }}
+      ref: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && format('refs/tags/{0}', inputs.tag) || github.sha }}
+    secrets: inherit
 
   # Collects what the build jobs produced and checks it, on every run. A dry
   # run therefore proves that the downloads work and still match their
   # checksums before a tag is pushed.
   verify:
     name: verify release files
-    needs: build
+    needs: [build, mobile]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     env:
@@ -206,8 +197,8 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: "24"
-      # Desktop builds come from the build job above. Mobile builds, added by a
-      # later change, upload artifacts named mobile-* in the same way.
+      # Desktop builds come from the build job and mobile builds from the
+      # mobile job; they upload artifacts named desktop-* and mobile-*.
       - uses: actions/download-artifact@v8
         with:
           pattern: "{desktop,mobile}-*"
@@ -224,13 +215,6 @@ jobs:
             cat downloads/SHA256SUMS.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-      # TEMPORARY, removed before the branch is finished: the same listing as an
-      # annotation, because job logs cannot be downloaded from the worker's network.
-      - name: Verified files as an annotation (temporary)
-        shell: bash
-        run: |
-          text="$( (ls -l downloads; echo; cat downloads/SHA256SUMS.txt) | sed -e 's/%/%25/g' -e ':a;N;$!ba;s/\n/%0A/g' )"
-          echo "::notice title=Verified release files::$text"
 
   publish:
     name: publish release
@@ -268,7 +252,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          node scripts/release-notes.mjs "${RELEASE_TAG#v}" > release-notes.md
+          node scripts/release-notes.mjs "${RELEASE_TAG#v}" downloads > release-notes.md
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > release-state.txt 2>/dev/null; then
             if [ "$(cat release-state.txt)" != true ]; then
               echo "This version is already published. Create a new version to update downloads."

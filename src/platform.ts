@@ -58,6 +58,29 @@ export function isElectron(): boolean {
   return Boolean(win().prism);
 }
 
+/** Macs, iPhones and iPads use the Command key (⌘) for shortcuts; everything else uses Ctrl. */
+export function usesCommandKey(): boolean {
+  const n = nav();
+  return /Mac|iPhone|iPad|iPod/i.test(
+    `${n?.platform ?? ""} ${n?.userAgent ?? ""}`,
+  );
+}
+
+/**
+ * Shortcut text for tooltips and hints: ⌘Z or ⇧⌘Z on Apple devices, Ctrl+Z or
+ * Ctrl+Shift+Z elsewhere. The key handler accepts either key on every platform;
+ * this only decides which one the screen names.
+ */
+export function shortcutLabel(
+  key: string,
+  options: { shift?: boolean } = {},
+): string {
+  const shift = options.shift === true;
+  return usesCommandKey()
+    ? `${shift ? "⇧" : ""}⌘${key}`
+    : `Ctrl+${shift ? "Shift+" : ""}${key}`;
+}
+
 /** The page was launched from an installed web app icon rather than a browser tab. */
 export function isStandalonePwa(): boolean {
   const query = win().matchMedia;

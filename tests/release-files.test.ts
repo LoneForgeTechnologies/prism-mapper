@@ -13,7 +13,7 @@ import {
   // @ts-expect-error The release scripts intentionally run as plain Node ESM.
 } from "../scripts/verify-release-files.mjs";
 // @ts-expect-error The release scripts intentionally run as plain Node ESM.
-import { releaseNotes } from "../scripts/release-notes.mjs";
+import { WEB_APP_URL, releaseNotes } from "../scripts/release-notes.mjs";
 
 const version = "0.4.1";
 const sha = (data: string | Buffer) =>
@@ -250,10 +250,91 @@ test("the release notes name every download and say what to expect from unsigned
     "Get-FileHash",
     "shasum -a 256",
     "physical projector",
+    // The project is honest about how it was made and tested.
+    "half vibe-coded, half-tested",
+    "AI coding assistants",
+    "GitHub Issues",
+    // The phone and tablet builds.
+    "Prism-Mapper-v0.4.1-Android.apk",
+    "Prism-Mapper-v0.4.1-iOS-unsigned.ipa",
+    "Add to Home Screen",
+    "Play Protect",
+    "Sideloadly",
   ])
     assert.ok(notes.includes(phrase), phrase);
-  assert.doesNotMatch(notes, /[\u2013\u2014]/, "no dash punctuation");
-  assert.doesNotMatch(notes, /\{\{|undefined|\$\{/);
+  assert.ok(notes.includes(WEB_APP_URL), "the web app address");
+  assert.doesNotMatch(notes, /[–—]/, "no dash punctuation");
+  assert.doesNotMatch(notes, /\{\{|undefined|\$\{|false/);
   assert.ok(notes.endsWith("\n"));
   assert.throws(() => releaseNotes("../1.0.0"));
+});
+
+test("the release notes point only at phone builds that are in the release", () => {
+  const desktop = requiredFiles(version);
+  const bare: string = releaseNotes(version, desktop);
+  assert.doesNotMatch(
+    bare,
+    /Android\.apk|iOS-unsigned|Sideloadly|Play Protect/,
+  );
+  assert.match(bare, /\| iPhone or iPad \| The web app \|/);
+  assert.ok(bare.includes("Add to Home Screen"));
+
+  const android: string = releaseNotes(version, [
+    ...desktop,
+    "Prism-Mapper-v0.4.1-Android.apk",
+  ]);
+  assert.match(
+    android,
+    /\| Android phone or tablet \| `Prism-Mapper-v0\.4\.1-Android\.apk` \|/,
+  );
+  assert.doesNotMatch(android, /iOS-unsigned/);
+
+  const both: string = releaseNotes(version, [
+    ...desktop,
+    "Prism-Mapper-v0.4.1-Android.apk",
+    "Prism-Mapper-v0.4.1-iOS-unsigned.ipa",
+  ]);
+  assert.match(
+    both,
+    /The web app, or `Prism-Mapper-v0\.4\.1-iOS-unsigned\.ipa` for sideloading/,
+  );
+});
+
+test("the release notes leave out the web app address while that site is not online", () => {
+  const notes: string = releaseNotes(version, requiredFiles(version), {
+    webApp: false,
+  });
+  assert.ok(!notes.includes(WEB_APP_URL));
+  assert.doesNotMatch(notes, /Add to Home Screen/);
+  assert.match(notes, /\| iPhone or iPad \| Build it with Xcode on a Mac \|/);
+  assert.ok(notes.includes("docs/building-mobile.md"));
+  assert.doesNotMatch(notes, /[–—]/);
+});
+
+test("the notes script reads the downloads folder and the --no-web-app switch", () => {
+  const { folder } = downloads({
+    "Prism-Mapper-v0.4.1-Android.apk": "android",
+  });
+  try {
+    const script = path.join(
+      import.meta.dirname,
+      "..",
+      "scripts",
+      "release-notes.mjs",
+    );
+    const run = (...args: string[]) =>
+      spawnSync(process.execPath, [script, ...args], { encoding: "utf8" });
+    const withSite = run(version, folder);
+    assert.equal(withSite.status, 0, withSite.stderr);
+    assert.ok(withSite.stdout.includes("Prism-Mapper-v0.4.1-Android.apk"));
+    assert.ok(!withSite.stdout.includes("iOS-unsigned"));
+    assert.ok(withSite.stdout.includes(WEB_APP_URL));
+    const noSite = run(version, folder, "--no-web-app");
+    assert.equal(noSite.status, 0, noSite.stderr);
+    assert.ok(!noSite.stdout.includes(WEB_APP_URL));
+    assert.notEqual(run().status, 0);
+    assert.notEqual(run("not-a-version").status, 0);
+  } finally {
+    done(folder);
+  }
 });

@@ -80,7 +80,7 @@ import {
 import type { MappingOverlay } from "./overlay";
 import { validateBrowserProject } from "./project-validation";
 import { readBootProject } from "./persistence";
-import { projectFileName, saveFile } from "./platform";
+import { projectFileName, saveFile, shortcutLabel } from "./platform";
 import { usePersistence } from "./usePersistence";
 import { DeviceSection } from "./DeviceSection";
 import {
@@ -1613,7 +1613,7 @@ function App() {
               <button
                 className="icon-button"
                 aria-label="Undo"
-                title="Undo · ⌘Z"
+                title={`Undo · ${shortcutLabel("Z")}`}
                 disabled={!history.past.length}
                 onClick={undo}
               >
@@ -1622,7 +1622,7 @@ function App() {
               <button
                 className="icon-button"
                 aria-label="Redo"
-                title="Redo · ⇧⌘Z"
+                title={`Redo · ${shortcutLabel("Z", { shift: true })}`}
                 disabled={!history.future.length}
                 onClick={redo}
               >
@@ -2667,7 +2667,7 @@ function App() {
         <span>
           <Keyboard size={13} /> Space: play / pause{" "}
           <span className="tiny-separator">·</span> B: blackout{" "}
-          <span className="tiny-separator">·</span> ⌘Z: undo
+          <span className="tiny-separator">·</span> {shortcutLabel("Z")}: undo
         </span>
         <span>Made for light.</span>
       </footer>

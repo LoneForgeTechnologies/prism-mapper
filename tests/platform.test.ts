@@ -9,7 +9,9 @@ import {
   nativePlugins,
   projectFileName,
   saveFile,
+  shortcutLabel,
   toBase64,
+  usesCommandKey,
 } from "../src/platform.ts";
 
 type Globals = Record<string, unknown>;
@@ -474,4 +476,47 @@ test("native failures explain which step failed", async () => {
   } finally {
     capacitor.restore();
   }
+});
+
+test("shortcut labels name Command on Apple devices and Ctrl everywhere else", async () => {
+  const labelsFor = (platform: string, userAgent: string) =>
+    withGlobals({ navigator: { platform, userAgent } }, () => [
+      usesCommandKey(),
+      shortcutLabel("Z"),
+      shortcutLabel("Z", { shift: true }),
+    ]);
+  const apple = [true, "⌘Z", "⇧⌘Z"];
+  const other = [false, "Ctrl+Z", "Ctrl+Shift+Z"];
+  assert.deepEqual(
+    await labelsFor(
+      "MacIntel",
+      "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    ),
+    apple,
+  );
+  assert.deepEqual(
+    await labelsFor(
+      "iPhone",
+      "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X)",
+    ),
+    apple,
+  );
+  assert.deepEqual(
+    await labelsFor("Win32", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"),
+    other,
+  );
+  assert.deepEqual(
+    await labelsFor("Linux x86_64", "Mozilla/5.0 (X11; Linux x86_64)"),
+    other,
+  );
+  // Android reports Linux and has no Command key.
+  assert.deepEqual(
+    await labelsFor("Linux armv81", "Mozilla/5.0 (Linux; Android 14; Pixel 8)"),
+    other,
+  );
+  // Without a navigator at all (tests, workers) the label falls back to Ctrl.
+  await withGlobals({ navigator: undefined }, () => {
+    assert.equal(usesCommandKey(), false);
+    assert.equal(shortcutLabel("Z"), "Ctrl+Z");
+  });
 });
