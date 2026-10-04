@@ -12,6 +12,7 @@ import {
   installerDefines,
   installerFileName,
   installerScript,
+  installerCompilerArguments,
   withWindowsLineEndings,
   // @ts-expect-error Plain Node ESM helper.
 } from "../scripts/build-windows-installer.mjs";
@@ -78,6 +79,30 @@ test("the installer has the name of the release it belongs to", () => {
     `${directive("OutputBaseFilename")?.replace("{#AppVersion}", version)}.exe`,
     installerFileName(version),
   );
+});
+
+test("signed installers use a fixed signing callback for Setup and the embedded uninstaller", () => {
+  const script = installerScript(template, [], { signed: true });
+  assert.match(script, /^#define SignedBuild\r$/m);
+  assert.match(
+    template,
+    /#ifdef SignedBuild\s+SignTool=PrismSigning\s+SignedUninstaller=yes\s+#endif/,
+  );
+  const args = installerCompilerArguments("C:\\release\\installer.iss", {
+    signed: true,
+  });
+  assert.equal(args[0], "/Qp");
+  assert.match(
+    args[1],
+    /^\/SPrismSigning=pwsh\.exe -NoProfile -NonInteractive -File \$q/,
+  );
+  assert.match(args[1], /sign-windows\.ps1\$q -FilePath \$f$/);
+  assert.equal(args[2], "C:\\release\\installer.iss");
+  assert.deepEqual(installerCompilerArguments("development.iss"), [
+    "/Qp",
+    "development.iss",
+  ]);
+  assert.doesNotMatch(installerScript(template, []), /^#define SignedBuild/m);
 });
 
 test("the build script supplies every value the installer script asks for", () => {

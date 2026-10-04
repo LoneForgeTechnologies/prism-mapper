@@ -12,7 +12,8 @@
 ;   LicenseFile        LICENSE with Windows line endings, for the first page
 ;   OutputDir          where Setup.exe is written
 ;
-; The installer is not code-signed. It installs for the current user without
+; Signed releases enable SignedBuild and the PrismSigning compiler callback.
+; Development installers may be unsigned. It installs for the current user without
 ; administrator rights; a dialog when Setup starts offers "all users" for people
 ; who want that.
 
@@ -47,6 +48,10 @@
 #define Repository "https://github.com/LoneForgeTechnologies/prism-mapper"
 
 [Setup]
+#ifdef SignedBuild
+SignTool=PrismSigning
+SignedUninstaller=yes
+#endif
 ; AppId identifies this program to Windows and to later versions of this
 ; installer. It must never change, or an update would install beside the old copy.
 AppId={{B6F0A8D2-3C41-4E7B-9A5D-1F2E6C8D4B73}

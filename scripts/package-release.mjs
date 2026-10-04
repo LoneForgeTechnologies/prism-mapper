@@ -16,6 +16,11 @@ import { fileURLToPath } from "node:url";
 import { releaseName } from "./release-name.mjs";
 import { createZip, verifyZip } from "./zip.mjs";
 import {
+  requireSignedRelease,
+  verifyWindowsApplication,
+  windowsSigningEnabled,
+} from "./sign-windows.mjs";
+import {
   assertStamped,
   executableMetadata,
   iconSizes,
@@ -35,6 +40,7 @@ export const applicationFiles = [
   "electron/load.cjs",
   "electron/paths.cjs",
   "electron/files.cjs",
+  "electron/recent.cjs",
   "electron/wakelock.cjs",
   "electron/window-size.cjs",
   "shared/patterns.json",
@@ -149,20 +155,29 @@ export async function copyBuild(source, destination, relative = "") {
 const guide = (extend) =>
   `Use an extended desktop for your projector${extend}, then select its display in Prism Mapper. Line tool lets you trace corners; click the first point to close the outline. Each layer can play its own animation. Press B for blackout. Example projects are included in the Example projects folder; open them with the app's Open button.\n\nAudio react starts only when you press Start listening and approve the requested access. Audio is analyzed locally.\n\nUpdates: download the newer ZIP from this project's GitHub Releases page, quit Prism Mapper, and replace the application. Save your project before updating. There is no automatic updater.\n`;
 
-export function startHereText(version, platform) {
+export function startHereText(
+  version,
+  platform,
+  { signed = false, notarized = false } = {},
+) {
   if (platform === "darwin")
-    return `Prism Mapper ${version}\n\nMove Prism Mapper.app to Applications, then open it. This community build is ad-hoc signed, not notarized by Apple. If macOS blocks it, review System Settings > Privacy & Security after the first launch attempt and use Open Anyway only if you trust this download.\n\n${guide("")}`;
-  return `Prism Mapper ${version} for Windows (64-bit)\n\nExtract the ENTIRE ZIP first: right-click the ZIP and choose Extract All. Open the Prism Mapper folder and double-click Prism Mapper.exe. Keep all files in that folder together.\n\nThis community build is not code-signed, so Windows SmartScreen may show "Windows protected your PC" the first time you run it. Select "More info", then "Run anyway", but only if you trust where you downloaded it. To avoid the prompt, right-click the downloaded ZIP, choose Properties, tick Unblock, press OK, and then extract it.\n\nPrefer an installer? ${releaseName(version, "win32", "x64")}-Setup.exe on the same release page installs Prism Mapper for your user account without administrator rights and adds a Start Menu entry and an uninstaller. Run a newer Setup over an existing installation to update it. It is not code-signed either, so SmartScreen shows the same prompt.\n\nWindows support is new. This build was checked automatically on a Windows PC without a projector and has not yet been tested with a physical projector. Please report problems on the project's GitHub Issues page.\n\n${guide(" (press the Windows key + P and choose Extend)")}`;
+    return `Prism Mapper ${version}\n\nMove Prism Mapper.app to Applications, then open it. ${signed && notarized ? "This app is signed with an Apple Developer ID and notarized by Apple. macOS may still ask you to confirm the first launch of a downloaded app." : "This development build is ad-hoc signed, not notarized by Apple. If macOS blocks it, review System Settings > Privacy & Security after the first launch attempt and use Open Anyway only if you trust this download."}\n\n${guide("")}`;
+  const signing = signed
+    ? "The app carries a verified, timestamped publisher signature. Windows SmartScreen may still warn that a new download is unrecognized until publisher reputation builds. A valid signature does not guarantee an immediate warning-free first launch."
+    : 'This development build is not code-signed, so Windows SmartScreen may show "Windows protected your PC" the first time you run it. Select "More info", then "Run anyway", but only if you trust where you downloaded it.';
+  return `Prism Mapper ${version} for Windows (64-bit)\n\nExtract the ENTIRE ZIP first: right-click the ZIP and choose Extract All. Open the Prism Mapper folder and double-click Prism Mapper.exe. Keep all files in that folder together.\n\n${signing}\n\nPrefer an installer? ${releaseName(version, "win32", "x64")}-Setup.exe on the same release page installs Prism Mapper for your user account without administrator rights and adds a Start Menu entry and an uninstaller. Run a newer Setup over an existing installation to update it. ${signed ? "Published signed releases also verify the installer and uninstaller signatures." : "Development installers are not code-signed either and may show the same SmartScreen prompt."}\n\nWindows support is new. This build was checked automatically on a Windows PC without a projector and has not yet been tested with a physical projector. Please report problems on the project's GitHub Issues page.\n\n${guide(" (press the Windows key + P and choose Extend)")}`;
 }
 
 // The options exist so the whole Windows packaging flow can be rehearsed on any
 // host with a stand-in Electron runtime; a real release uses the defaults.
-export async function packageRelease({
+export async function stageRelease({
   platform = process.platform,
   arch = process.arch,
   runtime = path.join(root, "node_modules", "electron", "dist"),
   build = path.join(root, "dist"),
   output = path.join(root, "release", "distribution"),
+  signMac = async (application) =>
+    (await import("./sign-mac.mjs")).signMacApplication(application),
 } = {}) {
   const pkg = JSON.parse(
     await readFile(path.join(root, "package.json"), "utf8"),
@@ -188,11 +203,14 @@ export async function packageRelease({
   await stat(path.join(build, "index.html"));
   await stat(runtime);
   await mkdir(output, { recursive: true });
+  await rm(archive, { force: true });
+  await rm(`${archive}.sha256`, { force: true });
   // This directory is dedicated to disposable distribution staging. Never use
   // the user's locally installed release/Prism Mapper-darwin-* application.
   await rm(staging, { recursive: true, force: true });
   await mkdir(contents, { recursive: true });
   const mac = platform === "darwin";
+  let signing = { signed: false, notarized: false };
   const application = path.join(
     contents,
     mac ? "Prism Mapper.app" : "Prism Mapper",
@@ -337,17 +355,84 @@ export async function packageRelease({
       path.join(root, "build", "icon.icns"),
       path.join(application, "Contents", "Resources", "electron.icns"),
     );
-    execFileSync(
-      "/usr/bin/codesign",
-      ["--force", "--deep", "--sign", "-", application],
-      { stdio: "inherit" },
+    signing = await signMac(application);
+  }
+
+  // This record is outside the downloadable folder; it contains no secrets or
+  // paths. Finalization reconstructs its paths and verifies actual signatures.
+  await writeFile(
+    path.join(staging, "release-stage.json"),
+    JSON.stringify({ version: pkg.version, platform, arch, signing }) + "\n",
+  );
+  return { archive, contents, folder, application, staging, signing };
+}
+
+export async function verifyMacApplication(application, signing) {
+  const helper = await import("./sign-mac.mjs");
+  helper.verifyMacApplication(application, {
+    ...signing,
+    team: process.env.PRISM_MAC_TEAM_ID || signing.team,
+  });
+}
+
+// External signing happens between staging and finalization on Windows. The
+// final signature is verified before a ZIP or checksum is created.
+export async function finalizeRelease({
+  platform = process.platform,
+  arch = process.arch,
+  output = path.join(root, "release", "distribution"),
+  requireSigned = requireSignedRelease(),
+  windowsSigned = windowsSigningEnabled(),
+  verifyWindows = verifyWindowsApplication,
+  verifyMac = verifyMacApplication,
+} = {}) {
+  const pkg = JSON.parse(
+    await readFile(path.join(root, "package.json"), "utf8"),
+  );
+  const folder = releaseName(pkg.version, platform, arch);
+  const staging = path.join(output, pkg.version, `${platform}-${arch}`);
+  const contents = path.join(staging, folder);
+  const archive = path.join(output, `${folder}.zip`);
+  const mac = platform === "darwin";
+  const application = path.join(
+    contents,
+    mac ? "Prism Mapper.app" : "Prism Mapper",
+  );
+  const stage = JSON.parse(
+    await readFile(path.join(staging, "release-stage.json"), "utf8"),
+  );
+  if (
+    stage.version !== pkg.version ||
+    stage.platform !== platform ||
+    stage.arch !== arch ||
+    typeof stage.signing?.signed !== "boolean" ||
+    typeof stage.signing?.notarized !== "boolean"
+  )
+    throw new Error(
+      "The staged release does not match this version and platform. Stage it again before signing.",
     );
-    execFileSync(
-      "/usr/bin/codesign",
-      ["--verify", "--deep", "--strict", application],
-      { stdio: "inherit" },
+  let signing = stage.signing;
+  if (mac) {
+    if (requireSigned && (!signing.signed || !signing.notarized))
+      throw new Error(
+        "A published Mac release requires Developer ID signing and notarization. Configure the MAC_* credentials or use a dry run.",
+      );
+    await verifyMac(application, signing);
+  } else if (windowsSigned) {
+    signing = await verifyWindows(application);
+    if (signing?.signed !== true)
+      throw new Error(
+        "The staged Windows application did not pass signature verification",
+      );
+  } else if (requireSigned) {
+    throw new Error(
+      "A published Windows release requires Artifact Signing. Configure the Windows signing variables or use a dry run.",
     );
   }
+  await writeFile(
+    path.join(contents, "START HERE.txt"),
+    startHereText(pkg.version, platform, signing),
+  );
 
   await rm(archive, { force: true });
   const appPrefix = mac
@@ -400,11 +485,26 @@ export async function packageRelease({
     `${checksum}  ${path.basename(archive)}\n`,
   );
   console.log(`Verified release archive:\n${archive}\nSHA-256: ${checksum}`);
-  return { archive, checksum, contents, folder, application, staging };
+  return { archive, checksum, contents, folder, application, staging, signing };
+}
+
+export async function packageRelease(options = {}) {
+  await stageRelease(options);
+  return finalizeRelease(options);
 }
 
 if (
   process.argv[1] &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
-)
-  await packageRelease();
+) {
+  const args = process.argv.slice(2);
+  if (args.length === 0) await packageRelease();
+  else if (args.length === 1 && args[0] === "--stage-only")
+    await stageRelease();
+  else if (args.length === 1 && args[0] === "--finalize")
+    await finalizeRelease();
+  else
+    throw new Error(
+      "Usage: node scripts/package-release.mjs [--stage-only|--finalize]",
+    );
+}

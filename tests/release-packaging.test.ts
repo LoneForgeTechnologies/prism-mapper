@@ -12,6 +12,8 @@ import {
   copyBuild,
   macDocumentTypes,
   packageRelease,
+  stageRelease,
+  finalizeRelease,
   releaseName,
   startHereText,
   verifyArchiveEntries,
@@ -349,6 +351,16 @@ test("the portable README for each platform is honest and free of dash punctuati
   assert.match(windows, /Windows key \+ P/);
   assert.match(mac, /ad-hoc signed, not notarized/);
   assert.doesNotMatch(mac, /Windows/);
+  const signedWindows = startHereText("0.6.0", "win32", { signed: true });
+  const signedMac = startHereText("0.6.0", "darwin", {
+    signed: true,
+    notarized: true,
+  });
+  assert.match(signedWindows, /verified, timestamped publisher signature/);
+  assert.match(signedWindows, /does not guarantee an immediate warning-free/);
+  assert.doesNotMatch(signedWindows, /not code-signed/);
+  assert.match(signedMac, /signed with an Apple Developer ID and notarized/);
+  assert.doesNotMatch(signedMac, /ad-hoc|Open Anyway/);
 });
 
 test("a Windows release can be packaged end to end from a stand-in Electron runtime", async () => {
@@ -414,6 +426,7 @@ test("a Windows release can be packaged end to end from a stand-in Electron runt
       `${prefix}/resources/app/build/icon.ico`,
       `${prefix}/resources/app/build/icon.png`,
       `${prefix}/resources/app/electron/main.cjs`,
+      `${prefix}/resources/app/electron/recent.cjs`,
       `Prism-Mapper-v${version}-Windows-x64/START HERE.txt`,
       `Prism-Mapper-v${version}-Windows-x64/Example projects/indoor-cube.prism.json`,
       `Prism-Mapper-v${version}-Windows-x64/LICENSE`,
@@ -456,6 +469,107 @@ test("a Windows release can be packaged end to end from a stand-in Electron runt
     );
     assert.equal(app.main, "electron/main.cjs");
     assert.equal(app.version, version);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("staging does not distribute a ZIP; failed signature checks cannot emit a signed release", async () => {
+  const directory = temporary();
+  try {
+    const runtime = path.join(directory, "runtime");
+    write(path.join(runtime, "electron.exe"), fixtureExecutable());
+    write(path.join(runtime, "LICENSE"), "Electron license");
+    write(path.join(runtime, "LICENSES.chromium.html"), "<html></html>");
+    const build = path.join(directory, "dist");
+    write(path.join(build, "index.html"), "<html></html>");
+    const options = {
+      platform: "win32",
+      arch: "x64",
+      runtime,
+      build,
+      output: path.join(directory, "out"),
+    };
+    const staged = await stageRelease(options);
+    assert.equal(fs.existsSync(staged.archive), false);
+    assert.equal(fs.existsSync(`${staged.archive}.sha256`), false);
+    await assert.rejects(
+      finalizeRelease({
+        ...options,
+        requireSigned: true,
+        windowsSigned: false,
+      }),
+      /requires Artifact Signing/,
+    );
+    await assert.rejects(
+      finalizeRelease({
+        ...options,
+        requireSigned: true,
+        windowsSigned: true,
+        verifyWindows: async () => {
+          throw new Error("untrusted certificate");
+        },
+      }),
+      /untrusted certificate/,
+    );
+    assert.equal(fs.existsSync(staged.archive), false);
+    assert.equal(fs.existsSync(`${staged.archive}.sha256`), false);
+
+    // A stand-in signer adds a marker only after staging. Finalization must
+    // archive those final bytes rather than rebuilding an unsigned runtime.
+    const signedFile = path.join(staged.application, "Prism Mapper.exe");
+    fs.appendFileSync(signedFile, "SIGNED-AFTER-STAGING");
+    let checked = false;
+    const finalized = await finalizeRelease({
+      ...options,
+      requireSigned: true,
+      windowsSigned: true,
+      verifyWindows: async (application: string) => {
+        assert.equal(application, staged.application);
+        assert.ok(
+          fs
+            .readFileSync(signedFile)
+            .includes(Buffer.from("SIGNED-AFTER-STAGING")),
+        );
+        checked = true;
+        return { signed: true, notarized: false };
+      },
+    });
+    assert.equal(checked, true);
+    assert.equal(finalized.signing.signed, true);
+    const packaged = readZipEntries(fs.readFileSync(finalized.archive));
+    const appEntry = packaged.find((entry: { name: string }) =>
+      entry.name.endsWith("/Prism Mapper.exe"),
+    );
+    assert.equal(appEntry.size, fs.statSync(signedFile).size);
+    assert.match(
+      fs.readFileSync(path.join(finalized.contents, "START HERE.txt"), "utf8"),
+      /verified, timestamped/,
+    );
+    assert.equal(
+      fs.readFileSync(`${finalized.archive}.sha256`, "utf8"),
+      `${finalized.checksum}  ${path.basename(finalized.archive)}\n`,
+    );
+    assert.ok(
+      !(await verifyZip(finalized.archive)).some((name: string) =>
+        name.includes("release-stage.json"),
+      ),
+    );
+
+    const manifest = path.join(staged.staging, "release-stage.json");
+    fs.writeFileSync(
+      manifest,
+      JSON.stringify({
+        version: "9.9.9",
+        platform: "win32",
+        arch: "x64",
+        signing: { signed: true, notarized: false },
+      }),
+    );
+    await assert.rejects(
+      finalizeRelease(options),
+      /does not match this version/,
+    );
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }

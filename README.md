@@ -14,13 +14,13 @@
 
 Open the **[latest release](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest)**, expand **Assets**, and take the file for your device. The number in each name is the version.
 
-| Your device | Download |
-| --- | --- |
-| Windows 10 or 11, 64-bit | The file ending in `-Windows-x64-Setup.exe` (installer), or `-Windows-x64.zip` (extract and run, no install) |
-| Mac with an Apple M-series chip | The file ending in `-macOS-arm64.zip` |
-| Mac with an Intel processor | The file ending in `-macOS-x64.zip` |
-| Android 7 or newer, phone or tablet | The file ending in `-Android.apk` |
-| iPhone or iPad (iOS 15 or newer) | The file ending in `-iOS-unsigned.ipa`, for re-signing and sideloading with your own Apple ID, or build with Xcode on a Mac. It cannot be installed directly; see the steps below. |
+| Your device                         | Download                                                                                                                                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows 10 or 11, 64-bit            | The file ending in `-Windows-x64-Setup.exe` (installer), or `-Windows-x64.zip` (extract and run, no install)                                                                       |
+| Mac with an Apple M-series chip     | The file ending in `-macOS-arm64.zip`                                                                                                                                              |
+| Mac with an Intel processor         | The file ending in `-macOS-x64.zip`                                                                                                                                                |
+| Android 7 or newer, phone or tablet | The file ending in `-Android.apk`                                                                                                                                                  |
+| iPhone or iPad (iOS 15 or newer)    | The file ending in `-iOS-unsigned.ipa`, for re-signing and sideloading with your own Apple ID, or build with Xcode on a Mac. It cannot be installed directly; see the steps below. |
 
 The Windows, Mac and Android downloads bundle the app, its runtime and all generated animations. They need no Node.js, account, server or internet during use. For a project with no internet, download the app on another computer, check its checksum, and copy it with your project and media files onto a USB drive or other local storage. Install or extract it on the offline device using the steps below. iPhone and iPad need the signing setup described below.
 
@@ -72,10 +72,14 @@ Each file has a `.sha256` file, and `SHA256SUMS.txt` lists them all. On Windows 
 
 ## What it does
 
+The scenes and timeline features below are in the upcoming **0.6.0 development version**. They are not included in the 0.5.0 downloads.
+
 - **Map flat faces and odd shapes.** Perspective rectangles with four draggable corners, and point-by-point outlines (3 to 64 points, inward corners allowed) for triangles, circles and anything else. Up to 32 layers.
 - **46 original generated animations**, from aurora and ocean to fireworks, neon grids and edge effects that follow your outline, plus 12 Halloween effects. Every thumbnail is rendered by the real renderer. Or use your own pictures and looping videos.
 - **Masks, blend modes and soft edges.** Keep a window dark, overlap layers with Add or Screen, feather edges, and rotate or zoom the content inside a shape without moving the outline.
 - **React to sound.** Layers can pulse with the volume, bass, mids, treble or beats of a microphone or (on desktops) the system output.
+- **Scenes and a local video timeline.** Capture complete mapping looks, put your MP4s in show order, set clip lengths, reorder or repeat clips, seek, pause and loop a 30–40 minute rotation. Videos use clean cuts and muted audio.
+- **Quick show changes on desktop.** Save separate projects for band intro, pre-show and each set; reopen any of the eight recent project files from the timeline panel.
 - **A real projector output.** On a desktop the output opens in its own window on the projector, with live edits, guides, blackout and display-sleep prevention. On a phone or tablet, **Present** fills the screen with the mapped light.
 - **The same editor across installed apps.** Windows, Mac, Android, iPhone and iPad share the editor, and the same `.prism.json` project files move between them.
 - **Yours.** MIT licensed, local files only, nothing leaves the device.
@@ -88,6 +92,14 @@ Each file has a `.sha256` file, and `SHA256SUMS.txt` lists them all. On Windows 
 4. Add a **Mask** over anything that should stay dark. **Save project** keeps the layout.
 
 The [Getting started guide](docs/getting-started.md) walks through it step by step, and the app has a built-in setup guide under the **?** button. Three example projects that need no media are in [`examples/`](examples).
+
+### Build a 40-minute band rotation
+
+In the 0.6 development version, align your surfaces first, select the surface for your videos, and open **Scenes & timeline** in the header. Choose **Add videos to timeline** and select your local MP4 files. Each video creates a scene containing the mapping and a timeline clip; the app reads its duration, or uses an editable **2:00** fallback if the metadata cannot be read. Twenty clips at **2:00** make a **40:00** rotation. Use the arrows or drag to arrange them, then enable **Loop show** and press **Play show**.
+
+**Capture look** also saves a scene from your current layers, masks, sources and effects. **Load look** returns a scene to the mapping editor; **Update look** stores your edits back into that scene. A scene keeps its own mapping snapshot, so later edits to the base mapping do not automatically change all scenes.
+
+Save **Band intro**, **Pre-show**, **Set 1** and **Set 2** as separate `.prism.json` files. **New show** keeps the current mapping and media while clearing the scenes and timeline. On desktop, **Quick open** offers eight recent projects. Save and keep the media beside those files before leaving for an offline venue. Shows support 128 scenes and 512 timeline clips, with a 24-hour maximum per rotation. See the [full timeline guide](docs/user-guide.md#scenes-and-timeline).
 
 ![A haunted house facade mapped with eyes, a skull, a wound and spider webs](docs/images/editor-halloween.png)
 
@@ -102,13 +114,13 @@ The screenshots were taken from a desktop browser, the phone ones with an emulat
 
 Honestly: partly. This is what has been checked, and by what. [VALIDATION.md](VALIDATION.md) has the details of each version.
 
-| | Checked by automation | Not checked |
-| --- | --- | --- |
-| **Everything** | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout, plus offline cache and storage regression checks in a local browser preview. All on every push. | Real graphics cards, long sessions, every picture and video format. |
-| **Windows** | The packaged app and the Setup installer on GitHub's Windows machines, on every release: install, start, open a project, update over a running copy, uninstall, and the portable ZIP. | A real Windows PC with a real projector. SmartScreen. |
-| **Mac** | The packaged app on GitHub's Apple silicon and Intel Macs, on every release: start, signature, and the app unpacked from the ZIP. Version 0.4.1 was also checked on an Apple silicon Mac before its release. | Gatekeeper, notarization, a Mac of your own. |
-| **Android** | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed and Google Play services being crashed. | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
-| **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The shared editor is tested in headless Chrome. | A real iPhone or iPad, full editor behavior in iOS WebKit, the App Store. |
+|                  | Checked by automation                                                                                                                                                                                                                                                                                    | Not checked                                                                          |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| **Everything**   | Unit tests for geometry, project files and the release scripts. GPU and interface tests in headless Chrome with software WebGL: mapping, the animation mix, audio response, the phone and tablet layout, plus offline cache and storage regression checks in a local browser preview. All on every push. | Real graphics cards, long sessions, every picture and video format.                  |
+| **Windows**      | The packaged app and the Setup installer on GitHub's Windows machines, on every release: install, start, open a project, update over a running copy, uninstall, and the portable ZIP.                                                                                                                    | A real Windows PC with a real projector. SmartScreen.                                |
+| **Mac**          | The packaged app on GitHub's Apple silicon and Intel Macs, on every release: start, signature, and the app unpacked from the ZIP. Version 0.4.1 was also checked on an Apple silicon Mac before its release.                                                                                             | Gatekeeper, notarization, a Mac of your own.                                         |
+| **Android**      | Built and started on emulators of Android 11, 14 and 15 and a plain Android image: the preview was drawn, the screen rotated, and the app survived its web view being killed and Google Play services being crashed.                                                                                     | A real phone or tablet, the microphone, a cable or cast to a projector, Google Play. |
+| **iPhone, iPad** | Built for the simulator and for devices, and started on an iPhone and an iPad simulator. The shared editor is tested in headless Chrome.                                                                                                                                                                 | A real iPhone or iPad, full editor behavior in iOS WebKit, the App Store.            |
 
 The last recorded test with a physical projector was version 0.2 on a Mac, and capturing the computer's own audio output has never been verified on real hardware. The phone and tablet apps were never run on a physical device.
 
@@ -117,6 +129,7 @@ The last recorded test with a physical projector was version 0.2 on a Mac, and c
 - [Getting started](docs/getting-started.md): your first projection, step by step.
 - [User guide](docs/user-guide.md): every tool, the keyboard, phones and tablets, audio, saving and updating, the limits.
 - [Project file format](docs/project-format.md) for the `.prism.json` files.
+- [Signing and distribution setup](docs/signing.md) for maintainers preparing platform credentials.
 - [Building the Android and iPhone/iPad apps](docs/building-mobile.md), including signing and the store routes.
 - [Changelog](CHANGELOG.md), [validation notes](VALIDATION.md), [contributing](CONTRIBUTING.md), [security](SECURITY.md) and [third-party notices](THIRD_PARTY_NOTICES.md).
 
@@ -154,6 +167,7 @@ npm run test:mapping          # polygon, mask and blend GPU checks and the editi
 npm run test:mix              # the automatic animation mix
 npm run test:audio            # synthetic audio response and capture interface
 npm run test:mobile           # phone and tablet layout, touch editing, Present mode
+npm run test:show             # scene timeline, local video playback and show controls
 npm run test:pwa              # local browser cache and storage regression (builds and serves dist/ itself)
 npm run test:animations       # every material: animation, pause, speed, detail, blackout (slow)
 ```

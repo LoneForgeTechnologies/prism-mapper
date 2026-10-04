@@ -94,6 +94,7 @@
 .app-shell[data-layout="compact"] .brand {
   gap: 0;
   min-width: 34px;
+  flex-shrink: 0;
 }
 .app-shell[data-layout="compact"] .brand > span {
   display: none;
@@ -104,6 +105,7 @@
 }
 .app-shell[data-layout="compact"] .header-actions {
   gap: 0;
+  flex-shrink: 0;
 }
 .app-shell[data-layout="compact"] .header-actions .separator {
   display: none;
@@ -129,24 +131,20 @@
 }
 /* The project name lives in the header row, between the mark and the buttons. */
 .app-shell[data-layout="compact"] .workspace-bar {
-  grid-area: 1 / 1;
-  z-index: 1;
+  flex: 1;
+  min-width: 0;
   height: auto;
-  align-self: stretch;
-  margin: 0 calc(var(--inset-right) + 6px + 132px + 4px) 0
-    calc(var(--inset-left) + 6px + 34px + 4px);
-  padding: var(--inset-top) 0 0;
+  padding: 0;
   border: 0;
   background: transparent;
-  pointer-events: none;
 }
 .app-shell[data-layout="compact"] .project-title {
   width: 100%;
-  height: var(--c-hdr);
-  pointer-events: auto;
+  min-width: 0;
 }
 .app-shell[data-layout="compact"] .project-title input {
   width: 100%;
+  min-width: 0;
   height: 44px;
   padding: 0 10px;
   font-size: 16px;
@@ -167,10 +165,6 @@
   .app-shell[data-layout="compact"] .brand > span:not(.alpha) {
     display: inline;
     font-size: 19px;
-  }
-  .app-shell[data-layout="compact"] .workspace-bar {
-    margin-left: calc(var(--inset-left) + 6px + 168px);
-    margin-right: calc(var(--inset-right) + 6px + 244px);
   }
   .app-shell[data-layout="compact"] .header-actions button {
     width: auto;

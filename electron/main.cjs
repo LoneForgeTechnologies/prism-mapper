@@ -24,6 +24,7 @@ const { createAudioBridge } = require("./audio.cjs");
 const { loadProjectFile } = require("./load.cjs");
 const { defaultProjectFileName } = require("./paths.cjs");
 const { writeFileAtomic } = require("./files.cjs");
+const { createRecentProjects } = require("./recent.cjs");
 const { projectPathFromArgv, createProjectOpener } = require("./launch.cjs");
 const { createWakeLock } = require("./wakelock.cjs");
 const {
@@ -51,6 +52,9 @@ let outputDisplayId = null;
 let currentProject = null;
 let currentOverlay = null;
 let currentProjectPath = null;
+let currentProjectName = null;
+let projectPathRevision = 0;
+let projectLoadChain = Promise.resolve();
 const displayLock = createWakeLock(powerSaveBlocker);
 let audioBridge = null;
 const mediaPaths = new Map();
@@ -64,6 +68,12 @@ const APP_ID = "org.prismmapper.desktop";
 if (process.platform === "win32") app.setAppUserModelId(APP_ID);
 const profileDirectory = app.commandLine.getSwitchValue("user-data-dir");
 if (profileDirectory) app.setPath("userData", path.resolve(profileDirectory));
+const userDataDirectory = app.getPath?.("userData");
+const recentProjects = createRecentProjects({
+  filename: userDataDirectory
+    ? path.join(userDataDirectory, "recent-projects.json")
+    : null,
+});
 
 if (devURL) {
   const parsed = new URL(devURL);
@@ -170,11 +180,30 @@ function registerMedia(filename) {
 // Open a project file and make it the current project. The Open button, a
 // double-clicked file, "Open with", a second launch and macOS open-file all use
 // this, so they share one set of checks and one way to hand out media.
-async function openProjectFile(filename) {
-  const result = await loadProjectFile(filename, { registerMedia });
-  currentProject = result.project;
-  currentProjectPath = filename;
-  send(output, "prism:project", currentProject);
+async function rememberProject(filename, name) {
+  try {
+    await recentProjects.remember(filename, name);
+  } catch (error) {
+    // History is a convenience; a metadata-write failure does not make a
+    // successfully opened or saved show fail.
+    console.warn("Recent projects could not be saved:", error.message);
+  }
+}
+function openProjectFile(filename) {
+  const absolutePath = path.resolve(filename);
+  // Picker, recent-show and OS requests all commit in order. A slow file on
+  // an external drive cannot overwrite a newer show after it has loaded.
+  const result = projectLoadChain.then(async () => {
+    const loaded = await loadProjectFile(absolutePath, { registerMedia });
+    currentProject = loaded.project;
+    currentProjectPath = absolutePath;
+    currentProjectName = loaded.project.name;
+    projectPathRevision++;
+    send(output, "prism:project", currentProject);
+    await rememberProject(absolutePath, currentProject.name);
+    return loaded;
+  });
+  projectLoadChain = result.catch(() => {});
   return result;
 }
 // Requests from the operating system wait until the editor page has said it can
@@ -194,27 +223,31 @@ function showEditor() {
   editor.focus();
 }
 function runtimeProject(input) {
-  return validateProject(input, (media) => {
-    if (!media.url && media.path) return { url: "", path: media.path }; // Known missing media remains relinkable in a saved project.
-    let url;
-    try {
-      url = new URL(media.url);
-    } catch {
-      throw new Error("Media must be imported through the media picker");
-    }
-    const filename = mediaPaths.get(url.pathname.slice(1));
-    if (
-      url.protocol !== "media:" ||
-      url.hostname !== "local" ||
-      !filename ||
-      url.search ||
-      url.hash ||
-      mediaKind(filename) !== media.kind
-    ) {
-      throw new Error("Media must be imported through the media picker");
-    }
-    return { url: media.url, path: filename };
-  });
+  return validateProject(
+    input,
+    (media) => {
+      if (!media.url && media.path) return { url: "", path: media.path }; // Known missing media remains relinkable in a saved project.
+      let url;
+      try {
+        url = new URL(media.url);
+      } catch {
+        throw new Error("Media must be imported through the media picker");
+      }
+      const filename = mediaPaths.get(url.pathname.slice(1));
+      if (
+        url.protocol !== "media:" ||
+        url.hostname !== "local" ||
+        !filename ||
+        url.search ||
+        url.hash ||
+        mediaKind(filename) !== media.kind
+      ) {
+        throw new Error("Media must be imported through the media picker");
+      }
+      return { url: media.url, path: filename };
+    },
+    { runtime: true },
+  );
 }
 
 function closeOutput() {
@@ -353,6 +386,34 @@ function installIPC() {
     trusted(event);
     return currentProject;
   });
+  ipcMain.handle("prism:get-recent-projects", async (event) => {
+    trusted(event, true);
+    try {
+      return await recentProjects.list();
+    } catch (error) {
+      console.warn("Recent projects could not be read:", error.message);
+      return [];
+    }
+  });
+  ipcMain.handle("prism:open-recent-project", async (event, id) => {
+    trusted(event, true);
+    try {
+      const entry = await recentProjects.resolve(id);
+      if (!entry)
+        return {
+          error:
+            "This project is no longer in Recent shows. Open it from disk.",
+        };
+      return { ...(await openProjectFile(entry.path)), path: entry.path };
+    } catch (error) {
+      return {
+        error:
+          error.code === "ENOENT"
+            ? "This recent project is unavailable. Reconnect its drive or open it from its new location."
+            : error.message,
+      };
+    }
+  });
   ipcMain.handle("prism:open-output", (event, displayId) => {
     trusted(event, true);
     return openOutput(displayId);
@@ -423,17 +484,34 @@ function installIPC() {
     trusted(event, true);
     try {
       const project = runtimeProject(input);
+      const revision = projectPathRevision;
+      const defaultPath = !currentProjectPath
+        ? defaultProjectFileName(project.name)
+        : currentProjectName === project.name
+          ? currentProjectPath
+          : path.join(
+              path.dirname(currentProjectPath),
+              defaultProjectFileName(project.name),
+            );
       const selection = await dialog.showSaveDialog(editor, {
         title: "Save mapping project",
-        defaultPath: currentProjectPath || defaultProjectFileName(project.name),
+        defaultPath,
         filters: [{ name: "Prism Mapper project", extensions: ["prism.json"] }],
       });
       if (selection.canceled || !selection.filePath) return { saved: false };
-      const filename = selection.filePath.toLowerCase().endsWith(".prism.json")
+      const selectedPath = selection.filePath
+        .toLowerCase()
+        .endsWith(".prism.json")
         ? selection.filePath
         : `${selection.filePath}.prism.json`;
+      const filename = path.resolve(selectedPath);
       await writeFileAtomic(filename, serializeProject(project, filename));
-      currentProjectPath = filename;
+      // A show opened while the Save dialog was up owns its own save path.
+      if (projectPathRevision === revision) {
+        currentProjectPath = filename;
+        currentProjectName = project.name;
+      }
+      await rememberProject(filename, project.name);
       return { saved: true, path: filename };
     } catch (error) {
       return { saved: false, error: error.message };

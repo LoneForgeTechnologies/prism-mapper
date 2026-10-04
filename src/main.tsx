@@ -57,9 +57,17 @@ import {
   type LoadedProject,
   type OutputStatus,
   type Point,
+  type Scene,
+  type Show,
+  type Media,
+  type RecentProject,
 } from "./model";
 import { ProjectionRenderer } from "./renderer";
 import { AudioPanel } from "./AudioPanel";
+import { ShowPanel } from "./ShowPanel";
+import { useShowTransport } from "./useShowTransport";
+import { positionAt, resolveShowFrame, showDuration } from "./timeline";
+import { readVideoDurations } from "./video-metadata";
 import { publishAudioFrame } from "./audio";
 import {
   CATALOG,
@@ -80,7 +88,7 @@ import {
 } from "./polygon";
 import type { MappingOverlay } from "./overlay";
 import { portableProject, projectFromFile } from "./project-validation";
-import { readBootProject } from "./persistence";
+import { pickedFileKind, readBootProject } from "./persistence";
 import {
   helpPlatform,
   projectFileName,
@@ -194,7 +202,25 @@ function useRenderer(
       pause: () => {
         stop();
         // One last frame with playback off lets video textures pause too.
-        renderer.render({ ...current.current, playing: false }, elapsed);
+        const project = current.current;
+        const time = Date.now();
+        renderer.render(
+          {
+            ...project,
+            playing: false,
+            ...(project.transport
+              ? {
+                  transport: {
+                    ...project.transport,
+                    position: positionAt(project.transport, time),
+                    updatedAt: time,
+                    playing: false,
+                  },
+                }
+              : {}),
+          },
+          elapsed,
+        );
       },
     };
     start();
@@ -329,6 +355,19 @@ function SetupSteps() {
 }
 function App() {
   const [project, setProject] = useState<Project>(safeDraft);
+  const showClock = useShowTransport(project);
+  useEffect(() => {
+    if (showClock.ended && project.playing)
+      setProject((previous) => ({ ...previous, playing: false }));
+  }, [showClock.ended, project.playing]);
+  const showClockRef = useRef(showClock);
+  showClockRef.current = showClock;
+  const showActive = Boolean(showClock.transport?.active);
+  const effectivePlaying = showActive ? showClock.playing : project.playing;
+  const [showPanel, setShowPanel] = useState(false);
+  const [showBusy, setShowBusy] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
   const [selected, setSelected] = useState(project.surfaces[0]?.id || "");
   const [corner, setCorner] = useState(0);
   const [displays, setDisplays] = useState<DisplayInfo[]>([]);
@@ -369,7 +408,12 @@ function App() {
   const insertGuard = useRef(createRepeatGuard());
   const canvasArea = useRef<HTMLDivElement>(null);
   const mediaInput = useRef<HTMLInputElement>(null);
+  const videoInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
+  const projectGeneration = useRef(0);
+  const videoRequest = useRef<{ generation: number; selected: string } | null>(
+    null,
+  );
   const current = useRef(project);
   current.current = project;
   const drag = useRef<{
@@ -385,15 +429,19 @@ function App() {
   } | null>(null);
   const surface = project.surfaces.find((s) => s.id === selected);
   const selectedPoints = surface ? surfacePoints(surface) : [];
-  const renderProject: Project = solo
-    ? {
-        ...project,
-        surfaces: project.surfaces.map((s) => ({
-          ...s,
-          visible: s.visible && (s.id === solo || s.kind === "mask"),
-        })),
-      }
-    : project;
+  const previewProject: Project =
+    solo && !showActive
+      ? {
+          ...project,
+          surfaces: project.surfaces.map((s) => ({
+            ...s,
+            visible: s.visible && (s.id === solo || s.kind === "mask"),
+          })),
+        }
+      : project;
+  const renderProject: Project = showClock.transport
+    ? { ...previewProject, transport: showClock.transport }
+    : previewProject;
   const material = surface ? patternById.get(surface.source) : undefined;
   const visiblePatterns = CATALOG.filter(
     (p) =>
@@ -414,6 +462,7 @@ function App() {
     if (!compact) setSheet(null);
   }, [compact]);
   const commit = useCallback((next: Project) => {
+    showClockRef.current.stop();
     setHistory((h) => ({
       past: [...h.past, clone(current.current)].slice(-60),
       future: [],
@@ -427,8 +476,9 @@ function App() {
     if (solo && !project.surfaces.some((s) => s.id === solo)) setSolo(null);
   }, [solo, project.surfaces]);
   useEffect(() => {
-    const overlay: MappingOverlay | null =
-      tool !== "select" && draft.length
+    const overlay: MappingOverlay | null = showActive
+      ? null
+      : tool !== "select" && draft.length
         ? {
             points: draft,
             closed: false,
@@ -438,7 +488,7 @@ function App() {
           ? { points: selectedPoints, closed: true }
           : null;
     api?.updateOverlay(overlay);
-  }, [tool, draft, draftCursor, guides, surface]);
+  }, [tool, draft, draftCursor, guides, surface, showActive]);
   const update = (patch: Partial<Project>) => commit({ ...project, ...patch });
   const updateSurface = (patch: Partial<Surface>) => {
     if (!surface) return;
@@ -491,6 +541,8 @@ function App() {
     () =>
       setHistory((h) => {
         if (!h.past.length) return h;
+        projectGeneration.current++;
+        showClockRef.current.stop();
         const previous = lastOf(h.past)!;
         setProject(clone(previous));
         return {
@@ -504,6 +556,8 @@ function App() {
     () =>
       setHistory((h) => {
         if (!h.future.length) return h;
+        projectGeneration.current++;
+        showClockRef.current.stop();
         setProject(clone(h.future[0]));
         return {
           past: [...h.past, clone(current.current)],
@@ -520,8 +574,21 @@ function App() {
   });
   useEffect(() => {
     api?.updateProject(renderProject);
+  }, [project, solo, showClock.transport]);
+  useEffect(() => {
     device.saveDraft(project);
-  }, [project, solo]);
+  }, [project]);
+  const refreshRecentProjects = useCallback(async () => {
+    if (!api) return;
+    try {
+      setRecentProjects(await api.getRecentProjects());
+    } catch (error) {
+      setError(String(error));
+    }
+  }, []);
+  useEffect(() => {
+    void refreshRecentProjects();
+  }, [refreshRecentProjects]);
   useEffect(() => {
     if (!project.surfaces.some((s) => s.id === selected))
       setSelected(lastOf(project.surfaces)?.id || "");
@@ -588,7 +655,109 @@ function App() {
     setDraftCursor(null);
     setTool("select");
   };
+  const prepareShowPlayback = () => {
+    setMix(false);
+    setSolo(null);
+    drag.current = null;
+    cancelDrawing();
+  };
+  const playShow = () => {
+    if (!current.current.show?.cues.length) return;
+    prepareShowPlayback();
+    showClock.play();
+    setProject((previous) => ({ ...previous, playing: true }));
+  };
+  const pauseShow = () => {
+    showClock.pause();
+    setProject((previous) => ({ ...previous, playing: false }));
+  };
+  const stopShow = () => {
+    showClock.stop();
+    setProject((previous) => ({ ...previous, playing: false }));
+  };
+  const seekShow = (position: number) => {
+    if (!current.current.show?.cues.length) return;
+    prepareShowPlayback();
+    showClock.seek(position);
+    setProject((previous) => ({ ...previous, playing: showClock.playing }));
+  };
+  const togglePlayback = () => {
+    if (showActive) {
+      if (showClock.playing) pauseShow();
+      else playShow();
+    } else
+      setProject((previous) => ({ ...previous, playing: !previous.playing }));
+  };
+  const changeShow = (show: Show) => {
+    commit({ ...current.current, version: 3, show });
+  };
+  const currentLook = () => {
+    const transport = showClockRef.current.transport;
+    return transport?.active
+      ? resolveShowFrame({ ...current.current, transport }, Date.now()).project
+          .surfaces
+      : current.current.surfaces;
+  };
+  const captureScene = () => {
+    const next = current.current;
+    const show = next.show ?? { scenes: [], cues: [], loop: false };
+    if (show.scenes.length >= 128) return;
+    changeShow({
+      ...show,
+      scenes: [
+        ...show.scenes,
+        {
+          id: newId(),
+          name: `Scene ${show.scenes.length + 1}`,
+          surfaces: clone(currentLook()),
+        },
+      ],
+    });
+    message("Look captured. Add it to the timeline and set its length.");
+  };
+  const loadScene = (scene: Scene) => {
+    setMix(false);
+    setSolo(null);
+    cancelDrawing();
+    commit({ ...current.current, surfaces: clone(scene.surfaces) });
+    setSelected(
+      scene.surfaces.find((item) => item.kind !== "mask")?.id ??
+        scene.surfaces[0]?.id ??
+        "",
+    );
+    message(
+      `Loaded ${scene.name}. Use Update look to save mapping changes to this scene.`,
+    );
+  };
+  const updateScene = (scene: Scene) => {
+    const next = current.current;
+    if (!next.show) return;
+    changeShow({
+      ...next.show,
+      scenes: next.show.scenes.map((item) =>
+        item.id === scene.id
+          ? { ...item, surfaces: clone(currentLook()) }
+          : item,
+      ),
+    });
+    message(`Updated ${scene.name}.`);
+  };
+  const newShow = () => {
+    projectGeneration.current++;
+    prepareShowPlayback();
+    commit({
+      ...current.current,
+      version: 3,
+      name: "Untitled show",
+      playing: false,
+      show: { scenes: [], cues: [], loop: false },
+    });
+    message(
+      "New show ready. Your mapping and media are kept; add a video sequence or capture a look.",
+    );
+  };
   const startDrawing = (next: "polygon" | "mask") => {
+    showClock.stop();
     setMix(false);
     setDraft([]);
     setDraftCursor(null);
@@ -704,17 +873,201 @@ function App() {
       mediaInput.current?.click();
       return;
     }
+    const generation = projectGeneration.current;
     try {
       const media = await api.importMedia();
+      if (generation !== projectGeneration.current) return;
       if (media.length) {
-        commit({ ...project, media: [...project.media, ...media] });
+        const next = current.current;
+        const accepted = media.slice(0, Math.max(0, 256 - next.media.length));
+        if (!accepted.length) {
+          setError("A project can hold up to 256 media files.");
+          return;
+        }
+        commit({ ...next, media: [...next.media, ...accepted] });
         setTab("media");
         message(
-          `${media.length} media file${media.length === 1 ? "" : "s"} added. Select one to assign it.`,
+          `${accepted.length} media file${accepted.length === 1 ? "" : "s"} added. Select one to assign it.`,
         );
       }
     } catch (e) {
       setError(String(e));
+    }
+  };
+  const addVideoSequence = async (
+    imported: Media[],
+    request: { generation: number; selected: string },
+    selectedCount = imported.length,
+  ) => {
+    if (request.generation !== projectGeneration.current) return;
+    const initial = current.current;
+    const initialShow = initial.show ?? { scenes: [], cues: [], loop: false };
+    const room = Math.max(
+      0,
+      Math.min(
+        256 - initial.media.length,
+        128 - initialShow.scenes.length,
+        512 - initialShow.cues.length,
+      ),
+    );
+    const videos = imported
+      .filter((media) => media.kind === "video")
+      .slice(0, room);
+    if (!videos.length) {
+      setError(
+        room
+          ? "Pick MP4, MOV or WebM videos to add to the timeline."
+          : "This show has reached its scene, clip or media limit.",
+      );
+      return;
+    }
+    const metadata = await readVideoDurations(videos.map((media) => media.url));
+    if (request.generation !== projectGeneration.current) {
+      message("Video import cancelled because another project was opened.");
+      return;
+    }
+    const next = current.current;
+    const show = next.show ?? { scenes: [], cues: [], loop: false };
+    const remaining = Math.max(
+      0,
+      Math.min(
+        256 - next.media.length,
+        128 - show.scenes.length,
+        512 - show.cues.length,
+      ),
+    );
+    let total = showDuration(show);
+    let count = 0;
+    while (
+      count < Math.min(videos.length, remaining) &&
+      total + metadata[count].duration <= 86400
+    ) {
+      total += metadata[count].duration;
+      count++;
+    }
+    if (!count) {
+      setError(
+        "This show has reached its scene, clip, media or 24-hour timeline limit.",
+      );
+      return;
+    }
+    let target =
+      next.surfaces.find(
+        (item) => item.id === request.selected && item.kind !== "mask",
+      ) ?? next.surfaces.find((item) => item.kind !== "mask");
+    if (!target && next.surfaces.length >= 32) {
+      setError(
+        "Select a video surface or remove a layer before importing clips; a project supports 32 layers.",
+      );
+      return;
+    }
+    const mapping = clone(next.surfaces);
+    if (!target) {
+      target = newSurface(mapping.length);
+      mapping.push(target);
+    }
+    const targetId = target.id;
+    const accepted = videos.slice(0, count);
+    const scenes = accepted.map((media) => ({
+      id: newId(),
+      name: media.name.replace(/\.[^.]+$/, "") || media.name,
+      surfaces: mapping.map((item) =>
+        item.id === targetId
+          ? { ...clone(item), source: media.id, visible: true }
+          : clone(item),
+      ),
+    }));
+    const cues = scenes.map((scene, index) => ({
+      id: newId(),
+      sceneId: scene.id,
+      duration: metadata[index].duration,
+    }));
+    setMix(false);
+    setSolo(null);
+    cancelDrawing();
+    commit({
+      ...next,
+      version: 3,
+      media: [...next.media, ...accepted],
+      surfaces: clone(scenes[0].surfaces),
+      show: {
+        ...show,
+        scenes: [...show.scenes, ...scenes],
+        cues: [...show.cues, ...cues],
+      },
+    });
+    setSelected(targetId);
+    setTab("media");
+    const fallback = metadata
+      .slice(0, count)
+      .filter((item) => item.fallback).length;
+    const skipped = selectedCount - count;
+    message(
+      [
+        `Added ${count} video${count === 1 ? "" : "s"} in selection order.`,
+        fallback
+          ? `${fallback} clip${fallback === 1 ? "" : "s"} defaulted to 2:00 because the duration could not be read. Adjust the clip length if needed.`
+          : "",
+        skipped
+          ? `${skipped} file${skipped === 1 ? " was" : "s were"} skipped; timeline imports accept videos within the project limits.`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" "),
+    );
+  };
+  const importShowVideos = async () => {
+    const request = { generation: projectGeneration.current, selected };
+    if (!api) {
+      videoRequest.current = request;
+      videoInput.current?.click();
+      return;
+    }
+    setShowBusy(true);
+    try {
+      const imported = await api.importMedia();
+      if (imported.length) await addVideoSequence(imported, request);
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setShowBusy(false);
+    }
+  };
+  const importBrowserShowVideos = async (files: File[]) => {
+    const request = videoRequest.current;
+    videoRequest.current = null;
+    if (
+      !request ||
+      request.generation !== projectGeneration.current ||
+      !files.length
+    )
+      return;
+    setShowBusy(true);
+    try {
+      const videos = files.filter((file) => pickedFileKind(file) === "video");
+      if (!videos.length) {
+        setError("Pick MP4, MOV or WebM videos to add to the timeline.");
+        return;
+      }
+      const next = current.current;
+      const show = next.show ?? { scenes: [], cues: [], loop: false };
+      const room = Math.max(
+        0,
+        Math.min(
+          256 - next.media.length,
+          128 - show.scenes.length,
+          512 - show.cues.length,
+        ),
+      );
+      await addVideoSequence(
+        device.importFiles(videos.slice(0, room)),
+        request,
+        files.length,
+      );
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setShowBusy(false);
     }
   };
   const save = async () => {
@@ -723,14 +1076,21 @@ function App() {
       if (api) {
         const result = await api.saveProject(project);
         if (result.error) setError(result.error);
-        else if (result.saved)
+        else if (result.saved) {
           message(
             "Project saved. Media files stay in their original locations.",
           );
+          void refreshRecentProjects();
+        }
       } else {
+        const text = JSON.stringify(portableProject(project), null, 2);
+        if (new Blob([text]).size > 5 * 1024 * 1024)
+          throw new Error(
+            "Project exceeds 5 MB. Reduce the number of scenes or outline points before saving.",
+          );
         const outcome = await saveFile(
           projectFileName(project.name),
-          JSON.stringify(portableProject(project), null, 2),
+          text,
           "application/json",
         );
         if (outcome !== "cancelled")
@@ -755,11 +1115,14 @@ function App() {
   const showOpened = (result: LoadedProject) => {
     if (result.error) setError(result.error);
     else if (result.project) {
+      projectGeneration.current++;
       setMix(false);
       setSolo(null);
       cancelDrawing();
       commit(result.project);
       setSelected(result.project.surfaces[0]?.id || "");
+      if (result.project.show) setShowPanel(true);
+      void refreshRecentProjects();
       message(
         result.missing?.length
           ? `Opened. Relink missing media by importing: ${result.missing.join(", ")}`
@@ -778,6 +1141,7 @@ function App() {
     return api.onProjectOpened((result) => showOpenedRef.current(result));
   }, []);
   const open = async () => {
+    showClock.stop();
     setMix(false);
     setSolo(null);
     cancelDrawing();
@@ -785,10 +1149,26 @@ function App() {
       projectInput.current?.click();
       return;
     }
+    setOpening(true);
     try {
       showOpened(await api.loadProject());
     } catch (e) {
       setError(String(e));
+    } finally {
+      setOpening(false);
+    }
+  };
+  const openRecent = async (id: string) => {
+    if (!api) return;
+    showClock.stop();
+    setOpening(true);
+    try {
+      showOpened(await api.openRecentProject(id));
+    } catch (error) {
+      setError(String(error));
+    } finally {
+      setOpening(false);
+      void refreshRecentProjects();
     }
   };
   /**
@@ -797,7 +1177,7 @@ function App() {
    * repeats fold into the history entry of the first press.
    */
   const nudge = (dx: number, dy: number, step: number, repeat = false) => {
-    if (!surface || surface.locked) return;
+    if (showActive || !surface || surface.locked) return;
     const p = selectedPoints[corner];
     if (!p) return;
     if (!repeat) {
@@ -852,6 +1232,7 @@ function App() {
     requestPresentFullscreen();
     presentOpener.current = document.activeElement as HTMLElement | null;
     cancelDrawing();
+    setShowPanel(false);
     setPresenting(true);
   };
   const exitPresent = useCallback(() => {
@@ -867,6 +1248,7 @@ function App() {
   // app only from the plain editor. Present mode keeps its own listener.
   const backNow = {
     presenting,
+    showPanel,
     help,
     sheet: activeSheet,
     drawing: tool !== "select",
@@ -877,6 +1259,10 @@ function App() {
     let cancelled = false;
     let remove = () => {};
     void onBackButton(() => {
+      if (backState.current.showPanel) {
+        setShowPanel(false);
+        return;
+      }
       switch (backAction(backState.current)) {
         case "close-help":
           setHelp(false);
@@ -904,6 +1290,10 @@ function App() {
     const key = (e: KeyboardEvent) => {
       // Present mode listens for its own keys.
       if (presenting) return;
+      if (showPanel && e.key === "Escape") {
+        setShowPanel(false);
+        return;
+      }
       if (help) {
         if (e.key === "Escape") setHelp(false);
         if (e.key === "Tab") {
@@ -946,7 +1336,7 @@ function App() {
       }
       if (e.code === "Space" && !owned) {
         e.preventDefault();
-        setProject((p) => ({ ...p, playing: !p.playing }));
+        togglePlayback();
       }
       if (tool !== "select") {
         if (e.key === "Escape") {
@@ -1089,7 +1479,7 @@ function App() {
   };
   const stagePointerDown = (e: React.PointerEvent) => {
     // The first finger owns the gesture. A second one never starts anything.
-    if (e.button !== 0 || !e.isPrimary) return;
+    if (showActive || e.button !== 0 || !e.isPrimary) return;
     const p = getPoint(e);
     const reach = hitReach(e.pointerType);
     if (tool !== "select") {
@@ -1148,7 +1538,7 @@ function App() {
     point: number | null,
     id = selected,
   ) => {
-    if (tool !== "select" || !e.isPrimary) return;
+    if (showActive || tool !== "select" || !e.isPrimary) return;
     const s = project.surfaces.find((s) => s.id === id);
     if (!s) return;
     setSelected(id);
@@ -1173,6 +1563,7 @@ function App() {
     };
   };
   const onMove = (e: React.PointerEvent) => {
+    if (showActive) return;
     if (tool !== "select") {
       setDraftCursor(getPoint(e));
       return;
@@ -1211,7 +1602,8 @@ function App() {
     }));
   };
   const insertPoint = (e: { clientX: number; clientY: number }, reach = 14) => {
-    if (tool !== "select" || !surface?.polygon || surface.locked) return;
+    if (showActive || tool !== "select" || !surface?.polygon || surface.locked)
+      return;
     const match = nearestOutlineEdge(getPoint(e));
     if (match && match.distance < reach) {
       const next = insertSurfacePoint(surface, match.edge, match.point);
@@ -1292,6 +1684,27 @@ function App() {
         : {}),
     };
   };
+  const projectHeading = (
+    <div className="workspace-bar">
+      <div className="project-title">
+        <span className="status-dot" />
+        <input
+          aria-label="Project name"
+          maxLength={80}
+          value={project.name}
+          onChange={(e) => {
+            showClock.stop();
+            setProject({ ...project, name: e.target.value });
+          }}
+        />
+        <span className="project-tag">INDOOR SESSION</span>
+      </div>
+      <div className="session-meta">
+        <span>LOCAL WORKSPACE</span>
+        <span>Free & open source</span>
+      </div>
+    </div>
+  );
   return (
     <div
       className="app-shell"
@@ -1299,6 +1712,7 @@ function App() {
       data-runtime={api ? "desktop" : "web"}
       data-sheet={activeSheet ?? undefined}
       data-presenting={presenting ? "true" : undefined}
+      data-show-active={showActive ? "true" : undefined}
     >
       <header className="topbar">
         <div className="brand">
@@ -1321,14 +1735,26 @@ function App() {
           </span>
           <span className="alpha">EARLY ACCESS · {APP_VERSION}</span>
         </div>
+        {compact && projectHeading}
         <div className="header-actions">
-          <button onClick={open}>
+          <button onClick={open} disabled={opening || saving}>
             <FolderOpen size={15} />
             Open
           </button>
           <button onClick={save} disabled={saving}>
             <Save size={15} />
             {saving ? "Saving…" : "Save project"}
+          </button>
+          <button
+            className="show-toggle"
+            aria-label="Scenes and timeline"
+            aria-pressed={showPanel}
+            onClick={() => {
+              setSheet(null);
+              setShowPanel((previous) => !previous);
+            }}
+          >
+            <Film size={15} /> Scenes & timeline
           </button>
           <span className="separator" />
           <button
@@ -1341,22 +1767,7 @@ function App() {
           </button>
         </div>
       </header>
-      <div className="workspace-bar">
-        <div className="project-title">
-          <span className="status-dot" />
-          <input
-            aria-label="Project name"
-            maxLength={80}
-            value={project.name}
-            onChange={(e) => setProject({ ...project, name: e.target.value })}
-          />
-          <span className="project-tag">INDOOR SESSION</span>
-        </div>
-        <div className="session-meta">
-          <span>LOCAL WORKSPACE</span>
-          <span>Free & open source</span>
-        </div>
-      </div>
+      {!compact && projectHeading}
       <main className="workspace">
         <aside className="left-panel" {...sheetPanel("left")}>
           <SheetBar
@@ -1672,7 +2083,7 @@ function App() {
           <div className="canvas-toolbar">
             <div className="view-label">
               <span className="status-dot" />
-              Mapping view
+              {showActive ? "Show playback" : "Mapping view"}
             </div>
             <div className="canvas-actions">
               <button
@@ -1819,10 +2230,8 @@ function App() {
                 tool === "select" ? undo : () => setDraft((p) => p.slice(0, -1))
               }
               onRedo={redo}
-              playing={project.playing}
-              onTogglePlay={() =>
-                setProject((p) => ({ ...p, playing: !p.playing }))
-              }
+              playing={effectivePlaying}
+              onTogglePlay={togglePlayback}
               blackout={project.blackout}
               onBlackout={blackout}
             />
@@ -1886,6 +2295,7 @@ function App() {
                 />
                 <svg
                   className="mapping-overlay"
+                  style={showActive ? { display: "none" } : undefined}
                   viewBox={`0 0 ${project.width} ${project.height}`}
                   preserveAspectRatio="none"
                   onPointerDown={stagePointerDown}
@@ -1942,7 +2352,8 @@ function App() {
                     </g>
                   )}
                 </svg>
-                {tool !== "select" &&
+                {!showActive &&
+                  tool !== "select" &&
                   draft.map((p, i) => (
                     <button
                       key={`draft-${i}`}
@@ -1967,7 +2378,8 @@ function App() {
                       <span>{i + 1}</span>
                     </button>
                   ))}
-                {tool === "select" &&
+                {!showActive &&
+                  tool === "select" &&
                   surface?.visible &&
                   selectedPoints.map((p, i) => (
                     <button
@@ -1995,23 +2407,27 @@ function App() {
                     <Circle size={18} /> Output blacked out <kbd>B</kbd>
                   </div>
                 )}
-                {!project.surfaces.length && tool === "select" && (
-                  <div className="canvas-empty">
-                    <Layers size={28} />
-                    <span>Add a surface to start mapping</span>
-                  </div>
-                )}
+                {!showActive &&
+                  !project.surfaces.length &&
+                  tool === "select" && (
+                    <div className="canvas-empty">
+                      <Layers size={28} />
+                      <span>Add a surface to start mapping</span>
+                    </div>
+                  )}
               </div>
               <div className="stage-below">
                 <span>
                   <Move size={13} />
-                  {tool !== "select"
-                    ? compact
-                      ? "Undo takes back the last point"
-                      : "Shift: straight angles · Backspace: undo point · Esc: cancel"
-                    : surface?.polygon
-                      ? `Drag points · Double-${compact ? "tap" : "click"} an edge to add a point`
-                      : "Drag a layer or its corners"}
+                  {showActive
+                    ? "Timeline playing · stop the show or load a scene to edit its mapping"
+                    : tool !== "select"
+                      ? compact
+                        ? "Undo takes back the last point"
+                        : "Shift: straight angles · Backspace: undo point · Esc: cancel"
+                      : surface?.polygon
+                        ? `Drag points · Double-${compact ? "tap" : "click"} an edge to add a point`
+                        : "Drag a layer or its corners"}
                 </span>
                 <span>
                   <kbd>P</kbd> draw · <kbd>G</kbd> guides{" "}
@@ -2025,21 +2441,21 @@ function App() {
             <div className="transport-left">
               <button
                 className="play-button"
-                onClick={() =>
-                  setProject({ ...project, playing: !project.playing })
-                }
+                onClick={togglePlayback}
                 aria-label={
-                  project.playing ? "Pause playback" : "Resume playback"
+                  effectivePlaying ? "Pause playback" : "Resume playback"
                 }
               >
-                {project.playing ? <Pause size={17} /> : <Play size={17} />}
+                {effectivePlaying ? <Pause size={17} /> : <Play size={17} />}
               </button>
               <span>
-                {project.playing ? "Playing" : "Paused"}
+                {effectivePlaying ? "Playing" : "Paused"}
                 <small>
-                  {surface
-                    ? patternNames[surface.source] || "Local media"
-                    : "No surface selected"}
+                  {showActive
+                    ? "Show timeline"
+                    : surface
+                      ? patternNames[surface.source] || "Local media"
+                      : "No surface selected"}
                 </small>
               </span>
             </div>
@@ -2792,6 +3208,33 @@ function App() {
           </button>
         </div>
       )}
+      {showPanel && !presenting && (
+        <ShowPanel
+          project={project}
+          recent={recentProjects}
+          busy={showBusy || saving || opening}
+          position={showClock.position}
+          playing={showClock.playing}
+          active={showActive}
+          onClose={() => setShowPanel(false)}
+          onShowChange={changeShow}
+          onCapture={captureScene}
+          onLoadScene={loadScene}
+          onUpdateScene={updateScene}
+          onImportVideos={importShowVideos}
+          onPlay={playShow}
+          onPause={pauseShow}
+          onStop={stopShow}
+          onSeek={seekShow}
+          onSave={() => {
+            void save();
+          }}
+          onNew={newShow}
+          onOpenRecent={(id) => {
+            void openRecent(id);
+          }}
+        />
+      )}
       {help && (
         <div className="modal-backdrop" onClick={() => setHelp(false)}>
           <section
@@ -2836,7 +3279,7 @@ function App() {
           project={renderProject}
           stageRef={presentStage}
           stageHandlers={stageHandlers}
-          guides={renderProject.surfaces
+          guides={(showActive ? [] : renderProject.surfaces)
             .filter((s) => s.visible)
             .map((s) => ({
               id: s.id,
@@ -2844,17 +3287,15 @@ function App() {
               selected: s.id === selected,
               mask: s.kind === "mask",
             }))}
-          points={surface?.visible ? selectedPoints : []}
+          points={!showActive && surface?.visible ? selectedPoints : []}
           corner={corner}
-          locked={!!surface?.locked}
+          locked={showActive || !!surface?.locked}
           onOverlayDown={stagePointerDown}
           onHandleDown={(e, index) => beginDrag(e, index)}
           onSelectCorner={setCorner}
           onNudge={nudge}
           onBlackout={blackout}
-          onTogglePlay={() =>
-            setProject((p) => ({ ...p, playing: !p.playing }))
-          }
+          onTogglePlay={togglePlayback}
           onBrightness={(brightness) =>
             setProject((p) => ({ ...p, brightness }))
           }
@@ -2874,17 +3315,33 @@ function App() {
       />
       <input
         hidden
+        ref={videoInput}
+        type="file"
+        aria-label="Videos for timeline"
+        accept="video/mp4,video/webm,video/quicktime,.mp4,.m4v,.mov,.webm"
+        multiple
+        onChange={(event) => {
+          const files = Array.from(event.target.files || []);
+          event.target.value = "";
+          void importBrowserShowVideos(files);
+        }}
+      />
+      <input
+        hidden
         ref={projectInput}
         type="file"
         accept=".json,.prism.json"
         onChange={async (e) => {
           const file = e.target.files?.[0];
           if (!file) return;
+          e.target.value = "";
+          const generation = projectGeneration.current;
           try {
             if (file.size > 5 * 1024 * 1024)
               throw new Error("Project files must be smaller than 5 MB.");
             const next = projectFromFile(JSON.parse(await file.text()));
-            commit(next);
+            if (generation !== projectGeneration.current) return;
+            showOpened({ project: next });
             message(
               next.media.length
                 ? "Project loaded in blackout. Layers that use media stay dark until you import the files again."

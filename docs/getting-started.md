@@ -8,13 +8,13 @@ Prism Mapper is a half vibe-coded, half-tested project, so keep a copy of your p
 
 Open the [latest release](https://github.com/LoneForgeTechnologies/prism-mapper/releases/latest), expand **Assets**, and download the file for your device:
 
-| Your device | Download | Then |
-| --- | --- | --- |
-| Windows 10 or 11, 64-bit | The file ending in `-Windows-x64-Setup.exe` | Run it. SmartScreen may warn that the app is not signed: choose **More info**, then **Run anyway**. It installs for your user account and needs no administrator rights. |
-| Windows, without installing | The file ending in `-Windows-x64.zip` | Right-click the ZIP, **Properties**, tick **Unblock**, press OK, extract it and start **Prism Mapper.exe**. |
-| Mac with an M-series chip | The file ending in `-macOS-arm64.zip` | Open the ZIP, move **Prism Mapper.app** to **Applications** and open it. macOS 12 or newer. |
-| Mac with an Intel processor | The file ending in `-macOS-x64.zip` | The same steps. |
-| Android 7 or newer | The file ending in `-Android.apk` | Open it on the phone and allow installs from that source. Play Protect may warn that the developer is unknown. |
+| Your device                     | Download                                                        | Then                                                                                                                                                                      |
+| ------------------------------- | --------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Windows 10 or 11, 64-bit        | The file ending in `-Windows-x64-Setup.exe`                     | Run it. SmartScreen may warn that the app is not signed: choose **More info**, then **Run anyway**. It installs for your user account and needs no administrator rights.  |
+| Windows, without installing     | The file ending in `-Windows-x64.zip`                           | Right-click the ZIP, **Properties**, tick **Unblock**, press OK, extract it and start **Prism Mapper.exe**.                                                               |
+| Mac with an M-series chip       | The file ending in `-macOS-arm64.zip`                           | Open the ZIP, move **Prism Mapper.app** to **Applications** and open it. macOS 12 or newer.                                                                               |
+| Mac with an Intel processor     | The file ending in `-macOS-x64.zip`                             | The same steps.                                                                                                                                                           |
+| Android 7 or newer              | The file ending in `-Android.apk`                               | Open it on the phone and allow installs from that source. Play Protect may warn that the developer is unknown.                                                            |
 | iPhone or iPad, iOS 15 or newer | The file ending in `-iOS-unsigned.ipa`, or the source for Xcode | The IPA must be re-signed and sideloaded with your Apple ID. It cannot be installed directly. See [the mobile guide](building-mobile.md#install-the-iphone-and-ipad-app). |
 
 The Windows, Mac and Android downloads contain the app, runtime and generated animations, so you do not need Node.js or internet to use them. Before visiting a location with no internet, download the right file and its checksum on another computer, then transfer them, your saved project and any media on a USB drive or other local storage. Install or extract the app on the offline device using the steps above.
@@ -82,13 +82,29 @@ System output means the computer's current playback mix; it is not a separate se
 
 Audio stays on the computer and is analyzed without recording, uploading, or being played back through the speakers. If access is denied, correct the app's permission in your OS settings, then try **Start listening** again; a restart may be needed after changing a permission.
 
-## 6. Save, share, and update
+## 6. Build a band show from local videos
 
-Click **Save project** to create a `.prism.json` file. To share a layout made only from generated animations, send that file to someone using Prism Mapper 0.4 or later.
+Scenes and timeline are part of the upcoming 0.6 development version; the 0.5.0 downloads do not include them.
+
+1. Finish aligning your surfaces, then select the non-mask surface for your videos.
+2. Open **Scenes & timeline** in the header (the film icon on phones and narrow windows) and choose **Add videos to timeline**.
+3. Select your local MP4 files. Each video becomes a scene with a copy of the mapping and a clip in selection order. Its metadata supplies the length; when that cannot be read, the app reports an editable **2:00** fallback.
+4. Use the clip arrows or drag to arrange the sequence. Edit each length as `m:ss` or seconds. Twenty **2:00** clips make a **40:00** pre-show, and fifteen make **30:00**.
+5. Enable **Loop show** if needed, then use **Play show**, **Pause show**, the playhead slider and **Stop show**. Scene changes use clean cuts, and video audio is muted.
+
+Use **Capture look** to save your currently visible look as a scene without importing another video. **Load look** returns a scene to the mapping editor; after making changes, use **Update look** to store them in that scene. Each scene keeps its own mapping snapshot. Timeline playback hides mapping handles and guides so you can see the show; stop or load a scene to edit its alignment.
+
+Save separate projects named **Band intro**, **Pre-show**, **Set 1** and **Set 2**. **New show** keeps your mapping and media while clearing the scenes and timeline. The desktop panel offers eight **Quick open** buttons for recent project files. Save edits before switching. Playback position is a session control and is not saved.
+
+A show can contain 128 scenes and 512 clips, up to 24 hours per rotation. Clip lengths range from 0.1 seconds to 120 minutes. See the [user guide](user-guide.md#scenes-and-timeline) for missing media, scene updates and file-size limits.
+
+## 7. Save, share, and update
+
+Click **Save project** to create a `.prism.json` file. Scenes and timelines require Prism Mapper 0.6 or later. For an older mapping without a show, use 0.4 or later to keep all audio response settings.
 
 For imported images or videos, keep a project folder containing the `.prism.json` and its media, then share the whole folder. The saved project references media by relative path and does not bundle it. Missing media appears black until you import and assign a replacement. Your projector alignment is specific to your room; someone using another projector position will need to adjust the points.
 
-Generated-pattern drafts normally recover on the same computer and user account, but an explicit saved project is the reliable way to move or back up your work. Audio source selection, listening state, tuning, solo, guides, unfinished outlines, and automatic mixes are session controls and are not saved in the project.
+Generated-pattern drafts normally recover on the same computer and user account, but an explicit saved project is the reliable way to move or back up your work. Scene snapshots, clip order, clip lengths and the loop setting are saved. Show playhead and playback state, audio source selection, listening state, tuning, solo, guides, unfinished outlines, and automatic mixes are session controls and are not saved in the project.
 
 For an update:
 
@@ -99,7 +115,7 @@ For an update:
 
 The application keeps the same identity between releases, preserving its local draft under normal updates. There is no automatic updater. Store your projects and media outside the application folder so replacing the app cannot replace your only copy.
 
-Current releases open project schema versions 1 and 2 and save version 2. Projects also move between the installed desktop and mobile apps, but their pictures and videos do not travel with them. App versions 0.1 and 0.2 cannot open version-2 projects. App version 0.3 can read version-2 mapping geometry but drops audio response settings if it saves the project. Use 0.4 or later for projects with audio responses.
+The 0.6 development version opens schema versions 1, 2 and 3. Existing version-1/2 mappings without a show continue to save as version 2. Scenes and timelines use version 3 and cannot be opened by 0.5 or older apps. Projects also move between the installed desktop and mobile apps, but their pictures and videos do not travel with them. App versions 0.1 and 0.2 cannot open version-2 projects. App version 0.3 can read version-2 mapping geometry but drops audio response settings if it saves the project. Use 0.4 or later for projects with audio responses.
 
 ## Need help?
 

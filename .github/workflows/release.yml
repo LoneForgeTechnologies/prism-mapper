@@ -49,10 +49,22 @@ jobs:
             arch: x64
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    environment: release-signing
+    permissions:
+      contents: read
+      id-token: write
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
       PRISM_TARGET_PLATFORM: ${{ matrix.platform }}
       PRISM_TARGET_ARCH: ${{ matrix.arch }}
+      # Publishing requires real credentials. A dry run explicitly permits
+      # development signatures so contributors can still rehearse packaging.
+      PRISM_REQUIRE_SIGNED_RELEASE: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+      PRISM_MAC_TEAM_ID: ${{ vars.PRISM_MAC_TEAM_ID }}
+      PRISM_WINDOWS_SIGNING_ENDPOINT: ${{ vars.PRISM_WINDOWS_SIGNING_ENDPOINT }}
+      PRISM_WINDOWS_SIGNING_ACCOUNT: ${{ vars.PRISM_WINDOWS_SIGNING_ACCOUNT }}
+      PRISM_WINDOWS_CERTIFICATE_PROFILE: ${{ vars.PRISM_WINDOWS_CERTIFICATE_PROFILE }}
+      PRISM_WINDOWS_EXPECTED_PUBLISHER: ${{ vars.PRISM_WINDOWS_EXPECTED_PUBLISHER }}
     steps:
       # Keep LF line endings on Windows so the format check and the packaged
       # files are identical on every platform.
@@ -74,17 +86,101 @@ jobs:
         shell: bash
         run: |
           node --input-type=module -e 'import fs from "node:fs"; const pkg = JSON.parse(fs.readFileSync("package.json", "utf8")); if (!/^v\d+\.\d+\.\d+(?:-[a-zA-Z0-9.-]+)?$/.test(process.env.RELEASE_TAG) || process.env.RELEASE_TAG !== `v${pkg.version}`) throw new Error("Release tag must equal the package version");'
+      - name: Check signing configuration
+        id: signing
+        shell: bash
+        env:
+          MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_API_KEY: ${{ secrets.MAC_API_KEY_P8_BASE64 }}
+          MAC_API_ID: ${{ secrets.MAC_API_KEY_ID }}
+          MAC_API_ISSUER: ${{ secrets.MAC_API_ISSUER_ID }}
+          AZURE_CLIENT: ${{ vars.AZURE_CLIENT_ID }}
+          AZURE_TENANT: ${{ vars.AZURE_TENANT_ID }}
+          AZURE_SUBSCRIPTION: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+        run: |
+          set -euo pipefail
+          AVAILABLE=false
+          if [ "$PRISM_TARGET_PLATFORM" = darwin ]; then
+            if [ -n "$MAC_CERTIFICATE" ] && [ -n "$MAC_PASSWORD" ] && [ -n "$MAC_API_KEY" ] && [ -n "$MAC_API_ID" ] && [ -n "$MAC_API_ISSUER" ]; then AVAILABLE=true; fi
+          else
+            if [ -n "$AZURE_CLIENT" ] && [ -n "$AZURE_TENANT" ] && [ -n "$AZURE_SUBSCRIPTION" ] && [ -n "$PRISM_WINDOWS_SIGNING_ENDPOINT" ] && [ -n "$PRISM_WINDOWS_SIGNING_ACCOUNT" ] && [ -n "$PRISM_WINDOWS_CERTIFICATE_PROFILE" ]; then AVAILABLE=true; fi
+            echo "PRISM_WINDOWS_SIGNING_ENABLED=$AVAILABLE" >> "$GITHUB_ENV"
+          fi
+          echo "available=$AVAILABLE" >> "$GITHUB_OUTPUT"
+          if [ "$PRISM_REQUIRE_SIGNED_RELEASE" = true ] && [ "$AVAILABLE" != true ]; then
+            echo "::error::Publishing requires configured signing credentials. Complete docs/signing.md or run an explicit dry run."
+            exit 1
+          fi
+          if [ "$PRISM_REQUIRE_SIGNED_RELEASE" = true ]; then
+            if [ "$PRISM_TARGET_PLATFORM" = darwin ] && [ -z "$PRISM_MAC_TEAM_ID" ]; then
+              echo "::error::Publishing requires PRISM_MAC_TEAM_ID to verify the intended Apple publisher."
+              exit 1
+            fi
+            if [ "$PRISM_TARGET_PLATFORM" = win32 ] && [ -z "$PRISM_WINDOWS_EXPECTED_PUBLISHER" ]; then
+              echo "::error::Publishing requires PRISM_WINDOWS_EXPECTED_PUBLISHER to verify the intended Windows publisher."
+              exit 1
+            fi
+          fi
+      - name: Prepare temporary Mac signing credentials
+        if: ${{ matrix.platform == 'darwin' && steps.signing.outputs.available == 'true' }}
+        shell: bash
+        env:
+          MAC_CERTIFICATE: ${{ secrets.MAC_CERTIFICATE_P12_BASE64 }}
+          MAC_PASSWORD: ${{ secrets.MAC_CERTIFICATE_PASSWORD }}
+          MAC_API_KEY: ${{ secrets.MAC_API_KEY_P8_BASE64 }}
+          MAC_API_ID: ${{ secrets.MAC_API_KEY_ID }}
+          MAC_API_ISSUER: ${{ secrets.MAC_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          umask 077
+          KEYCHAIN="$RUNNER_TEMP/prism-signing.keychain-db"
+          CERTIFICATE="$RUNNER_TEMP/prism-signing.p12"
+          API_FILE="$RUNNER_TEMP/prism-notary-api.p8"
+          trap 'rm -f "$CERTIFICATE"' EXIT
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 32)"
+          echo "::add-mask::$KEYCHAIN_PASSWORD"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          printf '%s' "$MAC_CERTIFICATE" | base64 --decode > "$CERTIFICATE"
+          security import "$CERTIFICATE" -P "$MAC_PASSWORD" -T /usr/bin/codesign -k "$KEYCHAIN"
+          security set-key-partition-list -S apple-tool:,apple: -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          security list-keychains -d user -s "$KEYCHAIN" login.keychain-db
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | awk -F '"' '/Developer ID Application:/ {print $2}')"
+          case "$IDENTITY" in ""|*$'\n'*) echo "::error::Expected exactly one valid Developer ID Application identity."; exit 1 ;; esac
+          printf '%s' "$MAC_API_KEY" | base64 --decode > "$API_FILE"
+          {
+            echo "PRISM_MAC_SIGNING_KEYCHAIN=$KEYCHAIN"
+            echo "PRISM_MAC_SIGNING_IDENTITY=$IDENTITY"
+            echo "PRISM_MAC_NOTARY_KEY_PATH=$API_FILE"
+            echo "PRISM_MAC_NOTARY_KEY_ID=$MAC_API_ID"
+            echo "PRISM_MAC_NOTARY_ISSUER_ID=$MAC_API_ISSUER"
+          } >> "$GITHUB_ENV"
+      - name: Authenticate to Azure using the release environment
+        if: ${{ matrix.platform == 'win32' && steps.signing.outputs.available == 'true' }}
+        uses: azure/login@v3
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
       - run: npm ci
       - run: npm run format:check
       - run: npm test
       - run: npm run build
-      - run: node scripts/package-release.mjs
+      - name: Stage the Windows application
+        if: ${{ matrix.platform == 'win32' }}
+        run: node scripts/package-release.mjs --stage-only
+      - name: Sign, notarize and package the Mac application
+        if: ${{ matrix.platform == 'darwin' }}
+        run: node scripts/package-release.mjs
       - name: Locate the packaged application
         shell: bash
         run: |
           VERSION="$(node -p 'require("./package.json").version')"
           STAGE="release/distribution/$VERSION/$PRISM_TARGET_PLATFORM-$PRISM_TARGET_ARCH"
           if [ "$PRISM_TARGET_PLATFORM" = win32 ]; then
+            echo "PACKAGED_APP=$GITHUB_WORKSPACE/$STAGE/Prism-Mapper-v$VERSION-Windows-x64/Prism Mapper" >> "$GITHUB_ENV"
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-Windows-x64/Prism Mapper/Prism Mapper.exe" >> "$GITHUB_ENV"
             echo "SETUP_EXE=release/distribution/Prism-Mapper-v$VERSION-Windows-x64-Setup.exe" >> "$GITHUB_ENV"
             echo "INSTALL_WORK=$RUNNER_TEMP/installer-test" >> "$GITHUB_ENV"
@@ -92,6 +188,24 @@ jobs:
           else
             echo "PACKAGED_EXE=$STAGE/Prism-Mapper-v$VERSION-macOS-$PRISM_TARGET_ARCH/Prism Mapper.app/Contents/MacOS/Electron" >> "$GITHUB_ENV"
           fi
+      - name: Sign Windows executable files
+        if: ${{ matrix.platform == 'win32' && steps.signing.outputs.available == 'true' }}
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.PRISM_WINDOWS_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.PRISM_WINDOWS_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.PRISM_WINDOWS_CERTIFICATE_PROFILE }}
+          files-folder: ${{ env.PACKAGED_APP }}
+          files-folder-filter: exe,dll,node
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          exclude-environment-credential: true
+          exclude-azure-cli-credential: false
+      - name: Verify Windows signatures and create the final ZIP
+        if: ${{ matrix.platform == 'win32' }}
+        run: node scripts/package-release.mjs --finalize
       - name: Smoke test the packaged application
         shell: bash
         run: node tests/packaged-smoke.cjs "$PACKAGED_EXE"
@@ -99,6 +213,10 @@ jobs:
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-desktop.cjs "$PACKAGED_EXE"
+      - name: Test local MP4 shows and recent projects in the packaged application
+        shell: bash
+        timeout-minutes: 10
+        run: node tests/show-desktop.cjs "$PACKAGED_EXE"
       - name: Test Windows paths in the packaged application
         if: ${{ matrix.platform == 'win32' }}
         shell: bash
@@ -126,6 +244,9 @@ jobs:
           APP="$TARGET/$FOLDER/Prism Mapper.app"
           test -d "$APP"
           codesign --verify --deep --strict --verbose=2 "$APP"
+          if [ "${{ steps.signing.outputs.available }}" = true ]; then
+            UNZIPPED_APP="$APP" node --input-type=module -e 'import { verifyMacApplication } from "./scripts/sign-mac.mjs"; verifyMacApplication(process.env.UNZIPPED_APP, { signed: true, notarized: true, team: process.env.PRISM_MAC_TEAM_ID });'
+          fi
           node tests/packaged-smoke.cjs "$APP/Contents/MacOS/Electron"
       - name: Smoke test the application unpacked from the ZIP
         if: ${{ matrix.platform == 'win32' }}
@@ -156,6 +277,13 @@ jobs:
         shell: bash
         timeout-minutes: 15
         run: node tests/packaged-installer.cjs install "$SETUP_EXE" "$INSTALL_WORK"
+      - name: Verify the installed uninstaller signature
+        if: ${{ matrix.platform == 'win32' && steps.signing.outputs.available == 'true' }}
+        shell: pwsh
+        run: |
+          $files = @(Get-ChildItem -LiteralPath (Split-Path $env:INSTALLED_EXE) -Filter 'unins*.exe')
+          if ($files.Count -ne 1) { throw 'Expected one signed uninstaller.' }
+          & ./scripts/sign-windows.ps1 -FilePath $files[0].FullName -VerifyOnly
       - name: Smoke test the installed application
         if: ${{ matrix.platform == 'win32' }}
         shell: bash
@@ -191,6 +319,14 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+      - name: Remove temporary Mac signing credentials
+        if: ${{ always() && matrix.platform == 'darwin' }}
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/prism-signing.p12" "$RUNNER_TEMP/prism-notary-api.p8"
+          if [ -f "$RUNNER_TEMP/prism-signing.keychain-db" ]; then
+            security delete-keychain "$RUNNER_TEMP/prism-signing.keychain-db"
+          fi
 
   # The Android and iOS apps. The called workflow builds them and uploads
   # mobile-* artifacts that the verify job collects with the desktop ones.
@@ -200,6 +336,7 @@ jobs:
     with:
       version: ${{ inputs.tag || github.ref_name }}
       ref: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) && format('refs/tags/{0}', inputs.tag) || github.sha }}
+      require_android_signing: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     # Only the secrets that the mobile workflow reads. All are optional; see
     # docs/building-mobile.md.
     secrets:
@@ -225,6 +362,7 @@ jobs:
     timeout-minutes: 10
     env:
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      PRISM_REQUIRE_SIGNED_RELEASE: ${{ !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -277,6 +415,7 @@ jobs:
       GH_TOKEN: ${{ github.token }}
       GH_REPO: ${{ github.repository }}
       RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+      PRISM_REQUIRE_SIGNED_RELEASE: "true"
     steps:
       - uses: actions/checkout@v7
         with:

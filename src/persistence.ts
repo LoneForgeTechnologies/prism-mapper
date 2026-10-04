@@ -11,7 +11,7 @@
  */
 import { newId } from "./compat";
 import { createProject, type Media, type Project } from "./model";
-import { validateBrowserProject } from "./project-validation";
+import { portableProject, validateBrowserProject } from "./project-validation";
 
 /** localStorage key of the autosaved draft. Existing drafts keep loading. */
 export const DRAFT_KEY = "prism-draft";
@@ -70,10 +70,7 @@ function localStore(): StorageLike | null {
 
 /** The draft as stored text. Blob URLs belong to one page load, so they are never saved. */
 export function serializeDraft(project: Project): string {
-  return JSON.stringify({
-    ...project,
-    media: project.media.map((m) => ({ ...m, url: "" })),
-  });
+  return JSON.stringify(portableProject(project));
 }
 
 export type DraftRead =
