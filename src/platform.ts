@@ -136,9 +136,13 @@ export function helpPlatform(): HelpPlatform {
   return isIosDevice() || isTouchPrimary() ? "touch" : "browser";
 }
 
-/** Project file name for browser and mobile saves: always ends in `.prism.json`. */
+/**
+ * Project file name for browser and mobile saves: always ends in `.prism.json`.
+ * Letters, marks and digits of every script stay, so a name in Japanese or
+ * Hindi is not reduced to nothing; punctuation and path characters go.
+ */
 export function projectFileName(projectName: string): string {
-  const base = projectName.replace(/[^a-z0-9 -]/gi, "").trim();
+  const base = projectName.replace(/[^\p{L}\p{M}\p{N} -]/gu, "").trim();
   return `${base || "Prism Mapper project"}.prism.json`;
 }
 

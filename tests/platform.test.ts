@@ -162,6 +162,36 @@ test("project files always end in .prism.json and never start empty", () => {
   assert.equal(projectFileName(""), "Prism Mapper project.prism.json");
 });
 
+test("project file names keep the letters and digits of every script", () => {
+  // A name written entirely in another script used to be reduced to nothing.
+  assert.equal(
+    projectFileName("日本語のプロジェクト"),
+    "日本語のプロジェクト.prism.json",
+  );
+  assert.equal(projectFileName("项目 2024"), "项目 2024.prism.json");
+  assert.equal(
+    projectFileName("Übung für Anfänger"),
+    "Übung für Anfänger.prism.json",
+  );
+  assert.equal(projectFileName("Проект «Стена»"), "Проект Стена.prism.json");
+  assert.equal(projectFileName("مشروع ١٢٣"), "مشروع ١٢٣.prism.json");
+  // Vowel signs and other combining marks are part of the word.
+  assert.equal(
+    projectFileName("हिन्दी परियोजना"),
+    "हिन्दी परियोजना.prism.json",
+  );
+  assert.equal(projectFileName("e\u0301cole"), "e\u0301cole.prism.json");
+  // Path characters, punctuation and symbols still go.
+  assert.equal(projectFileName("Wall: 1/2 <test>?"), "Wall 12 test.prism.json");
+  assert.equal(projectFileName("..\\..\\システム"), "システム.prism.json");
+  assert.equal(projectFileName("🎃 Haunted 🎃"), "Haunted.prism.json");
+  assert.equal(projectFileName("🎃🎃"), "Prism Mapper project.prism.json");
+  assert.equal(
+    projectFileName("\u0000\u202e"),
+    "Prism Mapper project.prism.json",
+  );
+});
+
 test("toBase64 encodes UTF-8 text and large Blobs without overflowing the stack", async () => {
   const text = "Projekt Übung 日本語";
   assert.equal(
