@@ -75,10 +75,12 @@ async function launch(directory) {
     timeout: 45000,
   });
   const page = await app.firstWindow();
-  page.setDefaultTimeout(20000);
+  page.setDefaultTimeout(45000);
+  // A first start of a fresh app on a busy computer can take much longer than
+  // the steps that follow, so the first wait is generous.
   await page
     .getByRole("button", { name: "Save project", exact: true })
-    .waitFor();
+    .waitFor({ timeout: 90000 });
   return { app, page };
 }
 

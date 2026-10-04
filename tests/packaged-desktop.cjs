@@ -53,10 +53,12 @@ async function launch(profile, args = [], extra = []) {
     timeout: 45000,
   });
   const page = await app.firstWindow();
-  page.setDefaultTimeout(20000);
+  page.setDefaultTimeout(45000);
+  // A first start of a fresh app on a busy computer can take much longer than
+  // the steps that follow, so the first wait is generous.
   await page
     .getByRole("button", { name: "Save project", exact: true })
-    .waitFor();
+    .waitFor({ timeout: 90000 });
   return { app, page };
 }
 
@@ -64,7 +66,7 @@ async function launch(profile, args = [], extra = []) {
 // at what a person would see: the project name, the layers, and whether a line
 // is being drawn. The project the main process holds for the projector window
 // must agree with the editor.
-async function eventually(check, what, timeout = 20000) {
+async function eventually(check, what, timeout = 45000) {
   const deadline = Date.now() + timeout;
   for (;;) {
     if (await check()) return;

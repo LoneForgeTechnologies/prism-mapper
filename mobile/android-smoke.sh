@@ -36,6 +36,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 EXPECTED_VERSION="$(node -p 'require("./package.json").version')"
 EXPECTED_CODE="$(node -p 'const [a,b,c]=require("./package.json").version.split(/[-+]/)[0].split(".").map(Number); a*10000+b*100+c')"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+SCREENSHOT_TRIES="${SCREENSHOT_TRIES:-4}"
 ATTEMPTS="${ATTEMPTS:-2}"
 TITLE="Android emulator test"
 
@@ -182,19 +183,30 @@ launch() {
   fi
   note "$label: waiting $SETTLE_SECONDS seconds for the first frames."
   sleep "$SETTLE_SECONDS"
+  report_load "after starting $label"
 }
 
 # Takes a screenshot into <name>.png, checks that it is not blank and leaves
-# the numbers in $SHOT_STATS.
+# the numbers in $SHOT_STATS. An emulator on a busy runner can need longer than
+# the settle time to draw the first page, so a blank screenshot is taken again,
+# up to SCREENSHOT_TRIES times, eight seconds apart. The last one decides.
 SHOT_STATS=""
 screenshot() {
-  local name="$1" file="$OUT/$1.png"
-  timeout 60 adb exec-out screencap -p > "$file" 2> "$OUT/screencap-$name.txt"
-  if SHOT_STATS="$(node "$HERE/png-stats.mjs" "$file" 2>&1)"; then
-    note "$name: $(echo "$SHOT_STATS" | tr '\n' ' ')"
+  local name="$1" file="$OUT/$1.png" try drawn="no"
+  for try in $(seq 1 "$SCREENSHOT_TRIES"); do
+    timeout 60 adb exec-out screencap -p > "$file" 2> "$OUT/screencap-$name.txt"
+    if SHOT_STATS="$(node "$HERE/png-stats.mjs" "$file" 2>&1)"; then
+      drawn="yes"
+      break
+    fi
+    note "$name: attempt $try of $SCREENSHOT_TRIES shows nothing yet: $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 200)"
+    if [ "$try" -lt "$SCREENSHOT_TRIES" ]; then sleep 8; fi
+  done
+  if [ "$drawn" = "yes" ]; then
+    note "$name${try:+ (attempt $try)}: $(echo "$SHOT_STATS" | tr '\n' ' ')"
   else
     echo "$SHOT_STATS"
-    fail "$name: the screenshot looks blank or is missing, so nothing was drawn. $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 300) screencap said: $(head -c 300 "$OUT/screencap-$name.txt") file starts with: $(head -c 80 "$file" | tr -c '[:print:]' '.')"
+    fail "$name: the screenshot looks blank or is missing after $SCREENSHOT_TRIES attempts, so nothing was drawn. $(echo "$SHOT_STATS" | tr '\n' ' ' | head -c 300) screencap said: $(head -c 300 "$OUT/screencap-$name.txt") file starts with: $(head -c 80 "$file" | tr -c '[:print:]' '.')"
   fi
 }
 
@@ -359,24 +371,16 @@ keep_attempt() {
   done
 }
 
-# Right after the first boot, the Google apps on the image index, update and
-# restart each other for a while, which takes processor time and memory from
-# the test. Waits until the one-minute load average is below 1.5, but no
-# longer than QUIET_SECONDS, and says how it went.
-wait_until_quiet() {
-  local limit="${QUIET_SECONDS:-90}" waited=0 load=""
-  stage "waiting for the system to settle"
-  while true; do
-    load="$(adbt 10 shell cat /proc/loadavg 2> /dev/null | tr -d '\r' | awk '{ print $1 }')"
-    if [ -z "$load" ]; then
-      note "The load average cannot be read, so not waiting for it."
-      return
-    fi
-    if awk -v load="$load" 'BEGIN { exit !(load < 1.5) }' || [ "$waited" -ge "$limit" ]; then break; fi
-    sleep 5
-    waited=$((waited + 5))
-  done
-  notice "System load $load after waiting $waited seconds for the system to settle."
+# What the guest is busy with, as one notice: the load averages and the
+# processes that use the most processor time. The Google apps on the system
+# images keep the guest busy for a long time after the first boot, which is
+# worth knowing when an app or a screenshot is slow.
+#   report_load <when>
+report_load() {
+  local load busiest
+  load="$(adbt 10 shell cat /proc/loadavg 2> /dev/null | tr -d '\r' | awk '{ print $1 ", " $2 ", " $3 }')"
+  busiest="$(adbt 30 shell top -b -n 2 -d 2 -m 6 2> /dev/null | tr -d '\r' | tail -n 7 | cut -c1-120 | tr '\n' '|')"
+  notice "Load $1: ${load:-unknown}. Busiest: ${busiest:-unknown}"
 }
 
 # --- Device ---------------------------------------------------------------
@@ -393,7 +397,7 @@ trap 'kill $WATCHDOG_PID $LOGCAT_PID 2> /dev/null' EXIT
 device_report
 notice "Host: $(nproc) cpus, $(free -m | awk '/^Mem:/ { print $2 " MB memory, " $7 " MB available" }')"
 adbt 20 shell settings put global hide_error_dialogs 1 > /dev/null 2>&1 || true
-wait_until_quiet
+report_load "at the start"
 
 # A control: if the emulator cannot show and screenshot the Settings app, then
 # the environment is broken and the results for Prism Mapper mean nothing.

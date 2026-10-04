@@ -6,6 +6,7 @@ const os = require("node:os");
 const path = require("node:path");
 const pkg = require("../package.json");
 const catalog = require("../shared/patterns.json");
+const { annotate } = require("./ci.cjs");
 (async () => {
   const executablePath = process.argv[2];
   if (!executablePath)
@@ -28,10 +29,12 @@ const catalog = require("../shared/patterns.json");
     const page = await app.firstWindow();
     const errors = [];
     page.on("pageerror", (error) => errors.push(error.message));
-    page.setDefaultTimeout(15000);
+    page.setDefaultTimeout(45000);
+    // A first start of a fresh app on a busy computer can take much longer
+    // than the steps that follow, so the first wait is generous.
     await page
       .getByRole("button", { name: "Save project", exact: true })
-      .waitFor();
+      .waitFor({ timeout: 90000 });
     // The virtual screens of the CI computers are as small as 1024 x 768, and a
     // page under 1050 pixels wide switches to the compact layout (which has its
     // own tests). This test walks through the desktop layout, so give the page
@@ -154,5 +157,10 @@ const catalog = require("../shared/patterns.json");
   }
 })().catch((error) => {
   console.error(error);
+  annotate(
+    "error",
+    `Packaged smoke test on ${process.platform} ${process.arch} failed`,
+    error.stack || String(error),
+  );
   process.exitCode = 1;
 });

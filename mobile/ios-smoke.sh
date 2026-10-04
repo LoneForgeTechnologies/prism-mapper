@@ -6,11 +6,12 @@
 #   bash mobile/ios-smoke.sh <path of App.app> <output-folder> [iPhone|iPad|both]
 #
 # For each simulator the script boots it, installs and launches the app,
-# waits, takes a screenshot, checks that the screenshot is not blank (the dark
-# launch screen alone counts as blank), checks that the app process is still
-# alive and that macOS wrote no crash report for it. Every command has a time
-# limit, so a simulator that does not boot fails the check instead of hanging
-# the job. Every failed check is reported, then the script exits with 1.
+# waits, takes screenshots until one is not blank (the dark launch screen alone
+# counts as blank, and a slow simulator gets up to ten tries), checks that the
+# app process is still alive and that macOS wrote no crash report for it. Every
+# command has a time limit, so a simulator that does not boot fails the check
+# instead of hanging the job. Every failed check is reported, then the script
+# exits with 1.
 
 set -u
 
@@ -20,6 +21,7 @@ KINDS="${3:-both}"
 BUNDLE_ID="org.prismmapper.mobile"
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SETTLE_SECONDS="${SETTLE_SECONDS:-20}"
+SCREENSHOT_TRIES="${SCREENSHOT_TRIES:-10}"
 BOOT_SECONDS="${BOOT_SECONDS:-420}"
 REPORTS="$HOME/Library/Logs/DiagnosticReports"
 
@@ -102,21 +104,28 @@ check_device() {
   sleep "$SETTLE_SECONDS"
 
   # A simulator that has only just booted sometimes cannot take a screenshot
-  # yet, so try a few times and keep what simctl said.
-  local attempt
-  for attempt in 1 2 3 4; do
+  # yet, and a simulator on a busy runner can need much longer than the settle
+  # time to show the first page. So take screenshots, ten seconds apart, until
+  # one shows something other than the dark launch screen, and say how many it
+  # took. The last answer decides.
+  local attempt stats="" drawn="no"
+  for attempt in $(seq 1 "$SCREENSHOT_TRIES"); do
     if with_timeout 90 xcrun simctl io "$udid" screenshot "$OUT/$kind.png" > "$OUT/screenshot-$kind.txt" 2>&1 && [ -s "$OUT/$kind.png" ]; then
-      break
+      if stats="$(node "$HERE/png-stats.mjs" "$OUT/$kind.png" 2>&1)"; then
+        drawn="yes"
+        break
+      fi
+      note "$kind: screenshot attempt $attempt shows nothing yet: $(echo "$stats" | tr '\n' ' ' | head -c 200)"
+    else
+      note "$kind: screenshot attempt $attempt failed: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
     fi
-    note "$kind: screenshot attempt $attempt failed: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
     sleep 10
   done
-  local stats
-  if stats="$(node "$HERE/png-stats.mjs" "$OUT/$kind.png" 2>&1)"; then
-    note "$kind screenshot: $stats"
+  if [ "$drawn" = "yes" ]; then
+    note "$kind screenshot (attempt $attempt): $stats"
   else
     echo "$stats"
-    fail "$kind: the screenshot looks blank or is missing, so the app did not draw. $(echo "$stats" | tr '\n' ' ' | head -c 300) simctl said: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
+    fail "$kind: the screenshot looks blank or is missing after $SCREENSHOT_TRIES attempts, so the app did not draw. $(echo "$stats" | tr '\n' ' ' | head -c 300) simctl said: $(tr '\n' ' ' < "$OUT/screenshot-$kind.txt" | head -c 300)"
   fi
 
   local pid
@@ -129,7 +138,7 @@ check_device() {
 
   xcrun simctl spawn "$udid" launchctl list > "$OUT/launchctl-$kind.txt" 2>&1 || true
   xcrun simctl shutdown "$udid" 2> /dev/null || true
-  echo "::notice title=iOS simulator test::$kind ($name, $runtime): booted, installed, launched, process ${pid:-none}, $((SECONDS - started)) seconds in total. Screenshot: $(echo "$stats" | tr '\n' ' ' | head -c 400)"
+  echo "::notice title=iOS simulator test::$kind ($name, $runtime): booted, installed, launched, process ${pid:-none}, $((SECONDS - started)) seconds in total, screenshot attempt $attempt. Screenshot: $(echo "$stats" | tr '\n' ' ' | head -c 400)"
 }
 
 xcrun simctl list devices available > "$OUT/simulators.txt" 2>&1 || true
