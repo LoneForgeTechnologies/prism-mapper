@@ -1,4 +1,10 @@
-import { PATTERNS, type Project, type Surface, type Media } from "./model";
+import {
+  PATTERNS,
+  type Project,
+  type Surface,
+  type Media,
+  type Show,
+} from "./model";
 import { isValidQuad } from "./geometry";
 import { boundsQuad, validatePolygon } from "./polygon";
 /** Fully validate browser imports and persisted drafts before allowing them into React state. */
@@ -28,7 +34,8 @@ export function validateBrowserProject(input: unknown): Project {
       : fail();
   const bool = (x: unknown): boolean => (typeof x === "boolean" ? x : fail());
   const p = obj(input);
-  if (p.version !== 1 && p.version !== 2) fail();
+  if (p.version !== 1 && p.version !== 2 && p.version !== 3) fail();
+  if (p.show !== undefined && p.version !== 3) fail();
   const width = num(p.width, 64, 16384),
     height = num(p.height, 64, 16384);
   if (!Number.isInteger(width) || !Number.isInteger(height)) fail();
@@ -39,98 +46,102 @@ export function validateBrowserProject(input: unknown): Project {
     p.media.length > 256
   )
     fail();
-  const ids = new Set<string>();
-  const surfaces: Surface[] = p.surfaces.map((raw: unknown) => {
-    const s = obj(raw);
-    const id = identity(s.id);
-    if (!id || ids.has(id)) fail();
-    ids.add(id);
-    if (!Array.isArray(s.corners) || !isValidQuad(s.corners)) fail();
-    let corners = s.corners.map((point: unknown) => {
-      const v = obj(point);
-      return { x: num(v.x, 0, 1), y: num(v.y, 0, 1) };
-    }) as Surface["corners"];
-    let polygon: Surface["polygon"];
-    if (s.polygon !== undefined) {
-      if (!Array.isArray(s.polygon) || !validatePolygon(s.polygon).valid)
-        fail();
-      polygon = s.polygon.map((point: unknown) => {
+  const mediaIds = new Set<string>();
+  const parseSurfaces = (rawSurfaces: unknown): Surface[] => {
+    if (!Array.isArray(rawSurfaces) || rawSurfaces.length > 32) fail();
+    const ids = new Set<string>();
+    return (rawSurfaces as unknown[]).map((raw: unknown) => {
+      const s = obj(raw);
+      const id = identity(s.id);
+      if (!id || ids.has(id)) fail();
+      ids.add(id);
+      if (!Array.isArray(s.corners) || !isValidQuad(s.corners)) fail();
+      let corners = s.corners.map((point: unknown) => {
         const v = obj(point);
         return { x: num(v.x, 0, 1), y: num(v.y, 0, 1) };
-      });
-      const bounds = boundsQuad(polygon!);
-      if (
-        corners.some(
-          (point, i) =>
-            Math.abs(point.x - bounds[i].x) > 1e-9 ||
-            Math.abs(point.y - bounds[i].y) > 1e-9,
+      }) as Surface["corners"];
+      let polygon: Surface["polygon"];
+      if (s.polygon !== undefined) {
+        if (!Array.isArray(s.polygon) || !validatePolygon(s.polygon).valid)
+          fail();
+        polygon = s.polygon.map((point: unknown) => {
+          const v = obj(point);
+          return { x: num(v.x, 0, 1), y: num(v.y, 0, 1) };
+        });
+        const bounds = boundsQuad(polygon!);
+        if (
+          corners.some(
+            (point, i) =>
+              Math.abs(point.x - bounds[i].x) > 1e-9 ||
+              Math.abs(point.y - bounds[i].y) > 1e-9,
+          )
         )
-      )
-        fail();
-      corners = bounds;
-    }
-    let content: Surface["content"];
-    if (s.content !== undefined) {
-      const c = obj(s.content);
-      content = {
-        rotation: num(c.rotation, -180, 180),
-        scale: num(c.scale, 0.1, 4),
-        offsetX: num(c.offsetX, -1, 1),
-        offsetY: num(c.offsetY, -1, 1),
+          fail();
+        corners = bounds;
+      }
+      let content: Surface["content"];
+      if (s.content !== undefined) {
+        const c = obj(s.content);
+        content = {
+          rotation: num(c.rotation, -180, 180),
+          scale: num(c.scale, 0.1, 4),
+          offsetX: num(c.offsetX, -1, 1),
+          offsetY: num(c.offsetY, -1, 1),
+        };
+      }
+      let audio: Surface["audio"];
+      if (s.audio !== undefined) {
+        const a = obj(s.audio);
+        audio = {
+          enabled: bool(a.enabled),
+          band: choice(a.band, [
+            "level",
+            "bass",
+            "mid",
+            "treble",
+            "beat",
+          ] as const),
+          amount: num(a.amount, 0, 1),
+          mode: choice(a.mode, ["brightness", "zoom", "both"] as const),
+        };
+      }
+      const source = text(s.source, 128);
+      if (!PATTERNS.includes(source as any) && !mediaIds.has(source)) fail();
+      const color = text(s.color, 7);
+      if (!/^#[a-f0-9]{6}$/i.test(color)) fail();
+      return {
+        id,
+        name: text(s.name),
+        corners,
+        source,
+        visible: bool(s.visible),
+        locked: bool(s.locked),
+        opacity: num(s.opacity, 0, 1),
+        color,
+        ...(s.speed === undefined ? {} : { speed: num(s.speed, 0, 3) }),
+        ...(s.detail === undefined ? {} : { detail: num(s.detail, 0.5, 3) }),
+        ...(polygon === undefined ? {} : { polygon }),
+        ...(s.kind === undefined
+          ? {}
+          : { kind: choice(s.kind, ["surface", "mask"] as const) }),
+        ...(s.blendMode === undefined
+          ? {}
+          : {
+              blendMode: choice(s.blendMode, [
+                "normal",
+                "add",
+                "screen",
+              ] as const),
+            }),
+        ...(s.edgeWidth === undefined
+          ? {}
+          : { edgeWidth: num(s.edgeWidth, 1, 80) }),
+        ...(s.feather === undefined ? {} : { feather: num(s.feather, 0, 80) }),
+        ...(content === undefined ? {} : { content }),
+        ...(audio === undefined ? {} : { audio }),
       };
-    }
-    let audio: Surface["audio"];
-    if (s.audio !== undefined) {
-      const a = obj(s.audio);
-      audio = {
-        enabled: bool(a.enabled),
-        band: choice(a.band, [
-          "level",
-          "bass",
-          "mid",
-          "treble",
-          "beat",
-        ] as const),
-        amount: num(a.amount, 0, 1),
-        mode: choice(a.mode, ["brightness", "zoom", "both"] as const),
-      };
-    }
-    const source = text(s.source, 128);
-    const color = text(s.color, 7);
-    if (!/^#[a-f0-9]{6}$/i.test(color)) fail();
-    return {
-      id,
-      name: text(s.name),
-      corners,
-      source,
-      visible: bool(s.visible),
-      locked: bool(s.locked),
-      opacity: num(s.opacity, 0, 1),
-      color,
-      ...(s.speed === undefined ? {} : { speed: num(s.speed, 0, 3) }),
-      ...(s.detail === undefined ? {} : { detail: num(s.detail, 0.5, 3) }),
-      ...(polygon === undefined ? {} : { polygon }),
-      ...(s.kind === undefined
-        ? {}
-        : { kind: choice(s.kind, ["surface", "mask"] as const) }),
-      ...(s.blendMode === undefined
-        ? {}
-        : {
-            blendMode: choice(s.blendMode, [
-              "normal",
-              "add",
-              "screen",
-            ] as const),
-          }),
-      ...(s.edgeWidth === undefined
-        ? {}
-        : { edgeWidth: num(s.edgeWidth, 1, 80) }),
-      ...(s.feather === undefined ? {} : { feather: num(s.feather, 0, 80) }),
-      ...(content === undefined ? {} : { content }),
-      ...(audio === undefined ? {} : { audio }),
-    };
-  });
-  const mediaIds = new Set<string>();
+    });
+  };
   const media: Media[] = p.media.map((raw: unknown) => {
     const m = obj(raw);
     const id = identity(m.id);
@@ -145,14 +156,46 @@ export function validateBrowserProject(input: unknown): Project {
       ...(m.path === undefined ? {} : { path: text(m.path, 4096) }),
     };
   });
-  if (
-    surfaces.some(
-      (s) => !PATTERNS.includes(s.source as any) && !mediaIds.has(s.source),
+  const surfaces = parseSurfaces(p.surfaces);
+  let show: Show | undefined;
+  if (p.show !== undefined) {
+    const rawShow = obj(p.show);
+    if (
+      !Array.isArray(rawShow.scenes) ||
+      rawShow.scenes.length > 128 ||
+      !Array.isArray(rawShow.cues) ||
+      rawShow.cues.length > 512
     )
-  )
-    fail();
+      fail();
+    const sceneIds = new Set<string>();
+    const scenes = rawShow.scenes.map((raw: unknown) => {
+      const scene = obj(raw);
+      const id = identity(scene.id);
+      if (sceneIds.has(id)) fail();
+      sceneIds.add(id);
+      return {
+        id,
+        name: text(scene.name),
+        surfaces: parseSurfaces(scene.surfaces),
+      };
+    });
+    const cueIds = new Set<string>();
+    let duration = 0;
+    const cues = rawShow.cues.map((raw: unknown) => {
+      const cue = obj(raw);
+      const id = identity(cue.id);
+      const sceneId = identity(cue.sceneId);
+      if (cueIds.has(id) || !sceneIds.has(sceneId)) fail();
+      cueIds.add(id);
+      const seconds = num(cue.duration, 0.1, 7200);
+      duration += seconds;
+      if (duration > 86400) fail();
+      return { id, sceneId, duration: seconds };
+    });
+    show = { scenes, cues, loop: bool(rawShow.loop) };
+  }
   return {
-    version: 2,
+    version: p.version === 3 ? 3 : 2,
     name: text(p.name),
     width,
     height,
@@ -161,6 +204,7 @@ export function validateBrowserProject(input: unknown): Project {
     brightness: num(p.brightness, 0, 1),
     blackout: bool(p.blackout),
     playing: bool(p.playing),
+    ...(show === undefined ? {} : { show }),
   };
 }
 
@@ -182,8 +226,9 @@ export function projectFromFile(input: unknown): Project {
  * kept, so the desktop can find the file again.
  */
 export function portableProject(project: Project): Project {
+  const { transport: _transport, ...portable } = project;
   return {
-    ...project,
+    ...portable,
     media: project.media.map((media) => ({ ...media, url: "" })),
   };
 }

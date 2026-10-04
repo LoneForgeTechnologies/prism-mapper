@@ -85,6 +85,11 @@ on:
         default: false
   workflow_call:
     inputs:
+      require_android_signing:
+        description: "Require the permanent Android release key; publishing calls must not fall back to a development APK."
+        required: false
+        type: boolean
+        default: false
       version:
         description: "Optional. The version that package.json must have, for example 0.4.1 or v0.4.1. The build fails when it differs."
         required: false
@@ -215,12 +220,22 @@ jobs:
           STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          REQUIRE_SIGNING: ${{ inputs.require_android_signing }}
+          EXPECTED_SIGNER: ${{ vars.PRISM_ANDROID_SIGNER_SHA256 }}
         run: |
+          if [ "$REQUIRE_SIGNING" = true ] && [ -z "$EXPECTED_SIGNER" ]; then
+            echo "::error::Publishing requires PRISM_ANDROID_SIGNER_SHA256 to verify the permanent release key."
+            exit 1
+          fi
           if [ -n "$KEYSTORE" ] && [ -n "$STORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "No Android signing secrets, so no signed release build is made."
+            if [ "$REQUIRE_SIGNING" = true ]; then
+              echo "::error::A published Android APK requires the permanent ANDROID_* signing secrets. Configure them or use a dry run."
+              exit 1
+            fi
           fi
       - name: Build the signed release APK and AAB
         if: steps.signing.outputs.available == 'true'
@@ -230,13 +245,15 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          EXPECTED_SIGNER: ${{ vars.PRISM_ANDROID_SIGNER_SHA256 }}
         run: |
+          trap 'rm -f "$RUNNER_TEMP/release.keystore"' EXIT
           echo "$KEYSTORE" | base64 --decode > "$RUNNER_TEMP/release.keystore"
           export ANDROID_KEYSTORE_FILE="$RUNNER_TEMP/release.keystore"
           ./gradlew assembleRelease bundleRelease
           rm -f "$ANDROID_KEYSTORE_FILE"
           cd ..
-          bash mobile/verify-apk.sh android/app/build/outputs/apk/release/app-release.apk release signed
+          bash mobile/verify-apk.sh android/app/build/outputs/apk/release/app-release.apk release signed "$EXPECTED_SIGNER"
       - name: Try the release signing with a throwaway key
         if: steps.signing.outputs.available != 'true'
         working-directory: android

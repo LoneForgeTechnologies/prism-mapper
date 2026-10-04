@@ -2,6 +2,7 @@ import { cp, mkdir, readFile, writeFile, stat } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { signMacApplication } from "./sign-mac.mjs";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 if (process.platform !== "darwin")
   throw new Error("This packaging command runs on macOS.");
@@ -61,9 +62,5 @@ for (const [key, value] of Object.entries({
     "Prism Mapper uses system audio to animate projection effects when you choose System output and press Start listening. Audio is analyzed locally and is never recorded or uploaded.",
 }))
   execFileSync("/usr/bin/plutil", ["-replace", key, "-string", value, plist]);
-execFileSync(
-  "/usr/bin/codesign",
-  ["--force", "--deep", "--sign", "-", target],
-  { stdio: "inherit" },
-);
+await signMacApplication(target);
 console.log(`\nBuilt local application:\n${target}`);

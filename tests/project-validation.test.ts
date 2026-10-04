@@ -77,7 +77,7 @@ test("version 1 projects migrate to version 2 with every original animation and 
     assert.deepEqual(clean, { ...old, version: 2 });
     assert.deepEqual(validateNativeProject(old), clean);
   }
-  for (const version of [0, 3, 999, "2", null, undefined]) {
+  for (const version of [0, 4, 999, "2", null, undefined]) {
     assert.throws(() =>
       validateBrowserProject({ ...createProject(), version }),
     );

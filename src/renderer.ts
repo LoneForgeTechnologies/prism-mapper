@@ -8,6 +8,7 @@ import { playfulGLSL } from "./animations/playful";
 import { shapeGLSL } from "./animations/shape";
 import { halloweenGLSL } from "./animations/halloween";
 import { readAudioFrame, type AudioFrame } from "./audio";
+import { resolveShowFrame, type TimelineVideoFrame } from "./timeline";
 
 const vertexShader = `
 attribute vec2 a_position;
@@ -164,6 +165,7 @@ interface Asset {
   lastTime: number;
   wantsPlaying: boolean;
   disposed: boolean;
+  timelineKey?: string;
 }
 
 /** Independent GPU renderer shared by the editor preview and clean projector window. */
@@ -389,6 +391,11 @@ export class ProjectionRenderer {
       element.onloadeddata = () => {
         if (!asset.disposed) asset.ready = true;
       };
+      element.onseeked = () => {
+        // A paused seek changes the decoded image after currentTime was set.
+        // Invalidate its upload so the new frame reaches the output texture.
+        if (!asset.disposed) asset.uploaded = false;
+      };
       element.src = media.url;
       element.load();
     } else {
@@ -401,12 +408,51 @@ export class ProjectionRenderer {
     return asset;
   }
 
-  private prepareAsset(asset: Asset, playing: boolean): boolean {
+  private prepareAsset(
+    asset: Asset,
+    playing: boolean,
+    timeline?: TimelineVideoFrame,
+  ): boolean {
     if (asset.failed || asset.disposed) return false;
     const gl = this.gl!,
       element = asset.element;
     if (element instanceof HTMLVideoElement) {
-      if (asset.wantsPlaying !== playing) {
+      let cueChanged = false;
+      element.loop = !timeline;
+      if (timeline) {
+        const hasMetadata =
+          element.readyState >= HTMLMediaElement.HAVE_METADATA;
+        const duration =
+          Number.isFinite(element.duration) && element.duration > 0
+            ? element.duration
+            : Infinity;
+        // A shorter video holds its final decoded frame until the next cue.
+        // Seeking just before duration avoids a decoder clearing its end frame.
+        const target = Math.min(
+          timeline.position,
+          Math.max(0, duration - 0.001),
+        );
+        cueChanged = asset.timelineKey !== timeline.key;
+        if (
+          hasMetadata &&
+          (cueChanged ||
+            (!element.seeking && Math.abs(element.currentTime - target) > 0.25))
+        ) {
+          try {
+            element.currentTime = target;
+            asset.timelineKey = timeline.key;
+          } catch {
+            // Some decoders do not accept seeks until their first frame is ready.
+            // The next render retries against the authoritative clock.
+          }
+        }
+        playing =
+          timeline.playing && hasMetadata && timeline.position < duration;
+      } else asset.timelineKey = undefined;
+      if (
+        asset.wantsPlaying !== playing ||
+        (playing && cueChanged && element.paused)
+      ) {
         asset.wantsPlaying = playing;
         if (playing)
           element.play().catch((error) => {
@@ -470,8 +516,10 @@ export class ProjectionRenderer {
     return true;
   }
 
-  render(project: Project, timeSeconds: number): void {
+  render(project: Project, timeSeconds: number, now = Date.now()): void {
     if (this.destroyed) return;
+    const showFrame = resolveShowFrame(project, now);
+    project = showFrame.project;
     const incomingAudio = readAudioFrame();
     // Pause holds the response along with procedural motion. Stopping capture
     // always releases the response, including when playback is paused.
@@ -494,8 +542,10 @@ export class ProjectionRenderer {
     for (const surface of project.surfaces)
       this.surfaceClocks.set(
         surface.id,
-        (this.surfaceClocks.get(surface.id) ?? this.animationTime - delta) +
-          delta * (surface.speed ?? 1),
+        showFrame.video
+          ? showFrame.video.position * (surface.speed ?? 1)
+          : (this.surfaceClocks.get(surface.id) ?? this.animationTime - delta) +
+              delta * (surface.speed ?? 1),
       );
     this.previousTime = finiteTime;
     const gl = this.gl;
@@ -503,13 +553,26 @@ export class ProjectionRenderer {
     gl.viewport(0, 0, this.canvas.width, this.canvas.height);
     gl.clear(gl.COLOR_BUFFER_BIT);
     const available = new Set(project.media.map((media) => media.id));
+    const visibleSources = new Set(
+      project.surfaces
+        .filter(
+          (surface) =>
+            surface.visible && surface.opacity > 0 && surface.kind !== "mask",
+        )
+        .map((surface) => surface.source),
+    );
     for (const [id, asset] of this.assets) {
-      if (!available.has(id)) {
+      if (
+        !available.has(id) ||
+        (asset.kind === "video" &&
+          !visibleSources.has(id) &&
+          !visibleSources.has(`media:${id}`))
+      ) {
         this.disposeAsset(asset);
         this.assets.delete(id);
       } else if (
         asset.element instanceof HTMLVideoElement &&
-        !project.playing &&
+        (!project.playing || (showFrame.video && project.blackout)) &&
         !asset.element.paused
       ) {
         asset.element.pause();
@@ -559,7 +622,13 @@ export class ProjectionRenderer {
         // imported again). The layer stays dark without a misleading decode error.
         if (!media.url) continue;
         try {
-          if (!this.prepareAsset(this.getAsset(media), project.playing))
+          if (
+            !this.prepareAsset(
+              this.getAsset(media),
+              project.playing,
+              showFrame.video,
+            )
+          )
             continue;
         } catch (error) {
           this.report(`Cannot load “${media.name}”: ${errorMessage(error)}`);
@@ -744,6 +813,7 @@ export class ProjectionRenderer {
     asset.element.onerror = null;
     if (asset.element instanceof HTMLVideoElement) {
       asset.element.onloadeddata = null;
+      asset.element.onseeked = null;
       asset.element.pause();
       asset.element.removeAttribute("src");
       asset.element.load();

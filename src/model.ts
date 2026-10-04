@@ -40,8 +40,33 @@ export interface Surface {
     offsetY: number;
   };
 }
+/** A complete mapping snapshot using the project's shared media library. */
+export interface Scene {
+  id: string;
+  name: string;
+  surfaces: Surface[];
+}
+export interface ShowCue {
+  id: string;
+  sceneId: string;
+  /** How long to play this scene, in seconds. */
+  duration: number;
+}
+export interface Show {
+  scenes: Scene[];
+  cues: ShowCue[];
+  loop: boolean;
+}
+/** Session state sent to output windows; never written to project files. */
+export interface ShowTransport {
+  active: boolean;
+  position: number;
+  updatedAt: number;
+  token: string;
+  playing: boolean;
+}
 export interface Project {
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   name: string;
   width: number;
   height: number;
@@ -50,6 +75,8 @@ export interface Project {
   brightness: number;
   blackout: boolean;
   playing: boolean;
+  show?: Show;
+  transport?: ShowTransport;
 }
 export interface DisplayInfo {
   id: number;
@@ -71,6 +98,12 @@ export interface LoadedProject {
   error?: string;
   missing?: string[];
 }
+export interface RecentProject {
+  id: string;
+  name: string;
+  path: string;
+  updatedAt: number;
+}
 export interface DesktopAPI {
   getDisplays(): Promise<DisplayInfo[]>;
   onDisplays(callback: (displays: DisplayInfo[]) => void): () => void;
@@ -85,6 +118,8 @@ export interface DesktopAPI {
     project: Project,
   ): Promise<{ saved: boolean; path?: string; error?: string }>;
   loadProject(): Promise<LoadedProject>;
+  getRecentProjects(): Promise<RecentProject[]>;
+  openRecentProject(id: string): Promise<LoadedProject>;
   /**
    * A project the operating system asked to open (a double-clicked file, "Open
    * with", a second launch, macOS open-file). The first subscriber tells the

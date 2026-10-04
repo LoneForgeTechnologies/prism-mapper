@@ -142,10 +142,13 @@ function validatePolygon(value) {
 function validateProject(
   input,
   resolveMedia = (media) => ({ url: "", path: media.path }),
+  options = {},
 ) {
   const project = record(input, "project");
-  if (project.version !== 1 && project.version !== 2)
-    fail("unsupported file version (expected 1 or 2)");
+  if (project.version !== 1 && project.version !== 2 && project.version !== 3)
+    fail("unsupported file version (expected 1, 2 or 3)");
+  if (project.show !== undefined && project.version !== 3)
+    fail("shows require file version 3");
   const width = number(project.width, "width", 64, 16384);
   const height = number(project.height, "height", 64, 16384);
   if (!Number.isInteger(width) || !Number.isInteger(height))
@@ -184,125 +187,181 @@ function validateProject(
     };
   });
 
-  const surfaceIds = new Set();
-  const surfaces = project.surfaces.map((entry) => {
-    record(entry, "surface");
-    const surfaceId = id(entry.id, "surface id");
-    if (surfaceIds.has(surfaceId)) fail("duplicate surface id");
-    surfaceIds.add(surfaceId);
-    if (!Array.isArray(entry.corners) || entry.corners.length !== 4)
-      fail("each surface requires four corners");
-    let corners = entry.corners.map((point) => {
-      record(point, "corner");
+  const parseSurfaces = (rawSurfaces) => {
+    if (!Array.isArray(rawSurfaces) || rawSurfaces.length > 32)
+      fail("surfaces must be an array with at most 32 entries");
+    const surfaceIds = new Set();
+    return rawSurfaces.map((entry) => {
+      record(entry, "surface");
+      const surfaceId = id(entry.id, "surface id");
+      if (surfaceIds.has(surfaceId)) fail("duplicate surface id");
+      surfaceIds.add(surfaceId);
+      if (!Array.isArray(entry.corners) || entry.corners.length !== 4)
+        fail("each surface requires four corners");
+      let corners = entry.corners.map((point) => {
+        record(point, "corner");
+        return {
+          x: number(point.x, "corner x", 0, 1),
+          y: number(point.y, "corner y", 0, 1),
+        };
+      });
+      let twiceArea = 0;
+      for (let i = 0; i < 4; i++) {
+        const a = corners[i],
+          b = corners[(i + 1) % 4],
+          c = corners[(i + 2) % 4];
+        if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-5)
+          fail("surface corners must be separated");
+        if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) <= 1e-9)
+          fail("surface corners must form a convex clockwise quadrilateral");
+        twiceArea += a.x * b.y - b.x * a.y;
+      }
+      if (twiceArea < 2e-5) fail("surface is too small to project");
+      let polygon;
+      if (entry.polygon !== undefined) {
+        polygon = validatePolygon(entry.polygon);
+        const bounds = polygonBounds(polygon);
+        if (
+          corners.some(
+            (p, i) =>
+              Math.abs(p.x - bounds[i].x) > 1e-9 ||
+              Math.abs(p.y - bounds[i].y) > 1e-9,
+          )
+        )
+          fail("polygon corners must match its rectangular bounds");
+        corners = bounds;
+      }
+      let content;
+      if (entry.content !== undefined) {
+        const c = record(entry.content, "content transform");
+        content = {
+          rotation: number(c.rotation, "content rotation", -180, 180),
+          scale: number(c.scale, "content scale", 0.1, 4),
+          offsetX: number(c.offsetX, "content horizontal offset", -1, 1),
+          offsetY: number(c.offsetY, "content vertical offset", -1, 1),
+        };
+      }
+      let audio;
+      if (entry.audio !== undefined) {
+        const a = record(entry.audio, "audio response");
+        audio = {
+          enabled: boolean(a.enabled, "audio response enabled"),
+          band: choice(a.band, "audio response band", [
+            "level",
+            "bass",
+            "mid",
+            "treble",
+            "beat",
+          ]),
+          amount: number(a.amount, "audio response strength", 0, 1),
+          mode: choice(a.mode, "audio response mode", [
+            "brightness",
+            "zoom",
+            "both",
+          ]),
+        };
+      }
+      const source = string(entry.source, "source", 128);
+      if (!PATTERNS.has(source) && !mediaIds.has(source))
+        fail("surface references unknown media");
+      if (
+        typeof entry.color !== "string" ||
+        !/^#[0-9a-fA-F]{6}$/.test(entry.color)
+      )
+        fail("surface color must be a six-digit hex color");
       return {
-        x: number(point.x, "corner x", 0, 1),
-        y: number(point.y, "corner y", 0, 1),
+        id: surfaceId,
+        name: string(entry.name, "surface name"),
+        corners,
+        source,
+        visible: boolean(entry.visible, "visible"),
+        locked: boolean(entry.locked, "locked"),
+        opacity: number(entry.opacity, "opacity", 0, 1),
+        color: entry.color,
+        ...(entry.speed === undefined
+          ? {}
+          : { speed: number(entry.speed, "animation speed", 0, 3) }),
+        ...(entry.detail === undefined
+          ? {}
+          : { detail: number(entry.detail, "animation detail", 0.5, 3) }),
+        ...(polygon === undefined ? {} : { polygon }),
+        ...(entry.kind === undefined
+          ? {}
+          : { kind: choice(entry.kind, "layer kind", ["surface", "mask"]) }),
+        ...(entry.blendMode === undefined
+          ? {}
+          : {
+              blendMode: choice(entry.blendMode, "blend mode", [
+                "normal",
+                "add",
+                "screen",
+              ]),
+            }),
+        ...(entry.edgeWidth === undefined
+          ? {}
+          : { edgeWidth: number(entry.edgeWidth, "edge width", 1, 80) }),
+        ...(entry.feather === undefined
+          ? {}
+          : { feather: number(entry.feather, "edge feather", 0, 80) }),
+        ...(content === undefined ? {} : { content }),
+        ...(audio === undefined ? {} : { audio }),
       };
     });
-    let twiceArea = 0;
-    for (let i = 0; i < 4; i++) {
-      const a = corners[i],
-        b = corners[(i + 1) % 4],
-        c = corners[(i + 2) % 4];
-      if (Math.hypot(b.x - a.x, b.y - a.y) < 1e-5)
-        fail("surface corners must be separated");
-      if ((b.x - a.x) * (c.y - b.y) - (b.y - a.y) * (c.x - b.x) <= 1e-9)
-        fail("surface corners must form a convex clockwise quadrilateral");
-      twiceArea += a.x * b.y - b.x * a.y;
-    }
-    if (twiceArea < 2e-5) fail("surface is too small to project");
-    let polygon;
-    if (entry.polygon !== undefined) {
-      polygon = validatePolygon(entry.polygon);
-      const bounds = polygonBounds(polygon);
-      if (
-        corners.some(
-          (p, i) =>
-            Math.abs(p.x - bounds[i].x) > 1e-9 ||
-            Math.abs(p.y - bounds[i].y) > 1e-9,
-        )
-      )
-        fail("polygon corners must match its rectangular bounds");
-      corners = bounds;
-    }
-    let content;
-    if (entry.content !== undefined) {
-      const c = record(entry.content, "content transform");
-      content = {
-        rotation: number(c.rotation, "content rotation", -180, 180),
-        scale: number(c.scale, "content scale", 0.1, 4),
-        offsetX: number(c.offsetX, "content horizontal offset", -1, 1),
-        offsetY: number(c.offsetY, "content vertical offset", -1, 1),
+  };
+  const surfaces = parseSurfaces(project.surfaces);
+  let show;
+  if (project.show !== undefined) {
+    const rawShow = record(project.show, "show");
+    if (!Array.isArray(rawShow.scenes) || rawShow.scenes.length > 128)
+      fail("scenes must be an array with at most 128 entries");
+    if (!Array.isArray(rawShow.cues) || rawShow.cues.length > 512)
+      fail("cues must be an array with at most 512 entries");
+    const sceneIds = new Set();
+    const scenes = rawShow.scenes.map((entry) => {
+      const scene = record(entry, "scene");
+      const sceneId = id(scene.id, "scene id");
+      if (sceneIds.has(sceneId)) fail("duplicate scene id");
+      sceneIds.add(sceneId);
+      return {
+        id: sceneId,
+        name: string(scene.name, "scene name"),
+        surfaces: parseSurfaces(scene.surfaces),
       };
-    }
-    let audio;
-    if (entry.audio !== undefined) {
-      const a = record(entry.audio, "audio response");
-      audio = {
-        enabled: boolean(a.enabled, "audio response enabled"),
-        band: choice(a.band, "audio response band", [
-          "level",
-          "bass",
-          "mid",
-          "treble",
-          "beat",
-        ]),
-        amount: number(a.amount, "audio response strength", 0, 1),
-        mode: choice(a.mode, "audio response mode", [
-          "brightness",
-          "zoom",
-          "both",
-        ]),
-      };
-    }
-    const source = string(entry.source, "source", 128);
-    if (!PATTERNS.has(source) && !mediaIds.has(source))
-      fail("surface references unknown media");
-    if (
-      typeof entry.color !== "string" ||
-      !/^#[0-9a-fA-F]{6}$/.test(entry.color)
-    )
-      fail("surface color must be a six-digit hex color");
-    return {
-      id: surfaceId,
-      name: string(entry.name, "surface name"),
-      corners,
-      source,
-      visible: boolean(entry.visible, "visible"),
-      locked: boolean(entry.locked, "locked"),
-      opacity: number(entry.opacity, "opacity", 0, 1),
-      color: entry.color,
-      ...(entry.speed === undefined
-        ? {}
-        : { speed: number(entry.speed, "animation speed", 0, 3) }),
-      ...(entry.detail === undefined
-        ? {}
-        : { detail: number(entry.detail, "animation detail", 0.5, 3) }),
-      ...(polygon === undefined ? {} : { polygon }),
-      ...(entry.kind === undefined
-        ? {}
-        : { kind: choice(entry.kind, "layer kind", ["surface", "mask"]) }),
-      ...(entry.blendMode === undefined
-        ? {}
-        : {
-            blendMode: choice(entry.blendMode, "blend mode", [
-              "normal",
-              "add",
-              "screen",
-            ]),
-          }),
-      ...(entry.edgeWidth === undefined
-        ? {}
-        : { edgeWidth: number(entry.edgeWidth, "edge width", 1, 80) }),
-      ...(entry.feather === undefined
-        ? {}
-        : { feather: number(entry.feather, "edge feather", 0, 80) }),
-      ...(content === undefined ? {} : { content }),
-      ...(audio === undefined ? {} : { audio }),
+    });
+    const cueIds = new Set();
+    let duration = 0;
+    const cues = rawShow.cues.map((entry) => {
+      const cue = record(entry, "cue");
+      const cueId = id(cue.id, "cue id");
+      const sceneId = id(cue.sceneId, "cue scene id");
+      if (cueIds.has(cueId)) fail("duplicate cue id");
+      if (!sceneIds.has(sceneId)) fail("cue references unknown scene");
+      cueIds.add(cueId);
+      const seconds = number(cue.duration, "cue duration", 0.1, 7200);
+      duration += seconds;
+      if (duration > 86400) fail("show duration must be at most 86400 seconds");
+      return { id: cueId, sceneId, duration: seconds };
+    });
+    show = { scenes, cues, loop: boolean(rawShow.loop, "show loop") };
+  }
+  let transport;
+  if (options.runtime === true && project.transport !== undefined) {
+    const session = record(project.transport, "show transport");
+    transport = {
+      active: boolean(session.active, "show transport active"),
+      position: number(session.position, "show position", 0, 86400),
+      updatedAt: number(
+        session.updatedAt,
+        "show timestamp",
+        0,
+        Number.MAX_SAFE_INTEGER,
+      ),
+      token: id(session.token, "show transport token"),
+      playing: boolean(session.playing, "show transport playing"),
     };
-  });
+  }
   return {
-    version: 2,
+    version: project.version === 3 ? 3 : 2,
     name: string(project.name, "name"),
     width,
     height,
@@ -311,6 +370,8 @@ function validateProject(
     brightness: number(project.brightness, "brightness", 0, 1),
     blackout: boolean(project.blackout, "blackout"),
     playing: boolean(project.playing, "playing"),
+    ...(show === undefined ? {} : { show }),
+    ...(transport === undefined ? {} : { transport }),
   };
 }
 
@@ -352,7 +413,12 @@ function serializeProject(project, destination, pathApi = path) {
   });
   // Session tokens never belong in a portable project file.
   clean.media = clean.media.map(({ url, ...media }) => media);
-  return JSON.stringify(clean, null, 2) + "\n";
+  const text = JSON.stringify(clean, null, 2) + "\n";
+  if (Buffer.byteLength(text, "utf8") > MAX_PROJECT_BYTES)
+    fail(
+      "project exceeds 5 MB; reduce the number of scenes or outline points before saving",
+    );
+  return text;
 }
 
 module.exports = {

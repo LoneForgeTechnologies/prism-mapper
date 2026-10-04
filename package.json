@@ -1,6 +1,6 @@
 {
   "name": "prism-mapper",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "private": true,
   "description": "Free, open-source projection mapping for Windows, Mac, Android, iPhone and iPad. A half vibe-coded, half-tested project.",
   "license": "MIT",
@@ -28,6 +28,9 @@
     "ios:simulator": "npm run build && cap sync ios && xcodebuild build -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/App/build/DerivedData CODE_SIGNING_ALLOWED=NO",
     "test:animations": "node tests/animations.cjs",
     "test:mix": "node tests/mix.cjs",
+    "test:show": "node tests/show-playback.cjs && node tests/show-ui.cjs",
+    "test:desktop-show": "node tests/show-desktop.cjs",
+    "signing:check": "node scripts/check-signing.mjs",
     "test:mobile": "node tests/mobile-ui.cjs",
     "test:mapping": "node tests/render-advanced.cjs && node tests/advanced-ui.cjs",
     "test:desktop-mapping": "node tests/desktop-advanced.cjs",
@@ -52,6 +55,8 @@
   },
   "devDependencies": {
     "@capacitor/cli": "^8.5.2",
+    "@electron/notarize": "^3.1.1",
+    "@electron/osx-sign": "^2.7.1",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^5.0.0",

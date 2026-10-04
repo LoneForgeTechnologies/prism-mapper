@@ -31,7 +31,12 @@ class FakeWebContents extends EventEmitter {
   }
 }
 
-function createFakeElectron({ primary = true, workArea, displays } = {}) {
+function createFakeElectron({
+  primary = true,
+  workArea,
+  displays,
+  userData,
+} = {}) {
   const windows = [];
   const handlers = new Map();
   const listeners = new Map();
@@ -137,6 +142,7 @@ function createFakeElectron({ primary = true, workArea, displays } = {}) {
       this.appId = id;
     },
     setPath() {},
+    getPath: () => userData,
     commandLine: { getSwitchValue: () => "" },
     requestSingleInstanceLock: () => primary,
     quit() {
@@ -236,15 +242,21 @@ function createFakeElectron({ primary = true, workArea, displays } = {}) {
 }
 
 // Load main.cjs as if Electron had started it, on the given platform.
-function startMain({ platform = process.platform, argv, ...fakeOptions } = {}) {
+function startMain({
+  platform = process.platform,
+  argv,
+  projectLoader,
+  ...fakeOptions
+} = {}) {
   const fake = createFakeElectron(fakeOptions);
   const realLoad = Module._load;
   const realPlatform = Object.getOwnPropertyDescriptor(process, "platform");
   const realArgv = process.argv;
   Module._load = function (request, ...rest) {
-    return request === "electron"
-      ? fake.electron
-      : realLoad.call(this, request, ...rest);
+    if (request === "electron") return fake.electron;
+    if (request === "./load.cjs" && projectLoader)
+      return { loadProjectFile: projectLoader };
+    return realLoad.call(this, request, ...rest);
   };
   Object.defineProperty(process, "platform", {
     value: platform,
@@ -438,6 +450,12 @@ test("a project named on the command line opens once the page is ready", async (
       assert.deepEqual(payload.missing, []);
       const current = await fake.invoke("prism:get-project", fake.from(editor));
       assert.equal(current.name, "Command line");
+      const recent = await fake.invoke(
+        "prism:get-recent-projects",
+        fake.from(editor),
+      );
+      assert.equal(recent[0].name, "Command line");
+      assert.equal(recent[0].path, file);
     } finally {
       fake.restorePlatform();
     }
@@ -595,11 +613,337 @@ test("Save offers a name Windows accepts and writes the project", async () => {
     assert.equal(offered, "CON_.prism.json");
     assert.deepEqual(result, { saved: true, path: target });
     assert.equal(JSON.parse(await fs.readFile(target, "utf8")).name, "CON");
+    const recent = await fake.invoke(
+      "prism:get-recent-projects",
+      fake.from(editor),
+    );
+    assert.equal(recent[0].name, "CON");
+    assert.equal(recent[0].path, target);
     assert.deepEqual(await fs.readdir(directory), ["CON_.prism.json"]);
   } finally {
     fake.restorePlatform();
     await fs.rm(directory, { recursive: true, force: true });
   }
+});
+
+test("recent projects persist and reopen through opaque editor-only ids", async () => {
+  await withProject("Band intro", async (file) => {
+    const userData = path.join(path.dirname(file), "profile");
+    const fake = startMain({ userData });
+    try {
+      await fake.becomeReady();
+      const editor = fake.editor();
+      const event = fake.from(editor);
+      fake.dialogs.open = async () => ({ canceled: false, filePaths: [file] });
+      await fake.invoke("prism:load-project", event);
+      const [recent] = await fake.invoke("prism:get-recent-projects", event);
+      assert.equal(recent.path, file);
+      const persisted = JSON.parse(
+        await fs.readFile(path.join(userData, "recent-projects.json"), "utf8"),
+      );
+      assert.equal(persisted.projects[0].id, recent.id);
+      for (const id of [
+        file,
+        { id: recent.id },
+        "00000000-0000-0000-0000-000000000000",
+      ])
+        assert.match(
+          (await fake.invoke("prism:open-recent-project", event, id)).error,
+          /no longer in Recent shows/,
+        );
+      const foreign = { sender: new FakeWebContents(), senderFrame: null };
+      await assert.rejects(
+        fake.invoke("prism:get-recent-projects", foreign),
+        /not available from this window/,
+      );
+      await assert.rejects(
+        fake.invoke("prism:open-recent-project", foreign, recent.id),
+        /not available from this window/,
+      );
+      await assert.rejects(
+        fake.invoke(
+          "prism:open-recent-project",
+          { ...event, senderFrame: {} },
+          recent.id,
+        ),
+        /not available from this window/,
+      );
+      await fake.invoke("prism:open-output", event, 1);
+      const output = fake.windows[1];
+      await assert.rejects(
+        fake.invoke("prism:get-recent-projects", fake.from(output)),
+        /not available from this window/,
+      );
+      await assert.rejects(
+        fake.invoke("prism:open-recent-project", fake.from(output), recent.id),
+        /not available from this window/,
+      );
+      const loaded = await fake.invoke(
+        "prism:open-recent-project",
+        event,
+        recent.id,
+      );
+      assert.equal(loaded.project.name, "Band intro");
+      assert.equal(loaded.path, file);
+      assert.equal(
+        fake.windows.length,
+        2,
+        "switching never enables a new output",
+      );
+      assert.equal(fake.blockers.size, 1, "the existing output keeps its lock");
+      assert.equal(
+        editor.webContents.sent.some(([channel]) => channel === "prism:audio"),
+        false,
+      );
+      assert.equal(
+        (await fake.invoke("prism:get-recent-projects", event))[0].id,
+        recent.id,
+      );
+
+      await fs.rm(file);
+      const missing = await fake.invoke(
+        "prism:open-recent-project",
+        event,
+        recent.id,
+      );
+      assert.match(missing.error, /unavailable.*Reconnect its drive/);
+      assert.equal(
+        (await fake.invoke("prism:get-project", event)).name,
+        "Band intro",
+        "a missing file preserves the current show",
+      );
+      assert.equal(
+        (await fake.invoke("prism:get-recent-projects", event))[0].id,
+        recent.id,
+        "a disconnected drive keeps its shortcut",
+      );
+    } finally {
+      fake.restorePlatform();
+    }
+  });
+});
+
+test("saving a renamed or new show offers a separate filename beside the previous show", async () => {
+  await withProject("Band intro", async (intro) => {
+    const fake = startMain();
+    try {
+      await fake.becomeReady();
+      const event = fake.from(fake.editor());
+      fake.dialogs.open = async () => ({ canceled: false, filePaths: [intro] });
+      const opened = await fake.invoke("prism:load-project", event);
+      const next = {
+        ...opened.project,
+        name: "Pre-show",
+        version: 3,
+        show: { scenes: [], cues: [], loop: false },
+      };
+      const target = path.join(path.dirname(intro), "Pre-show.prism.json");
+      let offered;
+      fake.dialogs.save = async (_window, options) => {
+        offered = options.defaultPath;
+        return { canceled: false, filePath: target };
+      };
+      assert.equal(
+        (await fake.invoke("prism:save-project", event, next)).saved,
+        true,
+      );
+      assert.equal(offered, target);
+      assert.equal(
+        JSON.parse(await fs.readFile(intro, "utf8")).name,
+        "Band intro",
+      );
+      assert.equal(
+        JSON.parse(await fs.readFile(target, "utf8")).name,
+        "Pre-show",
+      );
+
+      fake.dialogs.save = async (_window, options) => {
+        offered = options.defaultPath;
+        return { canceled: true };
+      };
+      await fake.invoke("prism:save-project", event, next);
+      assert.equal(
+        offered,
+        target,
+        "saving the same show preserves its chosen path",
+      );
+      await fake.invoke("prism:save-project", event, {
+        ...next,
+        name: "Untitled show",
+      });
+      assert.equal(
+        offered,
+        path.join(path.dirname(target), "Untitled show.prism.json"),
+      );
+    } finally {
+      fake.restorePlatform();
+    }
+  });
+});
+
+test("picker and OS opens share one queue and a failed load does not block later shows", async () => {
+  const starts = [];
+  let releaseFirst;
+  const firstWait = new Promise((resolve) => (releaseFirst = resolve));
+  const fake = startMain({
+    projectLoader: async (filename) => {
+      starts.push(filename);
+      if (filename === "/shows/intro.prism.json") await firstWait;
+      if (filename === "/shows/broken.prism.json")
+        throw new Error("broken show");
+      return { project: { name: path.basename(filename) }, missing: [] };
+    },
+  });
+  try {
+    await fake.becomeReady();
+    const event = fake.from(fake.editor());
+    fake.send("prism:project-listener", event, true);
+    fake.dialogs.open = async () => ({
+      canceled: false,
+      filePaths: ["/shows/intro.prism.json"],
+    });
+    const first = fake.invoke("prism:load-project", event);
+    await settle();
+    fake.electron.app.emit(
+      "open-file",
+      { preventDefault() {} },
+      "/shows/broken.prism.json",
+    );
+    await settle();
+    fake.dialogs.open = async () => ({
+      canceled: false,
+      filePaths: ["/shows/set1.prism.json"],
+    });
+    const latest = fake.invoke("prism:load-project", event);
+    await settle();
+    assert.deepEqual(starts, ["/shows/intro.prism.json"]);
+    releaseFirst();
+    await first;
+    assert.equal((await latest).project.name, "set1.prism.json");
+    await settle();
+    assert.deepEqual(starts, [
+      "/shows/intro.prism.json",
+      "/shows/broken.prism.json",
+      "/shows/set1.prism.json",
+    ]);
+    assert.equal(
+      (await fake.invoke("prism:get-project", event)).name,
+      "set1.prism.json",
+    );
+    assert.match(opened(fake.editor())[0][1].error, /broken show/);
+    assert.deepEqual(
+      (await fake.invoke("prism:get-recent-projects", event)).map(
+        (entry) => entry.name,
+      ),
+      ["set1.prism.json", "intro.prism.json"],
+    );
+  } finally {
+    fake.restorePlatform();
+  }
+});
+
+test("a save dialog cannot replace the path of a show opened while it was up", async () => {
+  await withProject("Intro", async (intro) => {
+    await withProject("Set 1", async (set1) => {
+      const fake = startMain();
+      try {
+        await fake.becomeReady();
+        const event = fake.from(fake.editor());
+        const project = JSON.parse(await fs.readFile(intro, "utf8"));
+        let finishDialog;
+        fake.dialogs.save = () =>
+          new Promise((resolve) => (finishDialog = resolve));
+        const save = fake.invoke("prism:save-project", event, project);
+        await settle();
+        fake.dialogs.open = async () => ({
+          canceled: false,
+          filePaths: [set1],
+        });
+        await fake.invoke("prism:load-project", event);
+        const savedIntro = path.join(
+          path.dirname(intro),
+          "intro-copy.prism.json",
+        );
+        finishDialog({ canceled: false, filePath: savedIntro });
+        assert.equal((await save).saved, true);
+        let offered;
+        fake.dialogs.save = async (_window, options) => {
+          offered = options.defaultPath;
+          return { canceled: true };
+        };
+        await fake.invoke(
+          "prism:save-project",
+          event,
+          JSON.parse(await fs.readFile(set1, "utf8")),
+        );
+        assert.equal(offered, set1);
+      } finally {
+        fake.restorePlatform();
+      }
+    });
+  });
+});
+
+test("live show transport reaches the output but never survives save and recent reopen", async () => {
+  await withProject("Timeline show", async (file) => {
+    const fake = startMain();
+    try {
+      await fake.becomeReady();
+      const event = fake.from(fake.editor());
+      const project = JSON.parse(await fs.readFile(file, "utf8"));
+      project.version = 3;
+      project.show = {
+        scenes: [
+          { id: "intro", name: "Band intro", surfaces: project.surfaces },
+        ],
+        cues: [{ id: "cue1", sceneId: "intro", duration: 120 }],
+        loop: true,
+      };
+      project.transport = {
+        active: true,
+        position: 30,
+        updatedAt: 123456789,
+        token: "session1",
+        playing: true,
+      };
+      await fake.invoke("prism:open-output", event, 1);
+      fake.send("prism:update-project", event, project);
+      const output = fake.windows[1];
+      const updates = () =>
+        output.webContents.sent.filter(
+          ([channel]) => channel === "prism:project",
+        );
+      assert.deepEqual(updates().at(-1)[1].transport, project.transport);
+      fake.dialogs.save = async () => ({ canceled: false, filePath: file });
+      assert.equal(
+        (await fake.invoke("prism:save-project", event, project)).saved,
+        true,
+      );
+      assert.equal(
+        JSON.parse(await fs.readFile(file, "utf8")).transport,
+        undefined,
+      );
+      const [recent] = await fake.invoke("prism:get-recent-projects", event);
+      const loaded = await fake.invoke(
+        "prism:open-recent-project",
+        event,
+        recent.id,
+      );
+      assert.equal(
+        loaded.project.transport,
+        undefined,
+        "opening a saved show cannot resume playback",
+      );
+      assert.equal(loaded.project.playing, false);
+      assert.equal(loaded.project.blackout, project.blackout);
+      assert.equal(updates().at(-1)[1].transport, undefined);
+      assert.equal(updates().at(-1)[1].playing, false);
+      assert.equal(updates().at(-1)[1].blackout, project.blackout);
+      assert.equal(fake.windows.length, 2);
+    } finally {
+      fake.restorePlatform();
+    }
+  });
 });
 
 test("moving the output to another display does not leave the screen locked awake", async () => {

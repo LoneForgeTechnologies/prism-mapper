@@ -2,7 +2,7 @@
 # Checks an Android APK against what the project promises, using the tools of
 # the Android SDK build-tools (aapt2 and apksigner).
 #
-#   bash mobile/verify-apk.sh <file.apk> <debuggable|release> [signed]
+#   bash mobile/verify-apk.sh <file.apk> <debuggable|release> [signed] [expected certificate SHA256]
 #
 # It checks the application id, the version (versionName from package.json and
 # the versionCode derived from it), the SDK levels, that the manifest turns off
@@ -16,6 +16,11 @@ set -eu
 APK="${1:?path of the APK}"
 KIND="${2:?debuggable or release}"
 SIGNED="${3:-}"
+EXPECTED_SIGNER="${4:-}"
+if [ -n "$EXPECTED_SIGNER" ] && [ "$SIGNED" != signed ]; then
+  echo "An expected signing fingerprint requires the signed check." >&2
+  exit 2
+fi
 
 SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
 [ -n "$SDK" ] || { echo "ANDROID_HOME is not set." >&2; exit 2; }
@@ -81,8 +86,13 @@ fi
 
 if [ "$SIGNED" = "signed" ]; then
   echo "--- signature"
-  "$TOOLS/apksigner" verify --verbose --print-certs "$APK" | grep -E "^Verifies|Signer #1 certificate (DN|SHA-256)|Verified using" || true
+  signature="$("$TOOLS/apksigner" verify --verbose --print-certs "$APK" || true)"
+  grep -E "^Verifies|Signer #1 certificate (DN|SHA-256)|Verified using" <<< "$signature" || true
   expect "the signature verifies" "$TOOLS/apksigner" verify "$APK"
+  if [ -n "$EXPECTED_SIGNER" ]; then
+    expected_signer() { node scripts/verify-apk-signer.mjs "$EXPECTED_SIGNER" <<< "$signature"; }
+    expect "the APK uses the permanent release signing certificate" expected_signer
+  fi
 fi
 
 echo "--- $(basename "$APK"): $(du -h "$APK" | cut -f1)"

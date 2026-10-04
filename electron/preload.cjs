@@ -54,6 +54,9 @@ contextBridge.exposeInMainWorld(
     importMedia: () => ipcRenderer.invoke("prism:import-media"),
     saveProject: (project) => ipcRenderer.invoke("prism:save-project", project),
     loadProject: () => ipcRenderer.invoke("prism:load-project"),
+    getRecentProjects: () => ipcRenderer.invoke("prism:get-recent-projects"),
+    openRecentProject: (id) =>
+      ipcRenderer.invoke("prism:open-recent-project", id),
     onProjectOpened,
     setBlackout: (value) => ipcRenderer.send("prism:set-blackout", value),
   }),

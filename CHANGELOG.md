@@ -1,6 +1,19 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (Unreleased)
+
+This version is in development. The 0.5.0 downloads do not include these scene and timeline features.
+
+### Scenes and local show playback
+
+- Capture complete mapping looks as named scenes, load a scene into the editor and update its geometry, masks, sources and effects. Each scene keeps its own snapshot and uses the project's shared media library.
+- Add local MP4, MOV or WebM videos as scenes and ordered timeline clips. Clip lengths use video metadata, with an editable two-minute fallback when a supported length cannot be read. Twenty two-minute clips make a 40-minute rotation.
+- Reorder clips by drag or arrows, duplicate or remove clips, set lengths, seek, play, pause, stop and loop the rotation. Scene changes use clean cuts and video audio remains muted. Shorter videos hold their final frame until the clip ends.
+- Preview and projector output share a timestamped show clock. Mapping handles and projector guides disappear during playback; editing or opening another project stops the show. No overlapping tracks or crossfades are added.
+- Save separate project files for band intro, pre-show and each set. The desktop panel reopens the eight most recently opened or saved files. New show retains the current mapping and media while clearing scenes and clips.
+- Schema version 3 stores scenes, ordered clips, durations and the loop setting. Playback position and session state are never saved. Existing version-1/2 mappings retain their compatibility; version-3 shows require 0.6 or later.
+- Limits are 128 scenes, 512 clips, 32 layers per snapshot, 256 shared media entries and a 24-hour rotation. Clips range from 0.1 seconds to 120 minutes. Saves exceeding the 5 MB project-file limit are refused with an explanation before writing an unreadable file.
+- Added schema and cross-runtime roundtrips, runtime/persistence separation, local video playback, show controls and recent-project regression coverage. Physical band-show and projector validation remains pending.
 
 ### Local installation and distribution
 
@@ -8,6 +21,12 @@
 - The hosted browser app and GitHub Pages deployment are retired. Installed apps bundle the editor, runtime and generated animations for local use without internet.
 - Installation and update guides now cover downloading on another computer, checking checksums, and transferring the app, project and media to an offline device. Updates are manual.
 - The source-code ZIP remains available for developers, with an initial dependency installation and build required before use.
+
+### Signing preparation
+
+- Mac packaging supports Developer ID signing, hardened runtime, notarization and a stapled ticket. Windows packaging stages executable files for Azure Artifact Signing before creating the portable ZIP, and signs Setup and its uninstaller. Published releases require verified signing; explicit dry runs can use development signatures.
+- Android has a permanent maintainer signing key. The release pipeline verifies its expected certificate fingerprint, allowing future APKs signed with that key to update one another. Existing temporary-key installations need a saved project export and reinstall before changing to this key.
+- Apple and Windows signing accounts still need owner enrollment and credential setup. Existing 0.5.0 downloads remain unchanged. Windows signatures do not guarantee an immediate SmartScreen reputation bypass, and the public unsigned iOS artifact still needs signing and sideloading.
 
 ## 0.5.0 (2026-10-04)
 

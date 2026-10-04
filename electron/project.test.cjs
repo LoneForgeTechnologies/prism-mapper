@@ -94,7 +94,7 @@ test("rejects malformed dimensions, corners, sources, colors, and booleans", () 
       p.blackout = "false";
     },
     (p) => {
-      p.version = 3;
+      p.version = 4;
     },
   ];
   for (const change of changes) {
@@ -322,4 +322,38 @@ test("portable project audio responses round-trip while capture state stays out 
   });
   assert.equal(parsed.audioCapture, undefined);
   assert.equal(parsed.version, 2);
+});
+
+test("a valid show too large to reopen is refused before serialization returns a file", () => {
+  const project = fixture();
+  project.version = 3;
+  const polygon = Array.from({ length: 64 }, (_, index) => {
+    const angle = (index / 64) * Math.PI * 2;
+    return { x: (1 + Math.cos(angle)) / 2, y: (1 + Math.sin(angle)) / 2 };
+  });
+  const surfaces = Array.from({ length: 32 }, (_, index) => ({
+    ...project.surfaces[0],
+    id: `surface-${index}`,
+    name: "界".repeat(200),
+    polygon,
+  }));
+  project.show = {
+    scenes: Array.from({ length: 32 }, (_, index) => ({
+      id: `scene-${index}`,
+      name: `Scene ${index}`,
+      surfaces,
+    })),
+    cues: [],
+    loop: false,
+  };
+  assert.doesNotThrow(
+    () => validateProject(project),
+    "all schema limits are satisfied",
+  );
+  const otherwiseSerialized = JSON.stringify(validateProject(project), null, 2);
+  assert.ok(Buffer.byteLength(otherwiseSerialized, "utf8") > 5 * 1024 * 1024);
+  assert.throws(
+    () => serializeProject(project, "/shows/large.prism.json"),
+    /exceeds 5 MB.*before saving/,
+  );
 });

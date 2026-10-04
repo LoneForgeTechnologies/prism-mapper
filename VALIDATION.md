@@ -1,3 +1,14 @@
+# Version 0.6.0 development validation
+
+Tested locally on October 4, 2026, before publication. This version adds saved scenes, an ordered show timeline and eight recent-project shortcuts in the desktop app. Twenty two-minute clips make a 40-minute rotation. The installed v0.5.0 downloads do not include these changes.
+
+- The production build, formatting and 346 unit tests passed, including project v3 validation, legacy compatibility, transient playback stripping, save size limits, shared-clock playback and desktop recent-project boundaries.
+- Original tiny H.264 MP4 fixtures passed real Chromium decode, ordered cue changes, paused seeks, repeated media, held final frames, show-end pause, loop boundaries, resume and independent preview/output clocks. The desktop and emulated touch UI passed scene capture/load/update, duration editing, ordering, file save/reload and quick switching. Existing mobile layout, animation mix and desktop media checks passed.
+- An isolated Electron profile on this Apple silicon Mac passed native MP4 playback through the local media protocol, four separate show saves/reopens, recent-project persistence after restart and missing-file recovery. Tests opened no projector windows. The packaged Mac application started, saved/opened files and passed the existing desktop behavior checks.
+- Signing configuration and failure paths passed unit tests and workflow syntax checks. Mac and Windows public signing has not been exercised because owner accounts and credentials are not configured. Android has a permanent release key, repository signing secrets and an expected public certificate fingerprint; its signed build still needs CI verification.
+
+These are development results. GitHub CI results will be recorded with the pull request. No 0.6.0 projector session, band performance, physical phone or tablet test has been completed, and no signed 0.6.0 public release has been published.
+
 # Distribution update, October 4, 2026
 
 Prism Mapper is distributed through GitHub Releases as locally installed applications. The hosted GitHub Pages app has been retired. Download the installer, application ZIP, APK or unsigned IPA on a connected device, then copy it to the project device if needed. The desktop and native mobile apps bundle their editor and assets; using them does not require the retired website or an internet connection. iPhone and iPad installation still requires signing or sideloading.

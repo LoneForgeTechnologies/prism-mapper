@@ -57,8 +57,19 @@ async function loadProjectFile(
   }
   if (dropped.size) {
     parsed.media = parsed.media.filter((media) => !dropped.has(media.id));
-    for (const surface of parsed.surfaces)
-      if (dropped.has(surface.source)) surface.source = "grid";
+    const snapshots = [
+      parsed.surfaces,
+      ...(parsed.show?.scenes.map((scene) => scene.surfaces) || []),
+    ];
+    for (const surfaces of snapshots)
+      for (const surface of surfaces)
+        if (dropped.has(surface.source)) surface.source = "grid";
+  }
+  // A show is recalled ready for the operator to start it. Session transport
+  // is never restored from disk, and its base scene must not resume video
+  // while switching shows. The saved blackout setting remains the operator's.
+  if (parsed.show) {
+    parsed.playing = false;
   }
   return { project: parsed, missing };
 }

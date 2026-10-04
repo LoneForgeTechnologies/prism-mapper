@@ -315,6 +315,26 @@ test("the release notes name every download and say what to expect from unsigned
   assert.throws(() => releaseNotes("../1.0.0"));
 });
 
+test("signed release notes describe actual desktop signatures and keep the iOS artifact explicitly unsigned", () => {
+  const notes = releaseNotes(version, null, { signed: true });
+  assert.match(
+    notes,
+    /Windows app, installer and uninstaller have verified publisher signatures/,
+  );
+  assert.match(notes, /signed with Developer ID, notarized by Apple/);
+  assert.match(notes, /does not guarantee an immediate warning-free launch/);
+  assert.match(notes, /APK is signed with the permanent release key/);
+  assert.match(notes, /The `\.ipa` file is unsigned/);
+  assert.match(
+    notes,
+    /development sideload artifact, including in releases whose desktop and Android apps are signed/,
+  );
+  assert.doesNotMatch(
+    notes,
+    /desktop builds are not code-signed|app is ad-hoc signed/,
+  );
+});
+
 test("the release notes point only at phone builds that are in the release", () => {
   const desktop = requiredFiles(version);
   const bare: string = releaseNotes(version, desktop);
