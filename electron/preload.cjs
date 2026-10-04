@@ -8,6 +8,26 @@ function listen(channel, callback) {
   return () => ipcRenderer.removeListener(channel, listener);
 }
 
+// The main process holds a project that the operating system asked to open
+// (a double-clicked file, a second launch, macOS open-file) until the page can
+// show it. Having a listener is that signal: the first one tells the main
+// process the page is ready, and removing the last one tells it the page is not.
+let projectListeners = 0;
+function onProjectOpened(callback) {
+  const stop = listen("prism:project-opened", callback);
+  projectListeners++;
+  if (projectListeners === 1) ipcRenderer.send("prism:project-listener", true);
+  let active = true;
+  return () => {
+    if (!active) return;
+    active = false;
+    stop();
+    projectListeners--;
+    if (projectListeners === 0)
+      ipcRenderer.send("prism:project-listener", false);
+  };
+}
+
 contextBridge.exposeInMainWorld(
   "prism",
   Object.freeze({
@@ -34,6 +54,7 @@ contextBridge.exposeInMainWorld(
     importMedia: () => ipcRenderer.invoke("prism:import-media"),
     saveProject: (project) => ipcRenderer.invoke("prism:save-project", project),
     loadProject: () => ipcRenderer.invoke("prism:load-project"),
+    onProjectOpened,
     setBlackout: (value) => ipcRenderer.send("prism:set-blackout", value),
   }),
 );

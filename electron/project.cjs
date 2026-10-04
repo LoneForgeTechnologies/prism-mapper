@@ -13,8 +13,8 @@ const IMAGE_EXTENSIONS = new Set([
 const VIDEO_EXTENSIONS = new Set([".mp4", ".m4v", ".mov", ".webm", ".ogv"]);
 const MAX_PROJECT_BYTES = 5 * 1024 * 1024;
 
-function mediaKind(filename) {
-  const extension = path.extname(filename).toLowerCase();
+function mediaKind(filename, pathApi = path) {
+  const extension = pathApi.extname(filename).toLowerCase();
   if (IMAGE_EXTENSIONS.has(extension)) return "image";
   if (VIDEO_EXTENSIONS.has(extension)) return "video";
   return null;
@@ -317,6 +317,9 @@ function validateProject(
 function parseProject(text, resolveMedia) {
   if (Buffer.byteLength(text, "utf8") > MAX_PROJECT_BYTES)
     fail("file is larger than 5 MB");
+  // Notepad and Windows PowerShell save UTF-8 text with a byte order mark,
+  // which is not part of the JSON.
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
   let input;
   try {
     input = JSON.parse(text);
@@ -326,15 +329,24 @@ function parseProject(text, resolveMedia) {
   return validateProject(input, resolveMedia);
 }
 
-function serializeProject(project, destination) {
+// Media paths are written relative to the project file, always with forward
+// slashes so the file means the same on every operating system. Windows reads
+// them natively; media on another drive or share is written as an absolute path
+// (C:/Videos/a.mp4, //nas/share/a.mp4). pathApi is only replaced by tests that
+// simulate another operating system.
+function serializeProject(project, destination, pathApi = path) {
   const clean = validateProject(project, (media) => {
-    if (!media.path || !path.isAbsolute(media.path) || !mediaKind(media.path))
+    if (
+      !media.path ||
+      !pathApi.isAbsolute(media.path) ||
+      !mediaKind(media.path, pathApi)
+    )
       fail("media has no valid local path");
     return {
       url: "",
-      path: path
-        .relative(path.dirname(destination), media.path)
-        .split(path.sep)
+      path: pathApi
+        .relative(pathApi.dirname(destination), media.path)
+        .split(pathApi.sep)
         .join("/"),
     };
   });

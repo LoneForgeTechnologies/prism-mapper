@@ -62,3 +62,103 @@ test("streams exact byte ranges and returns 416 for unsatisfiable requests", asy
     await fs.rm(directory, { recursive: true, force: true });
   }
 });
+
+test("uses Chromium's file loader for a whole file when it works", async () => {
+  const request = new Request("media://local/token");
+  const loaded = new Response("from the loader", { status: 200 });
+  const response = await serveMediaFile(
+    path.join(os.tmpdir(), "prism-no-such-file.png"),
+    request,
+    async (url, options) => {
+      assert.match(url, /^file:/);
+      assert.equal(options.method, "GET");
+      return loaded;
+    },
+  );
+  assert.equal(response, loaded);
+});
+
+test("reads a whole file itself when Chromium's file loader cannot", async () => {
+  // Windows: a path longer than 259 characters and \\localhost\share are
+  // files Node reads but Chromium's loader reports as missing.
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "prism-whole-"));
+  const filename = path.join(directory, "sample.png");
+  await fs.writeFile(filename, "0123456789");
+  try {
+    for (const loader of [
+      async () => {
+        throw new Error("net::ERR_FILE_NOT_FOUND");
+      },
+      async () => new Response("Not found", { status: 404 }),
+    ]) {
+      const response = await serveMediaFile(
+        filename,
+        new Request("media://local/token"),
+        loader,
+      );
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("content-type"), "image/png");
+      assert.equal(response.headers.get("content-length"), "10");
+      assert.equal(response.headers.get("accept-ranges"), "bytes");
+      assert.equal(await response.text(), "0123456789");
+    }
+    const head = await serveMediaFile(
+      filename,
+      new Request("media://local/token", { method: "HEAD" }),
+      async () => {
+        throw new Error("net::ERR_FILE_NOT_FOUND");
+      },
+    );
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("content-length"), "10");
+    assert.equal(await head.text(), "");
+
+    await fs.writeFile(path.join(directory, "empty.png"), "");
+    const empty = await serveMediaFile(
+      path.join(directory, "empty.png"),
+      new Request("media://local/token"),
+      async () => {
+        throw new Error("net::ERR_FILE_NOT_FOUND");
+      },
+    );
+    assert.equal(empty.status, 200);
+    assert.equal(await empty.text(), "");
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("reports a file that neither Chromium nor Node can read", async () => {
+  const directory = await fs.mkdtemp(path.join(os.tmpdir(), "prism-whole-"));
+  try {
+    const fails = async () => {
+      throw new Error("net::ERR_FILE_NOT_FOUND");
+    };
+    // Missing: the loader's own failure is what the caller sees.
+    await assert.rejects(
+      serveMediaFile(
+        path.join(directory, "missing.png"),
+        new Request("media://local/token"),
+        fails,
+      ),
+      /ERR_FILE_NOT_FOUND/,
+    );
+    // A folder is not media.
+    const folder = await serveMediaFile(
+      directory,
+      new Request("media://local/token"),
+      fails,
+    );
+    assert.equal(folder.status, 404);
+    await assert.rejects(
+      serveMediaFile(
+        path.join(directory, "missing.png"),
+        new Request("media://local/token"),
+        async () => new Response("Not found", { status: 404 }),
+      ),
+      /could not be loaded \(404\)/,
+    );
+  } finally {
+    await fs.rm(directory, { recursive: true, force: true });
+  }
+});
