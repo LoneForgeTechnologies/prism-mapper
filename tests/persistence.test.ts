@@ -11,6 +11,7 @@ import {
   clearDraft,
   describeDraftProblem,
   describeMissing,
+  describeRefusedFiles,
   describeSharedDraft,
   describeSkipped,
   formatBytes,
@@ -18,10 +19,12 @@ import {
   mediaFromFiles,
   mediaIdsToKeep,
   openIndexedDbBackend,
+  pickedFileKind,
   readBootProject,
   readDraft,
   sanitizeMediaName,
   serializeDraft,
+  sortPickedFiles,
   takeBootReferencedIds,
   writeDraft,
   type MediaBackend,
@@ -253,6 +256,110 @@ test("picked files become media entries with live URLs and valid names", () => {
   const project = createProject();
   project.media = imported.map((i) => ({ ...i.media, url: "" }));
   assert.doesNotThrow(() => validateBrowserProject(project));
+});
+
+test("a picked file with no type is decided by its name: video, picture, project or neither", () => {
+  const kind = (name: string, type = "") => pickedFileKind({ name, type });
+  // The type wins when the browser gives one.
+  assert.equal(kind("a.bin", "video/mp4"), "video");
+  assert.equal(kind("a.bin", "image/heic"), "image");
+  assert.equal(kind("Clip.MOV", "video/quicktime; codecs=avc1"), "video");
+  // Phones and some systems leave it empty.
+  for (const name of ["clip.mp4", "Clip.MOV", "take.webm", "iphone.m4v"])
+    assert.equal(kind(name), "video", name);
+  for (const name of ["a.png", "Photo.JPG", "photo.jpeg", "x.WebP", ".png"])
+    assert.equal(kind(name), "image", name);
+  // A project file is not media, with or without a type.
+  for (const [name, type] of [
+    ["Show.prism.json", ""],
+    ["Show.prism.json", "application/json"],
+    ["show.JSON", ""],
+    ["no extension", "application/json"],
+  ])
+    assert.equal(kind(name, type), "project", `${name} ${type}`);
+  // Anything else is neither.
+  for (const name of [
+    "notes.txt",
+    "scan.pdf",
+    "png",
+    "movie",
+    "archive.zip",
+    "",
+  ])
+    assert.equal(kind(name), "other", name);
+  assert.equal(kind("report.pdf", "application/pdf"), "other");
+  assert.equal(kind("clip.mov", "application/octet-stream"), "video");
+});
+
+test("picked files are sorted into media, project files and others, in order", () => {
+  const files = [
+    new File(["1"], "clip.mov", { type: "" }),
+    new File(["2"], "Show.prism.json", { type: "" }),
+    new File(["3"], "still.png", { type: "image/png" }),
+    new File(["4"], "notes.txt", { type: "text/plain" }),
+    new File(["5"], "b.webm", { type: "" }),
+  ];
+  const sorted = sortPickedFiles(files);
+  assert.deepEqual(
+    sorted.media.map((f) => f.name),
+    ["clip.mov", "still.png", "b.webm"],
+  );
+  assert.deepEqual(
+    sorted.projects.map((f) => f.name),
+    ["Show.prism.json"],
+  );
+  assert.deepEqual(
+    sorted.other.map((f) => f.name),
+    ["notes.txt"],
+  );
+});
+
+test("media from files with an empty type gets its kind from the name, not 'image'", () => {
+  const imported = mediaFromFiles(
+    [
+      new File(["m"], "Holiday.MOV", { type: "" }),
+      new File(["w"], "loop.webm", { type: "" }),
+      new File(["p"], "poster.PNG", { type: "" }),
+    ],
+    () => "blob:x",
+    (() => {
+      let n = 0;
+      return () => `id-${++n}`;
+    })(),
+  );
+  assert.deepEqual(
+    imported.map((i) => [i.media.name, i.media.kind]),
+    [
+      ["Holiday.MOV", "video"],
+      ["loop.webm", "video"],
+      ["poster.PNG", "image"],
+    ],
+  );
+});
+
+test("the message about refused files names them and points a project file to Open", () => {
+  assert.equal(describeRefusedFiles([], []), null);
+  assert.equal(
+    describeRefusedFiles([{ name: "Show.prism.json" }], []),
+    "“Show.prism.json” is a project file, so it was not added as media. Use Open to load it.",
+  );
+  assert.equal(
+    describeRefusedFiles([], [{ name: "notes.txt" }]),
+    "“notes.txt” is not a picture or a video that Prism Mapper can show (PNG, JPEG, WebP, MP4, WebM or MOV), so it was not added.",
+  );
+  const both = describeRefusedFiles(
+    [{ name: "a.prism.json" }, { name: "b.prism.json" }, { name: "c.json" }],
+    [{ name: "x.txt" }, { name: "y.pdf" }],
+  );
+  assert.match(
+    both ?? "",
+    /^“a.prism.json”, “b.prism.json” and 1 more are project files, so they were not added as media. Use Open to load one\./,
+  );
+  assert.match(
+    both ?? "",
+    /“x.txt” and “y.pdf” are not pictures or videos that Prism Mapper can show/,
+  );
+  assert.doesNotMatch(both ?? "", /[\u2013\u2014]/);
 });
 
 // ---------------------------------------------------------------- errors

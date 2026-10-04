@@ -1959,10 +1959,48 @@ async function projectFileChecks(browser) {
     /poster\.png/,
     "the layer names its media",
   );
+
+  // Picked as media: phones can leave the type empty, so the name decides, and
+  // a project file or a document is not a picture.
+  await page.evaluate(() => {
+    const input = document.querySelector(
+      'input[type="file"][accept*="image/png"]',
+    );
+    const transfer = new DataTransfer();
+    for (const name of [
+      "Holiday.MOV",
+      "still.PNG",
+      "Show.prism.json",
+      "notes.txt",
+    ])
+      transfer.items.add(new File(["x"], name, { type: "" }));
+    input.files = transfer.files;
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  await waitFor(
+    async () =>
+      (await project(page)).media.some((m) => m.name === "Holiday.MOV"),
+    "the picked files were not imported",
+  );
+  assert.deepEqual(
+    (await project(page)).media
+      .filter((m) => m.id !== "poster")
+      .map((m) => [m.name, m.kind]),
+    [
+      ["Holiday.MOV", "video"],
+      ["still.PNG", "image"],
+    ],
+    "an empty type is decided by the name; the project file and the document are left out",
+  );
+  const refusal = await page.getByRole("alert").innerText();
+  assert.match(refusal, /“Show\.prism\.json” is a project file/);
+  assert.match(refusal, /“notes\.txt” is not a picture or a video/);
+  assert.doesNotMatch(refusal, /[\u2013\u2014]/);
+
   assert.deepEqual(app.errors, []);
   await app.context.close();
   pass(
-    "project file: opening a desktop project in the web app keeps its media entries, paths and layers",
+    "project file: opening a desktop project in the web app keeps its media entries, paths and layers; files picked as media are told apart by name when the type is empty",
   );
 }
 

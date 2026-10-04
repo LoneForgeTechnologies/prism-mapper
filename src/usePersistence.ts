@@ -18,12 +18,14 @@ import {
   clearDraft,
   describeDraftProblem,
   describeMissing,
+  describeRefusedFiles,
   describeSharedDraft,
   describeSkipped,
   isDraftChangedElsewhere,
   mediaFromFiles,
   mediaIdsToKeep,
   openIndexedDbBackend,
+  sortPickedFiles,
   takeBootReferencedIds,
   writeDraft,
   type SavedMediaUsage,
@@ -138,15 +140,22 @@ export function usePersistence(options: Options) {
   /** Make media entries for picked files and keep their data on the device. */
   const importFiles = useCallback(
     (files: File[]): Media[] => {
+      // A project file or a document picked by mistake is not media.
+      const { media: usable, projects, other } = sortPickedFiles(files);
       const room = Math.max(
         0,
         MAX_MEDIA_FILES - latest.current.project.media.length,
       );
-      const accepted = files.slice(0, room);
-      if (accepted.length < files.length)
-        latest.current.fail(
-          `A project can hold up to ${MAX_MEDIA_FILES} media files, so ${files.length - accepted.length} of the files you picked were not added.`,
-        );
+      const accepted = usable.slice(0, room);
+      const problems = [
+        describeRefusedFiles(projects, other),
+        accepted.length < usable.length
+          ? `A project can hold up to ${MAX_MEDIA_FILES} media files, so ${usable.length - accepted.length} of the files you picked were not added.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      if (problems) latest.current.fail(problems);
       const imported = mediaFromFiles(accepted);
       for (const { media } of imported) savedHere.current.add(media.id);
       if (enabled && imported.length)

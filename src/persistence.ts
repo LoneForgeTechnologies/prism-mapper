@@ -225,6 +225,51 @@ export function sanitizeMediaName(name: string): string {
   return clean.slice(0, 200 - extension.length) + extension;
 }
 
+export type PickedKind = "image" | "video" | "project" | "other";
+const VIDEO_EXTENSIONS = new Set(["mp4", "m4v", "mov", "webm"]);
+const IMAGE_EXTENSIONS = new Set(["png", "jpg", "jpeg", "webp"]);
+/**
+ * What a picked file is: a picture or a video by its type, or by the end of its
+ * name when the browser left the type empty (phones and some systems do for
+ * .mov and .webm). A project file (.prism.json) and anything else is not media.
+ */
+export function pickedFileKind(file: {
+  name: string;
+  type: string;
+}): PickedKind {
+  const type = file.type.split(";")[0].trim().toLowerCase();
+  if (type.startsWith("video/")) return "video";
+  if (type.startsWith("image/")) return "image";
+  const name = file.name.toLowerCase();
+  if (
+    type === "application/json" ||
+    type === "text/json" ||
+    name.endsWith(".json")
+  )
+    return "project";
+  const dot = name.lastIndexOf(".");
+  const extension = dot >= 0 ? name.slice(dot + 1) : "";
+  if (VIDEO_EXTENSIONS.has(extension)) return "video";
+  if (IMAGE_EXTENSIONS.has(extension)) return "image";
+  return "other";
+}
+
+/** Picked files, split into those that can be media and those that cannot. */
+export function sortPickedFiles(files: readonly File[]) {
+  const sorted = {
+    media: [] as File[],
+    projects: [] as File[],
+    other: [] as File[],
+  };
+  for (const file of files) {
+    const kind = pickedFileKind(file);
+    if (kind === "project") sorted.projects.push(file);
+    else if (kind === "other") sorted.other.push(file);
+    else sorted.media.push(file);
+  }
+  return sorted;
+}
+
 export interface ImportedFile {
   media: Media;
   blob: Blob;
@@ -240,7 +285,7 @@ export function mediaFromFiles(
     media: {
       id: createId(),
       name: sanitizeMediaName(file.name),
-      kind: file.type.startsWith("video") ? "video" : "image",
+      kind: pickedFileKind(file) === "video" ? "video" : "image",
       url: createUrl(file),
     },
   }));
@@ -664,6 +709,27 @@ function nameList(names: string[]): string {
   return extra > 0
     ? `${quoted.join(", ")} and ${extra} more`
     : quoted.join(" and ");
+}
+
+/** What to tell the person about picked files that are not pictures or videos, or null when all were. */
+export function describeRefusedFiles(
+  projects: readonly { name: string }[],
+  other: readonly { name: string }[],
+): string | null {
+  const sentences: string[] = [];
+  if (projects.length) {
+    const many = projects.length > 1;
+    sentences.push(
+      `${nameList(projects.map((f) => f.name))} ${many ? "are project files" : "is a project file"}, so ${many ? "they were" : "it was"} not added as media. Use Open to load ${many ? "one" : "it"}.`,
+    );
+  }
+  if (other.length) {
+    const many = other.length > 1;
+    sentences.push(
+      `${nameList(other.map((f) => f.name))} ${many ? "are not pictures or videos" : "is not a picture or a video"} that Prism Mapper can show (PNG, JPEG, WebP, MP4, WebM or MOV), so ${many ? "they were" : "it was"} not added.`,
+    );
+  }
+  return sentences.length ? sentences.join(" ") : null;
 }
 
 /** One friendly message for files that could not be stored, or null when all were. */
