@@ -1801,6 +1801,55 @@ async function projectFileChecks(browser) {
   );
 }
 
+// Every tab and window of the site autosaves to one draft. The tab that did not
+// make a change hears about it from the browser and says so, once.
+async function secondTabChecks(browser) {
+  const first = await openApp(browser, {
+    name: "first tab",
+    width: 1280,
+    height: 800,
+    touch: false,
+    dpr: 1,
+  });
+  const second = await first.context.newPage();
+  const secondErrors = [];
+  second.on("pageerror", (error) => secondErrors.push(error.message));
+  await second.goto(new URL("", baseUrl()).href);
+  await second.waitForSelector(".stage canvas");
+  const warning = first.page.locator(".error-toast");
+  await sleep(300);
+  assert.equal(
+    await warning.count(),
+    0,
+    "opening a second tab is not a reason to warn",
+  );
+  await second.getByLabel("Project name").fill("Edited in the second tab");
+  await warning.waitFor();
+  assert.match(
+    await warning.innerText(),
+    /also open in another tab or window.*Save project/s,
+  );
+  assert.equal(
+    await second.locator(".error-toast").count(),
+    0,
+    "the tab that made the change has nothing to be told",
+  );
+  // Said once: after it is dismissed another change does not bring it back.
+  await first.page.getByRole("button", { name: "Dismiss error" }).click();
+  await second.getByLabel("Project name").fill("Edited again");
+  await waitFor(
+    async () => (await project(first.page)).name === "Edited again",
+    "the second tab's change reached the shared draft",
+  );
+  await sleep(300);
+  assert.equal(await warning.count(), 0, "the warning is not repeated");
+  assert.deepEqual([...first.errors, ...secondErrors], []);
+  await first.context.close();
+  pass(
+    "second tab: a change made in another tab of the site is reported once, opening one is not",
+  );
+}
+
 async function resizeChecks(browser) {
   const app = await openApp(browser, {
     name: "resize",
@@ -1923,6 +1972,7 @@ const GROUPS = {
   performance: performanceCaps,
   desktop: desktopChecks,
   files: projectFileChecks,
+  tabs: secondTabChecks,
   resize: resizeChecks,
 };
 

@@ -18,8 +18,11 @@ import {
   clearDraft,
   describeDraftProblem,
   describeMissing,
+  describeSharedDraft,
   describeSkipped,
+  isDraftChangedElsewhere,
   mediaFromFiles,
+  mediaIdsToKeep,
   openIndexedDbBackend,
   takeBootReferencedIds,
   writeDraft,
@@ -52,6 +55,8 @@ export function usePersistence(options: Options) {
   const saved = useMemo(() => new SavedMedia(openIndexedDbBackend), []);
   const startMedia = useRef(options.project.media);
   const draftProblem = useRef(false);
+  /** Ids of every file this page has handed to storage; the start-up cleanup never touches them. */
+  const savedHere = useRef(new Set<string>());
 
   // Rebuild blob: URLs for media saved by an earlier visit, then clean up what nothing uses.
   useEffect(() => {
@@ -71,13 +76,36 @@ export function usePersistence(options: Options) {
         }));
       if (missing.length || unavailable)
         latest.current.fail(describeMissing(missing, unavailable));
+      // Decided when the cleanup runs, not now: files may have been imported,
+      // and another tab may have changed the draft, while the page was starting.
       const referenced = takeBootReferencedIds();
-      if (referenced) await saved.collectGarbage(referenced);
+      if (referenced)
+        await saved.collectGarbage(() =>
+          mediaIdsToKeep(
+            referenced,
+            latest.current.project.media,
+            savedHere.current,
+          ),
+        );
     })();
     return () => {
       cancelled = true;
     };
   }, [enabled, saved]);
+
+  // Every tab and window of this site autosaves to the same draft. When another
+  // one saves it, say so once, instead of letting the last change win unseen.
+  useEffect(() => {
+    if (!enabled) return;
+    let told = false;
+    const changed = (event: StorageEvent) => {
+      if (told || !isDraftChangedElsewhere(event)) return;
+      told = true;
+      latest.current.fail(describeSharedDraft());
+    };
+    window.addEventListener("storage", changed);
+    return () => window.removeEventListener("storage", changed);
+  }, [enabled]);
 
   // Offline worker, install prompt and the "update ready" notice.
   useEffect(() => {
@@ -120,6 +148,7 @@ export function usePersistence(options: Options) {
           `A project can hold up to ${MAX_MEDIA_FILES} media files, so ${files.length - accepted.length} of the files you picked were not added.`,
         );
       const imported = mediaFromFiles(accepted);
+      for (const { media } of imported) savedHere.current.add(media.id);
       if (enabled && imported.length)
         void saved
           .save(

@@ -11,9 +11,12 @@ import {
   clearDraft,
   describeDraftProblem,
   describeMissing,
+  describeSharedDraft,
   describeSkipped,
   formatBytes,
+  isDraftChangedElsewhere,
   mediaFromFiles,
+  mediaIdsToKeep,
   openIndexedDbBackend,
   readBootProject,
   readDraft,
@@ -494,6 +497,119 @@ test("cleanup removes only Blobs that no project refers to", async () => {
   assert.equal(await saved.collectGarbage(["keep"]), 0);
   assert.equal(await saved.collectGarbage([]), 1);
   assert.equal(backend.records.size, 0);
+});
+
+test("cleanup decides what to keep when it runs, after the saves queued before it", async () => {
+  const { backend, saved } = library();
+  await saved.save([request("early", 10)]);
+  // The page is still starting: the cleanup is queued behind a save, and the
+  // person imports one more file before either of them runs.
+  const keep = new Set(["early"]);
+  const saving = saved.save([request("late", 10)]);
+  const cleaning = saved.collectGarbage(() => keep);
+  keep.add("late");
+  await saving;
+  assert.equal(await cleaning, 0);
+  assert.deepEqual([...backend.records.keys()].sort(), ["early", "late"]);
+});
+
+test("a cleanup that cannot say what to keep removes nothing", async () => {
+  const { backend, saved } = library();
+  await saved.save([request("a", 10), request("b", 10)]);
+  assert.equal(await saved.collectGarbage(() => null), 0);
+  assert.equal(backend.records.size, 2);
+});
+
+test("the start-up cleanup keeps what the draft names now, what is open and what this page saved", () => {
+  const draftNaming = (...ids: string[]) => {
+    const project = createProject();
+    project.media = ids.map((id) => ({
+      id,
+      name: `${id}.png`,
+      kind: "image" as const,
+      url: "",
+    }));
+    project.surfaces[0].source = ids[0] ?? "aurora";
+    return readDraft(memoryStorage(serializeDraft(project)));
+  };
+  const keep = (draft: ReturnType<typeof draftNaming>) =>
+    mediaIdsToKeep(
+      ["at-start"],
+      [{ id: "open" }],
+      new Set(["imported-here"]),
+      draft,
+    )?.sort();
+  assert.deepEqual(keep(draftNaming("other-tab")), [
+    "at-start",
+    "imported-here",
+    "open",
+    "other-tab",
+  ]);
+  assert.deepEqual(keep({ kind: "none" }), [
+    "at-start",
+    "imported-here",
+    "open",
+  ]);
+  // A draft that cannot be read says nothing about what is wanted.
+  assert.equal(keep({ kind: "invalid" }), undefined);
+  assert.equal(keep({ kind: "unavailable" }), undefined);
+});
+
+test("files imported while the page starts, and files another tab saved, survive the cleanup", async () => {
+  const { backend, saved } = library();
+  // Saved by earlier visits: one still in the draft, one nothing uses.
+  await saved.save([request("in-draft", 10), request("orphan", 10)]);
+  const atStart = ["in-draft"];
+  const imported = ["imported-here"];
+  const project = createProject();
+  project.media = [{ id: "from-tab-b", name: "b.png", kind: "image", url: "" }];
+  project.surfaces[0].source = "from-tab-b";
+  const draft = readDraft(memoryStorage(serializeDraft(project)));
+  await saved.save([request("imported-here", 10), request("from-tab-b", 10)]);
+  const removed = await saved.collectGarbage(() =>
+    mediaIdsToKeep(atStart, [], imported, draft),
+  );
+  assert.equal(removed, 1);
+  assert.deepEqual([...backend.records.keys()].sort(), [
+    "from-tab-b",
+    "imported-here",
+    "in-draft",
+  ]);
+});
+
+test("a change to the draft made by another tab is recognised, nothing else is", () => {
+  const storage = memoryStorage();
+  assert.equal(
+    isDraftChangedElsewhere({ key: DRAFT_KEY, storageArea: storage }, storage),
+    true,
+  );
+  assert.equal(
+    isDraftChangedElsewhere(
+      { key: "other-key", storageArea: storage },
+      storage,
+    ),
+    false,
+  );
+  assert.equal(
+    isDraftChangedElsewhere({ key: null, storageArea: storage }, storage),
+    false,
+  );
+  // sessionStorage and other areas are not the autosaved draft.
+  assert.equal(
+    isDraftChangedElsewhere(
+      { key: DRAFT_KEY, storageArea: memoryStorage() },
+      storage,
+    ),
+    false,
+  );
+  assert.equal(
+    isDraftChangedElsewhere({ key: DRAFT_KEY, storageArea: null }, null),
+    false,
+  );
+  const text = describeSharedDraft();
+  assert.match(text, /another tab or window/);
+  assert.match(text, /Save project/);
+  assert.doesNotMatch(text, /[–—]/, "no em or en dashes in user text");
 });
 
 test("clearing removes every Blob and recovers from an earlier failed open", async () => {

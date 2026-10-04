@@ -127,6 +127,42 @@ export function takeBootReferencedIds(): string[] | null {
   return ids;
 }
 
+/**
+ * Media ids the start-up cleanup must keep. The page may have imported files,
+ * and another tab may have changed the draft, since this page started, so the
+ * answer is made when the cleanup runs: what the draft named at the start, what
+ * it names now, what the open project uses and what this page has saved. Null
+ * means skip the cleanup, because a draft that cannot be read says nothing
+ * about which files are still wanted.
+ */
+export function mediaIdsToKeep(
+  atStart: readonly string[],
+  inUse: readonly { id: string }[],
+  savedHere: Iterable<string>,
+  draft: DraftRead = readDraft(),
+): string[] | null {
+  if (draft.kind === "invalid" || draft.kind === "unavailable") return null;
+  return [
+    ...atStart,
+    ...inUse.map((media) => media.id),
+    ...savedHere,
+    ...(draft.kind === "ok" ? draft.project.media.map((m) => m.id) : []),
+  ];
+}
+
+/**
+ * A storage event is only ever sent to the other tabs and windows of the site.
+ * This one says that one of them saved the draft this page also autosaves.
+ */
+export function isDraftChangedElsewhere(
+  event: { key: string | null; storageArea: unknown },
+  storage: unknown = localStore(),
+): boolean {
+  return (
+    event.key === DRAFT_KEY && storage !== null && event.storageArea === storage
+  );
+}
+
 export type DraftWrite =
   { ok: true } | { ok: false; kind: "quota" | "blocked"; error: unknown };
 
@@ -169,6 +205,11 @@ export function describeDraftProblem(kind: "quota" | "blocked"): string {
   return kind === "quota"
     ? "This browser has no room left to autosave your work. Keep this page open and use Save project to keep a copy."
     : "This browser is blocking autosave (private browsing or blocked site data). Your work stays on screen, so use Save project before you close the page.";
+}
+
+/** Said once when another tab or window saves the draft: they share one, and the last change wins. */
+export function describeSharedDraft(): string {
+  return "Prism Mapper is also open in another tab or window. Both autosave to the same draft, so after a reload you get whichever one you changed last. Work in one at a time, and use Save project to keep a copy.";
 }
 
 // Importing files -----------------------------------------------------------
@@ -406,15 +447,26 @@ export class SavedMedia {
     });
   }
 
-  /** Delete stored Blobs that no project refers to. Returns how many were removed. */
-  collectGarbage(referenced: Iterable<string>): Promise<number> {
-    const keep = new Set(referenced);
+  /**
+   * Delete stored Blobs that no project refers to. Returns how many were removed.
+   *
+   * `referenced` may be a function. It is then called when the job runs, after
+   * the Blobs have been listed and after every save queued before this job, so
+   * files imported while the page was still starting up are not mistaken for
+   * leftovers. A function that returns null cancels the cleanup.
+   */
+  collectGarbage(
+    referenced: Iterable<string> | (() => Iterable<string> | null),
+  ): Promise<number> {
     return this.exclusive(async () => {
       try {
         const backend = await this.backend();
-        const stale = (await backend.list())
-          .filter((r) => !keep.has(r.id))
-          .map((r) => r.id);
+        const records = await backend.list();
+        const wanted =
+          typeof referenced === "function" ? referenced() : referenced;
+        if (!wanted) return 0;
+        const keep = new Set(wanted);
+        const stale = records.filter((r) => !keep.has(r.id)).map((r) => r.id);
         if (stale.length) await backend.remove(stale);
         return stale.length;
       } catch {
