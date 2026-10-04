@@ -88,7 +88,7 @@ import {
   shortcutLabel,
 } from "./platform";
 import { helpGuide } from "./help-text";
-import { ownsActivationKeys } from "./keys";
+import { ownsActivationKeys, releaseFocus } from "./keys";
 import { usePersistence } from "./usePersistence";
 import { DeviceSection } from "./DeviceSection";
 import {
@@ -1872,6 +1872,12 @@ function App() {
                 ref={stage}
                 style={{ height: previewSize.height }}
                 {...stageHandlers}
+                onPointerDownCapture={(e) => {
+                  stageHandlers.onPointerDownCapture(e);
+                  // The stage cancels pointerdown, which keeps the focus on the
+                  // button pressed last; Enter would press it again.
+                  releaseFocus(document.activeElement, document.body, e.target);
+                }}
               >
                 <canvas
                   ref={canvas}

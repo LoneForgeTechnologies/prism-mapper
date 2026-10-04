@@ -2286,6 +2286,26 @@ async function keyOwnershipChecks(browser) {
     "Space on the page no longer plays",
   );
 
+  // A press on a layer (the stage cancels pointerdown there too) lets go of
+  // the button pressed before it, so Space plays and pauses again.
+  await page.getByRole("button", { name: "Select tool", exact: true }).click();
+  await clickStage(0.5, 0.5);
+  assert.equal(
+    await page.evaluate(() => document.activeElement === document.body),
+    true,
+    "pressing a layer did not take the focus off the Select tool button",
+  );
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).playing === false,
+    "Space after a press on the stage did not pause",
+  );
+  await page.keyboard.press("Space");
+  await waitFor(
+    async () => (await project(page)).playing === true,
+    "Space after a press on the stage did not play",
+  );
+
   // Enter on a focused button presses it and does not close the outline.
   await drawTriangle();
   await page.getByRole("button", { name: "Select tool", exact: true }).focus();
@@ -2293,9 +2313,15 @@ async function keyOwnershipChecks(browser) {
   await page.locator(".draft-handle").first().waitFor({ state: "detached" });
   assert.equal(await layers(), 1, "Enter on Select did not make a layer");
 
-  // Enter on the page still closes an outline.
+  // Enter on the page still closes an outline. Nothing is blurred by hand:
+  // the Line tool button was pressed with the mouse, then the stage was, and
+  // the stage cancels pointerdown, which used to keep the focus on the button.
   await drawTriangle();
-  await page.evaluate(() => document.activeElement?.blur());
+  assert.equal(
+    await page.evaluate(() => document.activeElement === document.body),
+    true,
+    "pressing the stage did not take the focus off the Line tool button",
+  );
   await page.keyboard.press("Enter");
   await waitFor(async () => (await layers()) === 2, "Enter did not close");
   assert.deepEqual(app.errors, []);

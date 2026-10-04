@@ -33,6 +33,33 @@ const ROLES = new Set([
   "treeitem",
 ]);
 
+/** What holds the focus, as far as letting go of it needs to know. */
+export interface FocusHolder {
+  blur?(): void;
+  contains?(other: unknown): boolean;
+}
+
+/**
+ * The drawing stage cancels pointerdown so the browser does not start a drag or
+ * a text selection, and a canceled pointerdown also keeps the focus on the
+ * control pressed last. Pressing the stage after the Line tool button would
+ * then leave Enter to that button instead of closing the outline. A press on
+ * the stage lets the old control go, as a click on any plain area does.
+ * Returns true when it did.
+ */
+export function releaseFocus(
+  active: FocusHolder | null,
+  page: unknown,
+  pressed: unknown,
+): boolean {
+  if (!active || active === page || typeof active.blur !== "function")
+    return false;
+  // The press landed on the control itself or inside it.
+  if (active.contains?.(pressed)) return false;
+  active.blur();
+  return true;
+}
+
 /** The focused element handles Space and Enter itself, so a shortcut must leave them alone. */
 export function ownsActivationKeys(target: KeyTarget | null): boolean {
   if (!target) return false;

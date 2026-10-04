@@ -1,6 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { ownsActivationKeys, type KeyTarget } from "../src/keys.ts";
+import {
+  ownsActivationKeys,
+  releaseFocus,
+  type FocusHolder,
+  type KeyTarget,
+} from "../src/keys.ts";
 
 // A stand-in for the element a key press is aimed at.
 const element = (
@@ -68,4 +73,43 @@ test("the page, panels and plain elements do not, so the shortcuts still work th
   ];
   for (const [name, target] of plain)
     assert.equal(ownsActivationKeys(target), false, name);
+});
+
+// A stand-in for the element that has the focus. It records when it lets go.
+const holder = (inside: string[] = []) => {
+  const calls: string[] = [];
+  const element: FocusHolder & { calls: string[] } = {
+    calls,
+    blur: () => void calls.push("blur"),
+    contains: (other) => inside.includes(String(other)),
+  };
+  return element;
+};
+
+test("a press on the stage lets go of the button that was pressed last", () => {
+  const lineTool = holder();
+  assert.equal(releaseFocus(lineTool, "body", "stage"), true);
+  assert.deepEqual(lineTool.calls, ["blur"]);
+});
+
+test("a press leaves alone a page that has no control in focus", () => {
+  assert.equal(releaseFocus(null, "body", "stage"), false);
+  const page = holder();
+  assert.equal(releaseFocus(page, page, "stage"), false);
+  assert.deepEqual(page.calls, []);
+});
+
+test("a press on the control itself, or inside it, keeps the focus there", () => {
+  const dialog = holder(["close button", "dialog"]);
+  assert.equal(releaseFocus(dialog, "body", "close button"), false);
+  assert.equal(releaseFocus(dialog, "body", "dialog"), false);
+  assert.deepEqual(dialog.calls, []);
+  // The same dialog does let go for a press somewhere else.
+  assert.equal(releaseFocus(dialog, "body", "stage"), true);
+  assert.deepEqual(dialog.calls, ["blur"]);
+});
+
+test("something that cannot give up the focus is left alone", () => {
+  assert.equal(releaseFocus({}, "body", "stage"), false);
+  assert.equal(releaseFocus({ contains: () => false }, "body", "stage"), false);
 });
