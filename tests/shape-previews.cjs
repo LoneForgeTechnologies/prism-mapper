@@ -114,6 +114,27 @@ const escapeHtml = (text) =>
         `PASS ${pattern.label}: ${shape}, ${best.litChannels} lit channels, ${largestDelta.toFixed(2)} frame delta`,
       );
     }
+    // The alignment outline is a utility, not an animation, so it is not on the
+    // sheet below. Its lines are drawn bolder than the default so they read at
+    // thumbnail size; the animation check skips it for the same reason.
+    const alignment = await page.evaluate(
+      (surface) =>
+        window.advancedHarness.render([surface], {
+          outputWidth: 640,
+          outputHeight: 360,
+        }),
+      { source: "alignment", polygon: outlines.rectangle, edgeWidth: 24 },
+    );
+    assert.equal(alignment.error, 0, "alignment: WebGL error");
+    assert.ok(
+      alignment.pixels.filter((value, i) => i % 4 !== 3 && value > 200).length >
+        200,
+      "alignment: no white line",
+    );
+    await fs.writeFile(
+      path.join(root, "public/previews", "alignment.png"),
+      Buffer.from(alignment.image.split(",")[1], "base64"),
+    );
     assert.deepEqual(
       await page.evaluate(() => window.advancedHarness.errors),
       [],
@@ -154,7 +175,7 @@ const escapeHtml = (text) =>
     });
     assert.deepEqual(errors, []);
     console.log(
-      "PASS: eight nonblank animated shape previews; no renderer or page errors.",
+      "PASS: eight nonblank animated shape previews and the alignment outline; no renderer or page errors.",
     );
   } finally {
     await browser.close();

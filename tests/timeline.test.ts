@@ -41,6 +41,7 @@ function rotation(loop = true): Project {
 
 test("a 40-minute rotation selects every two-minute scene from the shared clock", () => {
   const project = rotation();
+  const saved = project.surfaces[0].source;
   assert.equal(showDuration(project.show!), 2400);
   for (let index = 0; index < 20; index++) {
     for (const offset of [0, 0.125, 119.99]) {
@@ -56,7 +57,7 @@ test("a 40-minute rotation selects every two-minute scene from the shared clock"
   }
   assert.equal(
     project.surfaces[0].source,
-    "aurora",
+    saved,
     "rendering never changes the saved mapping",
   );
 });

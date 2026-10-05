@@ -135,6 +135,15 @@ declare global {
     prism?: DesktopAPI;
   }
 }
+/** The material every new surface starts with: a high-contrast line to align by. */
+export const ALIGNMENT_SOURCE = "alignment";
+/**
+ * Outline width in output pixels until a surface sets its own. The alignment
+ * line is wider, so its white and black lines read at preview size.
+ */
+export function defaultEdgeWidth(source: string): number {
+  return source === ALIGNMENT_SOURCE ? 20 : 12;
+}
 export function newSurface(index: number): Surface {
   const inset = 0.12 + Math.min(index, 8) * 0.025;
   return {
@@ -146,7 +155,7 @@ export function newSurface(index: number): Surface {
       { x: 1 - inset, y: 1 - inset },
       { x: inset, y: 1 - inset },
     ],
-    source: "aurora",
+    source: ALIGNMENT_SOURCE,
     visible: true,
     locked: false,
     opacity: 1,

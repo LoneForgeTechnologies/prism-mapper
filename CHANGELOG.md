@@ -17,6 +17,14 @@ This version is in development. The 0.5.0 downloads do not include these scene a
 - Limits are 128 scenes, 512 clips, 32 layers per snapshot, 256 shared media entries and a 24-hour rotation. Clips range from 0.1 seconds to 120 minutes. Saves exceeding the 5 MB project-file limit are refused with an explanation before writing an unreadable file.
 - Added schema and cross-runtime roundtrips, runtime/persistence separation, local video playback, show controls, dock layout and recent-project regression coverage. Physical band-show and projector validation remains pending.
 
+### Alignment outline
+
+- New shapes start as the **Alignment outline** instead of an animation: a white line exactly on the edge you drag, a black line just inside it and a dim gray fill so the black line shows. The dark surface outside the shape is the other black line. It applies to the starting surface, Rect, Square, Triangle, Circle and the Line tool; cutout masks stay black, and saved projects keep the animation they were saved with.
+- The lines are measured in output pixels from the real outline, so they follow straight, slanted, curved and concave edges and stay sharp in the editor preview and on the projector. **Outline width** sets the white and black lines together (20 px by default, 1 to 80). The outline does not animate or use the accent color.
+- Utility lists the alignment outline first, with its own thumbnail. There are still 46 animations, and four tools instead of three.
+- The outline width control showed 10 px while the renderer used the documented default of 12 px. They now agree.
+- Added unit, GPU (native and low-uniform fallback), editor and catalog checks, and `previews:shapes` now draws the alignment thumbnail.
+
 ### Local installation and distribution
 
 - GitHub Releases is the installation route: Windows Setup or portable ZIP, Mac ZIP, Android APK, and an unsigned iOS IPA that requires signing and sideloading or an Xcode build.

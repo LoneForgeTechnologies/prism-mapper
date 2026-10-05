@@ -11,7 +11,7 @@ Prism Mapper is a half vibe-coded, half-tested project (see the [README](../READ
 1. Connect your projector. On a Mac use **System Settings → Displays**, on Windows press **Windows + P** and choose **Extend**, so the editor and the projector have separate views.
 2. Aim and focus the projector so your wall or object fits inside the beam. Keep it fixed while mapping.
 3. Choose your projector under **Target display** and **Open projector output**. Set a matching canvas aspect ratio to fill the display; other ratios receive black bars.
-4. Use a **Rect** for a flat rectangular face: drag its four corners until the calibration grid fits. For an irregular section, choose **Line tool**, click each corner in order, then **click the first point again** to close it. Inward corners, such as an L-shaped wall section, are supported. Live point guides appear on the projector while drawing.
+4. Use a **Rect** for a flat rectangular face: drag its four corners until its white alignment line sits on the edges of the face. New shapes start as the **Alignment outline**; choose **Utility → Calibration grid** when you also want grid lines. For an irregular section, choose **Line tool**, click each corner in order, then **click the first point again** to close it. Inward corners, such as an L-shaped wall section, are supported. Live point guides appear on the projector while drawing.
 5. Each closed shape becomes a **layer**. Select it and choose an animation or imported image/video. Add another layer for each section. Try **Shape → Edge chase** to run light around the outline, **Triangle weave** on a triangle, or **Radar sweep** on a circle.
 6. Draw a **Mask** around an area that should stay dark, such as a window. A mask blocks layers below it; layers above it can still show. The top row of the layer list is in front.
 7. **Save project** stores your layout and settings in `.prism.json`. Media uses relative file paths; keep the original files with the project when moving it. Missing media stays black until you import and assign a replacement.
@@ -20,6 +20,7 @@ The default software brightness is 65%. The built-in **Setup guide** covers this
 
 ## Mapping and layers
 
+- Every new shape starts as the **Alignment outline**, made for setting up: a white line exactly on the edge you drag, a black line just inside it, and a dim gray fill so the black line shows. The dark surface outside the shape is the other black line. **Outline width** sets the white and black lines together, from 1 to 80 pixels, 20 by default. It counts output pixels, so the smaller editor preview shows thinner lines than the projector does. The outline does not use the accent color and never animates.
 - **Rect / Square** use four-corner perspective warping. **Triangle / Circle** create editable polygon outlines; circles start with 32 points.
 - **Line tool** creates simple outlines with 3 to 64 points. Edges may turn inward but cannot cross, touch another edge, fold back, or leave the canvas. Invalid edits keep the last valid geometry.
 - Drag a point to refine an outline; double-click an edge to insert a point. Choose a point in the inspector to enter exact pixel coordinates or remove it. A shape must retain at least three points.
@@ -104,7 +105,7 @@ Showing the output through a cable, AirPlay, Chromecast or screen mirroring has 
 
 ## Animation library
 
-**46 original procedural animations**, plus calibration grid, checkerboard, and solid color. Every thumbnail is generated from the actual renderer. Category filters, search, shuffle, and a 20-second automatic mix help explore the library.
+**46 original procedural animations**, plus four utilities: the alignment outline, calibration grid, checkerboard, and solid color. Every thumbnail is generated from the actual renderer. Category filters, search, shuffle, and a 20-second automatic mix help explore the library.
 
 | Atmosphere | Geometry     | Playful       | Shape            |
 | ---------- | ------------ | ------------- | ---------------- |
@@ -118,7 +119,7 @@ Showing the output through a cable, AirPlay, Chromecast or screen mirroring has 
 | Snowfall   | Interference | Spectrum      | Triangle weave   |
 | Fireflies  | Prism shards |               |                  |
 
-**Speed** runs from 0 to 3×; 0 freezes just that layer. **Detail** runs from 0.5 to 3×. Shape effects also offer an accent color and outline width. Edge effects follow the actual outline, including inward corners and perspective quads. The rest of the library fills any shape; content positioning changes the composition inside it.
+**Speed** runs from 0 to 3×; 0 freezes just that layer. **Detail** runs from 0.5 to 3×. Shape effects also offer an accent color and outline width; the alignment outline offers only the width. Edge effects follow the actual outline, including inward corners and perspective quads. The rest of the library fills any shape; content positioning changes the composition inside it.
 
 **Play a mix** cycles the selected animation layer every 20 seconds. Pause stops animation and the mix. Manually choosing a material, switching layers, opening a project, or starting a show stops the mix. Resume starts a fresh interval. Use **Scenes & timeline** to save a deliberate sequence instead.
 

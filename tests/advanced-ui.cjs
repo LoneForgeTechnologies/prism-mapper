@@ -86,6 +86,7 @@ const path = require("node:path");
     await page.waitForFunction(() => localStorage.getItem("prism-draft"));
     assert.equal(await page.evaluate(() => typeof window.prism), "undefined");
     assert.equal((await read()).surfaces.length, 1);
+    assert.equal((await read()).surfaces[0].source, "alignment");
     assert.equal((await read()).version, 2);
     await button("Pause playback").click();
     // Disable snapping so assertions describe the entered geometry exactly.
@@ -107,7 +108,7 @@ const path = require("node:path");
     await waitCount(2);
     const outline = await latest();
     assert.equal(outline.kind, "surface");
-    assert.equal(outline.source, "edge-chase");
+    assert.equal(outline.source, "alignment");
     assert.equal(outline.polygon.length, 6);
     outline.polygon.forEach((p, i) => {
       close(p.x, concave[i][0]);
@@ -199,16 +200,17 @@ const path = require("node:path");
     await waitCount(4);
     const triangle = await latest();
     assert.equal(triangle.polygon.length, 3);
-    assert.equal(triangle.source, "triangle-weave");
+    assert.equal(triangle.source, "alignment");
     await button("Add circle").click();
     await waitCount(5);
     const circle = await latest();
     assert.equal(circle.polygon.length, 32);
-    assert.equal(circle.source, "radar");
+    assert.equal(circle.source, "alignment");
     await button("Add square").click();
     await waitCount(6);
     const square = await latest();
     assert.equal(square.polygon, undefined);
+    assert.equal(square.source, "alignment");
     close(
       (square.corners[1].x - square.corners[0].x) * 1920,
       (square.corners[2].y - square.corners[0].y) * 1080,
@@ -218,8 +220,45 @@ const path = require("node:path");
     await waitCount(7);
     const rectangle = await latest();
     assert.equal(rectangle.polygon, undefined);
+    assert.equal(rectangle.source, "alignment");
     console.log(
       "PASS presets: triangle and circle outlines plus perspective rectangle and physically square canvas proportions",
+    );
+
+    // Every new shape starts as the alignment outline, with its width control.
+    assert.equal(
+      await page
+        .getByRole("combobox", { name: "Surface source", exact: true })
+        .inputValue(),
+      "alignment",
+    );
+    assert.equal(
+      await page
+        .getByRole("slider", { name: "Outline width", exact: true })
+        .inputValue(),
+      "20",
+    );
+    assert.equal(
+      await page.getByLabel("Surface color", { exact: true }).count(),
+      0,
+      "the alignment line has no accent color",
+    );
+    await range("Outline width", 9);
+    assert.equal((await latest()).edgeWidth, 9);
+    await button("Aurora").click();
+    assert.equal(
+      await page
+        .getByRole("slider", { name: "Outline width", exact: true })
+        .count(),
+      0,
+      "a full-surface animation has no outline width",
+    );
+    assert.equal((await latest()).source, "aurora");
+    await button("Undo").click();
+    await button("Undo").click();
+    assert.equal((await latest()).source, "alignment");
+    console.log(
+      "PASS default look: new shapes start as the alignment outline with an outline width control and no accent color",
     );
 
     await selectLayer(outline.name);

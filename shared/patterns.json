@@ -368,6 +368,14 @@
     "description": "A green specter rises among headstones and rolling night fog"
   },
   {
+    "id": "alignment",
+    "label": "Alignment outline",
+    "category": "Utility",
+    "shader": 49,
+    "animated": false,
+    "description": "A white line on every edge with a black line just inside it, for fitting the mapping accurately"
+  },
+  {
     "id": "grid",
     "label": "Calibration grid",
     "category": "Utility",

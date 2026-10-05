@@ -48,7 +48,9 @@ import {
   Scissors,
 } from "lucide-react";
 import {
+  ALIGNMENT_SOURCE,
   createProject,
+  defaultEdgeWidth,
   newSurface,
   PATTERNS,
   type Project,
@@ -803,7 +805,8 @@ function App() {
       project.width / project.height,
     );
     next.kind = tool === "mask" ? "mask" : "surface";
-    next.source = tool === "mask" ? "solid" : "edge-chase";
+    // A new outline starts as the alignment line; only a cutout is solid.
+    if (tool === "mask") next.source = "solid";
     next.name =
       tool === "mask"
         ? `Cutout ${project.surfaces.length + 1}`
@@ -816,7 +819,7 @@ function App() {
     message(
       tool === "mask"
         ? "Cutout added. It darkens layers below it."
-        : "Outline closed. Choose an animation for this layer.",
+        : "Outline closed. Fit its points, then choose an animation for this layer.",
     );
   };
   const addPreset = (
@@ -832,12 +835,6 @@ function App() {
       undefined,
       project.width / project.height,
     );
-    next.source =
-      preset === "triangle"
-        ? "triangle-weave"
-        : preset === "circle"
-          ? "radar"
-          : "edge-chase";
     commit({ ...project, surfaces: [...project.surfaces, next] });
     setSelected(next.id);
     setCorner(0);
@@ -1988,7 +1985,10 @@ function App() {
             {tab === "patterns" ? (
               <div className="generator-browser">
                 <div className="generator-intro">
-                  <span>{ANIMATIONS.length} animations · 3 tools</span>
+                  <span>
+                    {ANIMATIONS.length} animations ·{" "}
+                    {CATALOG.length - ANIMATIONS.length} tools
+                  </span>
                   <button
                     className="icon-button"
                     title="Shuffle animation"
@@ -2548,8 +2548,9 @@ function App() {
               <div>
                 <strong>Start with something simple.</strong>
                 <p>
-                  Point your projector at a box or wall. Use the calibration
-                  grid, then use corners or the Line tool to fit the light.
+                  Point your projector at a box or wall. Drag the corners, or
+                  draw with the Line tool, until the white line sits on its
+                  edges.
                 </p>
               </div>
               <button
@@ -2805,12 +2806,17 @@ function App() {
                         />
                       </label>
                     )}
-                  {material?.category === "Shape" &&
+                  {(material?.category === "Shape" ||
+                    surface.source === ALIGNMENT_SOURCE) &&
                     surface.kind !== "mask" && (
                       <>
                         <div className="field-label section-gap">
                           OUTLINE WIDTH{" "}
-                          <span>{surface.edgeWidth ?? 10} px</span>
+                          <span>
+                            {surface.edgeWidth ??
+                              defaultEdgeWidth(surface.source)}{" "}
+                            px
+                          </span>
                         </div>
                         <input
                           type="range"
@@ -2818,11 +2824,20 @@ function App() {
                           min="1"
                           max="80"
                           step="1"
-                          value={surface.edgeWidth ?? 10}
+                          value={
+                            surface.edgeWidth ??
+                            defaultEdgeWidth(surface.source)
+                          }
                           onChange={(e) =>
                             updateSurface({ edgeWidth: Number(e.target.value) })
                           }
                         />
+                        {surface.source === ALIGNMENT_SOURCE && (
+                          <p className="field-help">
+                            A white line on every edge with a black line just
+                            inside it. This is their width together.
+                          </p>
+                        )}
                       </>
                     )}
                   <div className="field-label section-gap">

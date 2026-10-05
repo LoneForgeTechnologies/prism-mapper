@@ -39,7 +39,7 @@ On a phone or tablet there is no second window. Plug the device into the project
 
 ## 3. Map one section
 
-For a rectangular face, click **Rect** and use **Utility → Calibration grid** while aligning. Drag each of its four corner points until the projected rectangle fits the real face. These four points provide perspective correction.
+For a rectangular face, click **Rect**. New shapes start as the **Alignment outline**: a bright white line exactly on the edge, with a black line just inside it. Drag each of its four corner points until that white line sits on the edges of the real face. These four points provide perspective correction. Choose **Utility → Calibration grid** if you also want grid lines to check that the face is flat and straight.
 
 For a triangle, irregular object, or wall section with inward corners:
 

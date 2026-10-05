@@ -15,7 +15,7 @@ The `surfaces` array is back-to-front. Each layer requires a unique ID, name, so
 | `blendMode` | `normal` (default), `add`, or `screen` |
 | `speed` | 0 to 3; default 1 |
 | `detail` | 0.5 to 3; default 1 |
-| `edgeWidth` | 1 to 80 output pixels; default 12 |
+| `edgeWidth` | 1 to 80 output pixels; default 12, or 20 for the alignment outline |
 | `feather` | 0 to 80 output pixels; default 0 |
 | `audio` | Optional per-layer response: enabled, band, amount, mode |
 | `content` | Rotation in degrees, scale, offsetX, offsetY; defaults 0, 1, 0, 0 |
