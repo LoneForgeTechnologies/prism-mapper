@@ -175,7 +175,11 @@ export function problemsFrom(
         `The preview canvas looks blank: ${(facts.pixels.litFraction * 100).toFixed(2)}% of pixels are lit.`,
       );
     }
-    if (facts.pixels.distinctColors < 8) {
+    // A canvas that failed to draw is one flat colour. The default look, the
+    // alignment outline, is only a white line, a black line and a gray fill
+    // with soft edges, which is 6 colours at this precision (the same in
+    // headless Chromium and on the emulators), while an animation draws dozens.
+    if (facts.pixels.distinctColors < 4) {
       problems.push(
         `The preview canvas has only ${facts.pixels.distinctColors} distinct colours.`,
       );
