@@ -75,6 +75,7 @@ Each file has a `.sha256` file, and `SHA256SUMS.txt` lists them all. On Windows 
 The scenes and timeline features below are in the upcoming **0.6.0 development version**. They are not included in the 0.5.0 downloads.
 
 - **Map flat faces and odd shapes.** Perspective rectangles with four draggable corners, and point-by-point outlines (3 to 64 points, inward corners allowed) for triangles, circles and anything else. Up to 32 layers.
+- **An alignment outline for setting up.** Every new shape starts as a white line exactly on its edge with a black line just inside it, over a dim fill, so you can see where the corners and edges really land. Switch to the calibration grid, a checkerboard or any animation when you are ready.
 - **46 original generated animations**, from aurora and ocean to fireworks, neon grids and edge effects that follow your outline, plus 12 Halloween effects. Every thumbnail is rendered by the real renderer. Or use your own pictures and looping videos.
 - **Masks, blend modes and soft edges.** Keep a window dark, overlap layers with Add or Screen, feather edges, and rotate or zoom the content inside a shape without moving the outline.
 - **React to sound.** Layers can pulse with the volume, bass, mids, treble or beats of a microphone or (on desktops) the system output.
@@ -87,7 +88,7 @@ The scenes and timeline features below are in the upcoming **0.6.0 development v
 ## Quick start
 
 1. Connect a projector as an **extended display** (Mac: **System Settings → Displays**, Windows: **Windows + P**, then **Extend**), or just work on your own screen first.
-2. Pick **Rect** for a flat face and drag its four corners until the grid fits, or use the **Line tool**, click each corner in order and click the first point again to close the outline.
+2. Pick **Rect** for a flat face and drag its four corners until the white alignment line sits on its edges, or use the **Line tool**, click each corner in order and click the first point again to close the outline.
 3. Select the layer and choose an animation in the library, or import a picture or video.
 4. Add a **Mask** over anything that should stay dark. **Save project** keeps the layout.
 
@@ -167,7 +168,7 @@ npm run test:mapping          # polygon, mask and blend GPU checks and the editi
 npm run test:mix              # the automatic animation mix
 npm run test:audio            # synthetic audio response and capture interface
 npm run test:mobile           # phone and tablet layout, touch editing, Present mode
-npm run test:show             # scene timeline, local video playback and show controls
+npm run test:show             # scene timeline, local video playback, show controls and the docked panel
 npm run test:pwa              # local browser cache and storage regression (builds and serves dist/ itself)
 npm run test:animations       # every material: animation, pause, speed, detail, blackout (slow)
 ```

@@ -11,7 +11,7 @@ Prism Mapper is a half vibe-coded, half-tested project (see the [README](../READ
 1. Connect your projector. On a Mac use **System Settings → Displays**, on Windows press **Windows + P** and choose **Extend**, so the editor and the projector have separate views.
 2. Aim and focus the projector so your wall or object fits inside the beam. Keep it fixed while mapping.
 3. Choose your projector under **Target display** and **Open projector output**. Set a matching canvas aspect ratio to fill the display; other ratios receive black bars.
-4. Use a **Rect** for a flat rectangular face: drag its four corners until the calibration grid fits. For an irregular section, choose **Line tool**, click each corner in order, then **click the first point again** to close it. Inward corners, such as an L-shaped wall section, are supported. Live point guides appear on the projector while drawing.
+4. Use a **Rect** for a flat rectangular face: drag its four corners until its white alignment line sits on the edges of the face. New shapes start as the **Alignment outline**; choose **Utility → Calibration grid** when you also want grid lines. For an irregular section, choose **Line tool**, click each corner in order, then **click the first point again** to close it. Inward corners, such as an L-shaped wall section, are supported. Live point guides appear on the projector while drawing.
 5. Each closed shape becomes a **layer**. Select it and choose an animation or imported image/video. Add another layer for each section. Try **Shape → Edge chase** to run light around the outline, **Triangle weave** on a triangle, or **Radar sweep** on a circle.
 6. Draw a **Mask** around an area that should stay dark, such as a window. A mask blocks layers below it; layers above it can still show. The top row of the layer list is in front.
 7. **Save project** stores your layout and settings in `.prism.json`. Media uses relative file paths; keep the original files with the project when moving it. Missing media stays black until you import and assign a replacement.
@@ -20,6 +20,7 @@ The default software brightness is 65%. The built-in **Setup guide** covers this
 
 ## Mapping and layers
 
+- Every new shape starts as the **Alignment outline**, made for setting up: a white line exactly on the edge you drag, a black line just inside it, and a dim gray fill so the black line shows. The dark surface outside the shape is the other black line. **Outline width** sets the white and black lines together, from 1 to 80 pixels, 20 by default. It counts output pixels, so the smaller editor preview shows thinner lines than the projector does. The outline does not use the accent color and never animates.
 - **Rect / Square** use four-corner perspective warping. **Triangle / Circle** create editable polygon outlines; circles start with 32 points.
 - **Line tool** creates simple outlines with 3 to 64 points. Edges may turn inward but cannot cross, touch another edge, fold back, or leave the canvas. Invalid edits keep the last valid geometry.
 - Drag a point to refine an outline; double-click an edge to insert a point. Choose a point in the inspector to enter exact pixel coordinates or remove it. A shape must retain at least three points.
@@ -33,13 +34,15 @@ The default software brightness is 65%. The built-in **Setup guide** covers this
 
 Open **Scenes & timeline** in the header; on narrow windows it is the film icon. Scenes store complete snapshots of the mapped layers, including geometry, masks, stacking, sources, content transforms, blend modes and audio response settings. The media library belongs to the whole project. Master brightness and blackout remain live project controls.
 
+The panel docks under the preview, so the preview, Layers, the mapping tools and the Inspector stay on screen and keep working while it is open. It opens about 300 pixels tall. Drag its top edge to change the height, or focus that edge and press the up and down arrow keys (hold Shift for bigger steps; Home and End jump to the smallest and largest size). The preview always keeps room for itself, so a short window makes the panel shorter instead. The chevron button folds the panel into one bar that keeps **Play show**, **Stop show**, **Loop show** and the show clock; press it again to unfold to your size. **Close**, or Escape while focus is inside the panel, puts it away, and it remembers its size when you reopen it. On phones it opens as a sheet above the bottom tabs, and on a phone held sideways as a drawer on the right, with the preview still showing beside or above it.
+
 ### Arrange local videos for a band show
 
 1. Align the mapping and select the non-mask surface that should show the videos. If no video surface exists, importing creates one. Other layers and their sources stay in each scene.
 2. Choose **Add videos to timeline** and pick your local MP4s, MOVs or WebMs. H.264 MP4 is the usual starting format; codec support depends on the device. One scene and one timeline clip are added for each accepted video in selection order.
 3. The app reads each video's metadata for its clip length. If a supported duration cannot be read, it uses **2:00** and reports how many clips need a length check. Lengths are editable as `m:ss` or a number of seconds. Press Enter or leave the field to apply the change.
 4. Drag clips or use **Move earlier / Move later** to arrange them. Duplicate a clip to repeat a scene, or remove it from the timeline. Removing a timeline clip keeps its scene; deleting a scene also removes its clips.
-5. Use **Play show**, **Pause show**, **Stop show** and the playhead slider. Clicking a clip or its timeline segment jumps to it. **Loop show** repeats the whole rotation; otherwise the last scene holds at the end.
+5. Use **Play show**, **Pause show**, **Stop show** and the time ruler. The ruler spans the full rotation, with named video blocks underneath sized by each clip's length. Click the ruler to seek to a time, or a video block to jump to its start. The moving playhead and highlighted block show the current clip; its matching row is highlighted in the ordered list below. Focus the ruler and use arrow keys for keyboard seeking. **Loop show** repeats the whole rotation; otherwise the last scene holds at the end.
 
 For a 40-minute pre-show, add twenty two-minute videos, check that each clip is **2:00**, and confirm the total reads **40:00**. Fifteen such clips make a 30-minute rotation. Enable **Loop show** when you want it to repeat while the audience arrives.
 
@@ -91,7 +94,7 @@ Prism Mapper switches to a touch layout when its window is narrower than 1050 pi
 
 - Five tabs at the bottom open sheets: **Layers**, **Looks** (the animations and your own pictures and videos), **Adjust** (the settings of the selected layer), **Audio** and **Show** (output and brightness).
 - **Select** and **Line tool** sit at the top with undo, redo, pause and blackout. Drag corners with a finger. Tap the first point again to close an outline. Touch targets are at least 44 pixels.
-- The header's **film icon** opens **Scenes & timeline**, including video import, scene capture, clip order and the show playhead. The bottom **Show** tab remains the output and brightness controls.
+- The header's **film icon** opens **Scenes & timeline**, including video import, scene capture, clip order and the show playhead, in a sheet above the bottom tabs with the preview still showing. The bottom **Show** tab remains the output and brightness controls.
 - **Show, then Present on this screen** fills the screen with only the mapped light. A phone or tablet whose screen is cabled or cast to a projector can be the projector's source this way. Turn on **Align** to see the outlines and drag corners while presenting. Tap the screen to bring the controls back. **Blackout** turns the light off at once.
 - On Android the Back button closes a sheet, cancels an outline you are drawing, leaves Present, and otherwise leaves the app.
 - The screen stays on while the app is in front.
@@ -102,7 +105,7 @@ Showing the output through a cable, AirPlay, Chromecast or screen mirroring has 
 
 ## Animation library
 
-**46 original procedural animations**, plus calibration grid, checkerboard, and solid color. Every thumbnail is generated from the actual renderer. Category filters, search, shuffle, and a 20-second automatic mix help explore the library.
+**46 original procedural animations**, plus four utilities: the alignment outline, calibration grid, checkerboard, and solid color. Every thumbnail is generated from the actual renderer. Category filters, search, shuffle, and a 20-second automatic mix help explore the library.
 
 | Atmosphere | Geometry     | Playful       | Shape            |
 | ---------- | ------------ | ------------- | ---------------- |
@@ -116,7 +119,7 @@ Showing the output through a cable, AirPlay, Chromecast or screen mirroring has 
 | Snowfall   | Interference | Spectrum      | Triangle weave   |
 | Fireflies  | Prism shards |               |                  |
 
-**Speed** runs from 0 to 3×; 0 freezes just that layer. **Detail** runs from 0.5 to 3×. Shape effects also offer an accent color and outline width. Edge effects follow the actual outline, including inward corners and perspective quads. The rest of the library fills any shape; content positioning changes the composition inside it.
+**Speed** runs from 0 to 3×; 0 freezes just that layer. **Detail** runs from 0.5 to 3×. Shape effects also offer an accent color and outline width; the alignment outline offers only the width. Edge effects follow the actual outline, including inward corners and perspective quads. The rest of the library fills any shape; content positioning changes the composition inside it.
 
 **Play a mix** cycles the selected animation layer every 20 seconds. Pause stops animation and the mix. Manually choosing a material, switching layers, opening a project, or starting a show stops the mix. Resume starts a fresh interval. Use **Scenes & timeline** to save a deliberate sequence instead.
 

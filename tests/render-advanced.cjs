@@ -29,6 +29,33 @@ function near(actual, expected, message, tolerance = 3) {
     ),
   );
 }
+// Distance in pixels from a point to the closest edge of a polygon.
+function outlineDistance(points, x, y) {
+  let nearest = Infinity;
+  points.forEach((a, i) => {
+    const b = points[(i + 1) % points.length];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const t = Math.max(
+      0,
+      Math.min(1, ((x - a.x) * dx + (y - a.y) * dy) / (dx * dx + dy * dy)),
+    );
+    nearest = Math.min(nearest, Math.hypot(x - a.x - t * dx, y - a.y - t * dy));
+  });
+  return nearest;
+}
+function insideOutline(points, x, y) {
+  let inside = false;
+  points.forEach((a, i) => {
+    const b = points[(i + 1) % points.length];
+    if (
+      a.y > y !== b.y > y &&
+      x < a.x + ((y - a.y) / (b.y - a.y)) * (b.x - a.x)
+    )
+      inside = !inside;
+  });
+  return inside;
+}
 (async () => {
   const browser = await launchBrowser();
   try {
@@ -222,6 +249,106 @@ function near(actual, expected, message, tolerance = 3) {
       assert.ok(
         boundary > interior * 2,
         "edge pattern follows concave inner edge",
+      );
+      // Alignment outline: a white line on the edge, a black line just inside
+      // it and a dim fill, measured in output pixels from the real outline.
+      const align = (extra = {}, view = {}) =>
+        render(
+          [
+            {
+              corners: rect(20 / 320, 20 / 180, 300 / 320, 160 / 180),
+              source: "alignment",
+              edgeWidth: 12,
+              ...extra,
+            },
+          ],
+          { ...opts, ...view },
+        );
+      const WHITE = [255, 255, 255],
+        BLACK = [0, 0, 0],
+        FILL = [107, 107, 107];
+      f = await align();
+      near(pixel(f, 18, 90), BLACK, "alignment: nothing outside the outline");
+      for (const x of [20, 22, 25])
+        near(pixel(f, x, 90), WHITE, `alignment: white line, left, x=${x}`);
+      for (const x of [27, 29, 31])
+        near(pixel(f, x, 90), BLACK, `alignment: black line, left, x=${x}`);
+      for (const x of [33, 60, 160])
+        near(pixel(f, x, 90), FILL, `alignment: fill, x=${x}`);
+      near(pixel(f, 20, 20), WHITE, "alignment: the white corner is exact");
+      near(pixel(f, 21, 21), WHITE, "alignment: corner is white");
+      near(pixel(f, 28, 28), BLACK, "alignment: black corner inside it");
+      near(pixel(f, 160, 21), WHITE, "alignment: white line, top");
+      near(pixel(f, 160, 28), BLACK, "alignment: black line, top");
+      near(pixel(f, 160, 40), FILL, "alignment: fill, top");
+      near(pixel(f, 297, 90), WHITE, "alignment: white line, right");
+      near(pixel(f, 291, 90), BLACK, "alignment: black line, right");
+      near(pixel(f, 160, 158), WHITE, "alignment: white line, bottom");
+      near(pixel(f, 160, 151), BLACK, "alignment: black line, bottom");
+      const still = await align({}, { advance: 9 });
+      assert.deepEqual(still.pixels, f.pixels, "alignment: nothing moves");
+      f = await align({ color: "#ff0000" });
+      near(pixel(f, 22, 90), WHITE, "alignment: the line ignores color");
+      near(pixel(f, 60, 90), FILL, "alignment: the fill ignores color");
+      f = await align({}, { outputWidth: 640, outputHeight: 360 });
+      near(pixel(f, 21, 90), WHITE, "alignment: width is in output pixels");
+      near(pixel(f, 24, 90), BLACK, "alignment: black in output pixels");
+      near(pixel(f, 30, 90), FILL, "alignment: fill in output pixels");
+      f = await align({ edgeWidth: 30 });
+      near(pixel(f, 30, 90), WHITE, "alignment: wide white line");
+      near(pixel(f, 42, 90), BLACK, "alignment: wide black line");
+      near(pixel(f, 60, 90), FILL, "alignment: fill after a wide outline");
+      f = await align({ edgeWidth: undefined });
+      near(pixel(f, 28, 90), WHITE, "alignment: default 20 px, white");
+      near(pixel(f, 34, 90), BLACK, "alignment: default 20 px, black");
+      near(pixel(f, 50, 90), FILL, "alignment: default 20 px, fill");
+      f = await align({ edgeWidth: 1 });
+      near(pixel(f, 20, 90), WHITE, "alignment: thinnest white line");
+      near(pixel(f, 21, 90), BLACK, "alignment: thinnest black line");
+      near(pixel(f, 24, 90), FILL, "alignment: thinnest outline leaves fill");
+      // Slanted, curved and concave edges follow the same rule everywhere.
+      const shapes = {
+        concave: outline,
+        triangle: [
+          { x: 0.5, y: 0.08 },
+          { x: 0.76, y: 0.88 },
+          { x: 0.24, y: 0.88 },
+        ],
+        circle: Array.from({ length: 32 }, (_, i) => ({
+          x: 0.5 + Math.cos((i * Math.PI * 2) / 32) * 0.38 * (180 / 320),
+          y: 0.5 + Math.sin((i * Math.PI * 2) / 32) * 0.38,
+        })),
+      };
+      for (const [name, polygon] of Object.entries(shapes)) {
+        f = await align({ corners: undefined, polygon });
+        const points = polygon.map((p) => ({ x: p.x * 320, y: p.y * 180 }));
+        const tally = { white: 0, black: 0, fill: 0 };
+        let wrong = null;
+        for (let y = 0; y < 180; y++)
+          for (let x = 0; x < 320; x++) {
+            const distance = outlineDistance(points, x + 0.5, y + 0.5);
+            const inside = insideOutline(points, x + 0.5, y + 0.5);
+            let expected;
+            if (!inside) expected = distance > 1.5 ? BLACK : null;
+            else if (distance < 1) expected = null;
+            else if (distance < 5) ((expected = WHITE), tally.white++);
+            else if (distance > 7 && distance < 11)
+              ((expected = BLACK), tally.black++);
+            else if (distance > 13) ((expected = FILL), tally.fill++);
+            else expected = null;
+            if (!expected) continue;
+            const got = pixel(f, x, y);
+            if (got.some((v, i) => Math.abs(v - expected[i]) > 6) && !wrong)
+              wrong = `(${x}, ${y}) distance ${distance.toFixed(2)}: got ${got}, expected ${expected}`;
+          }
+        assert.equal(wrong, null, `alignment on ${name}: ${wrong}`);
+        assert.ok(
+          tally.white > 100 && tally.black > 100 && tally.fill > 500,
+          `alignment on ${name}: ${JSON.stringify(tally)}`,
+        );
+      }
+      console.log(
+        `PASS ${fallback ? "fallback" : "native"}: alignment outline is white on the edge, black just inside, a dim fill, in output pixels, on straight, slanted, curved and concave edges`,
       );
       const warm = await render([{ polygon: outline }], opts);
       const cached = await render([{ polygon: outline }], opts);

@@ -28,7 +28,7 @@
     "ios:simulator": "npm run build && cap sync ios && xcodebuild build -project ios/App/App.xcodeproj -scheme App -configuration Debug -destination 'generic/platform=iOS Simulator' -derivedDataPath ios/App/build/DerivedData CODE_SIGNING_ALLOWED=NO",
     "test:animations": "node tests/animations.cjs",
     "test:mix": "node tests/mix.cjs",
-    "test:show": "node tests/show-playback.cjs && node tests/show-ui.cjs && node tests/show-header.cjs",
+    "test:show": "node tests/show-playback.cjs && node tests/show-ui.cjs && node tests/show-header.cjs && node tests/show-dock.cjs",
     "test:desktop-show": "node tests/show-desktop.cjs",
     "signing:check": "node scripts/check-signing.mjs",
     "test:mobile": "node tests/mobile-ui.cjs",

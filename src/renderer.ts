@@ -1,4 +1,9 @@
-import type { Media, Project, Surface } from "./model";
+import {
+  defaultEdgeWidth,
+  type Media,
+  type Project,
+  type Surface,
+} from "./model";
 import { inverseHomography, matrixToGL } from "./geometry";
 import { patternById } from "./patterns";
 import { boundsQuad, surfacePoints, triangulatePolygon } from "./polygon";
@@ -102,7 +107,7 @@ vec3 aurora(vec2 uv) {
 void main() {
   vec2 screen=vec2(gl_FragCoord.x/u_resolution.x,1.0-gl_FragCoord.y/u_resolution.y);
   vec3 edge=vec3(1.0e20,0.0,0.0);
-  if(u_layer.z>0.0 || (u_source>=29 && u_source<=36)) edge=outlineMetrics(screen);
+  if(u_layer.z>0.0 || (u_source>=29 && u_source<=36) || u_source==49) edge=outlineMetrics(screen);
   float alpha=u_opacity;
   if(u_layer.z>0.0) alpha*=smoothstep(0.0,u_layer.z,edge.x);
   if(u_layer.x>0.5) {gl_FragColor=vec4(0.0,0.0,0.0,alpha);return;}
@@ -132,7 +137,7 @@ void main() {
   if(u_source>=5 && u_source<=12) color=vec4(organicPattern(u_source,uv,u_time),1.0);
   else if(u_source>=13 && u_source<=20) color=vec4(geometricPattern(u_source,uv,u_time),1.0);
   else if(u_source>=21 && u_source<=28) color=vec4(playfulPattern(u_source,uv,u_time),1.0);
-  else if(u_source>=29 && u_source<=36) color=vec4(shapePattern(u_source,uv,u_time,edge.x,edge.y,edge.z),1.0);
+  else if((u_source>=29 && u_source<=36) || u_source==49) color=vec4(shapePattern(u_source,uv,u_time,edge.x,edge.y,edge.z),1.0);
   else if(u_source>=37 && u_source<=48) color=vec4(halloweenPattern(u_source,uv,u_time),1.0);
   alpha*=color.a;
   vec3 rgb=clamp(color.rgb,0.0,1.0)*u_brightness;
@@ -677,7 +682,10 @@ export class ProjectionRenderer {
       );
       gl.uniform1f(
         this.uniforms.edgeWidth,
-        Math.max(1, Math.min(80, surface.edgeWidth ?? 12)),
+        Math.max(
+          1,
+          Math.min(80, surface.edgeWidth ?? defaultEdgeWidth(surface.source)),
+        ),
       );
       const [a, b, c, d] = geometry.contentQuad;
       const physicalLength = (from: typeof a, to: typeof a) =>

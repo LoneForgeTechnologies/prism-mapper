@@ -82,10 +82,13 @@ const { createHash } = require("node:crypto");
       [],
     );
     assert.deepEqual(errors, []);
+    // Shape and Halloween previews come from their own scripts, and so does the
+    // alignment outline: this full-frame render would make its lines hairlines.
     await Promise.all(
       frames
         .filter(
           (f) =>
+            f.id !== "alignment" &&
             !["Shape", "Halloween"].includes(
               catalog.find((p) => p.id === f.id).category,
             ),
@@ -107,7 +110,9 @@ const { createHash } = require("node:crypto");
     await page.setViewportSize({ width: 1200, height: 2550 });
     await page.setContent(
       `<html><body style="margin:0;padding:20px;background:#111c15;color:#c7e8d1;font:15px system-ui"><h1 style="font-weight:500">Prism Mapper · ${animatedCount} animations</h1><div style="display:grid;grid-template-columns:repeat(4,1fr);gap:14px">${frames
-        .filter((f) => !["grid", "checker", "solid"].includes(f.id))
+        .filter(
+          (f) => !["alignment", "grid", "checker", "solid"].includes(f.id),
+        )
         .map(
           (f) =>
             `<div><img src="${f.image}" style="width:100%;display:block;border-radius:6px"><p style="margin:7px 0">${f.label}</p></div>`,

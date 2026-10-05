@@ -2,6 +2,7 @@
  * Original outline-aware WebGL 1 materials. Distances and widths use projector
  * pixels; edgePosition is the normalized arc length around the mapped outline.
  * Uniform u_detail changes density without moving the mapping boundary.
+ * Ids 29 to 36 are the eight shape animations; id 49 is the alignment outline.
  */
 export const shapeGLSL = `
 vec3 shape_palette(float phase) {
@@ -16,6 +17,11 @@ float shape_gaussian(float distance, float width) {
 
 float shape_wrapDistance(float value) {
   return abs(fract(value + .5) - .5);
+}
+
+// 0 before the edge, 1 after it, softened over one canvas pixel on each side.
+float shape_edge(float edge, float distance, float soft) {
+  return smoothstep(edge - soft, edge + soft, distance);
 }
 
 float shape_outline(float distance, float width) {
@@ -138,6 +144,21 @@ vec3 shapePattern(int id, vec2 uv, float time, float edgeDistance, float edgePos
     vec3 col = hue * (.045 + strand * .39 + seam * (.18 + strand * .37));
     col += mix(hue, u_color, .6) * outline * .42;
     return col;
+  }
+
+  // Alignment outline. From the mapped edge inward: a white line, a black line,
+  // then a mid-gray fill for the black line to read against. Beyond the edge is
+  // the unlit surface, the other black line. The white line starts exactly on
+  // the edge, so what you see is where the corners and edges really are. The two
+  // lines split the outline width equally, measured in output pixels, and their
+  // edges soften over one canvas pixel, so they stay crisp in the small preview
+  // and on the projector. Nothing here uses color or time.
+  if (id == 49) {
+    float line = max(width * .5, 1.0);
+    float soft = max(.5, u_resolution.z / u_resolution.x * .5);
+    float white = 1.0 - shape_edge(line, distance, soft);
+    float fill = shape_edge(line * 2.0, distance, soft);
+    return vec3(white + fill * .42);
   }
 
   return vec3(0.0);

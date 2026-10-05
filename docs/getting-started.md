@@ -39,7 +39,7 @@ On a phone or tablet there is no second window. Plug the device into the project
 
 ## 3. Map one section
 
-For a rectangular face, click **Rect** and use **Utility → Calibration grid** while aligning. Drag each of its four corner points until the projected rectangle fits the real face. These four points provide perspective correction.
+For a rectangular face, click **Rect**. New shapes start as the **Alignment outline**: a bright white line exactly on the edge, with a black line just inside it. Drag each of its four corner points until that white line sits on the edges of the real face. These four points provide perspective correction. Choose **Utility → Calibration grid** if you also want grid lines to check that the face is flat and straight.
 
 For a triangle, irregular object, or wall section with inward corners:
 
@@ -87,7 +87,7 @@ Audio stays on the computer and is analyzed without recording, uploading, or bei
 Scenes and timeline are part of the upcoming 0.6 development version; the 0.5.0 downloads do not include them.
 
 1. Finish aligning your surfaces, then select the non-mask surface for your videos.
-2. Open **Scenes & timeline** in the header (the film icon on phones and narrow windows) and choose **Add videos to timeline**.
+2. Open **Scenes & timeline** in the header (the film icon on phones and narrow windows) and choose **Add videos to timeline**. The panel docks under the preview, so you can keep watching the preview and your layers; drag its top edge to make it taller or shorter.
 3. Select your local MP4 files. Each video becomes a scene with a copy of the mapping and a clip in selection order. Its metadata supplies the length; when that cannot be read, the app reports an editable **2:00** fallback.
 4. Use the clip arrows or drag to arrange the sequence. Edit each length as `m:ss` or seconds. Twenty **2:00** clips make a **40:00** pre-show, and fifteen make **30:00**.
 5. Enable **Loop show** if needed, then use **Play show**, **Pause show**, the playhead slider and **Stop show**. Scene changes use clean cuts, and video audio is muted.
