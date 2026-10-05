@@ -167,7 +167,7 @@ npm run test:mapping          # polygon, mask and blend GPU checks and the editi
 npm run test:mix              # the automatic animation mix
 npm run test:audio            # synthetic audio response and capture interface
 npm run test:mobile           # phone and tablet layout, touch editing, Present mode
-npm run test:show             # scene timeline, local video playback and show controls
+npm run test:show             # scene timeline, local video playback, show controls and the docked panel
 npm run test:pwa              # local browser cache and storage regression (builds and serves dist/ itself)
 npm run test:animations       # every material: animation, pause, speed, detail, blackout (slow)
 ```

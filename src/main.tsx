@@ -365,6 +365,10 @@ function App() {
   const showActive = Boolean(showClock.transport?.active);
   const effectivePlaying = showActive ? showClock.playing : project.playing;
   const [showPanel, setShowPanel] = useState(false);
+  // The scenes and timeline dock keeps its size and fold while it is closed and
+  // reopened. It always reopens unfolded, so it is never "missing".
+  const [dockHeight, setDockHeight] = useState(300);
+  const [dockCollapsed, setDockCollapsed] = useState(false);
   const [showBusy, setShowBusy] = useState(false);
   const [opening, setOpening] = useState(false);
   const [recentProjects, setRecentProjects] = useState<RecentProject[]>([]);
@@ -407,6 +411,7 @@ function App() {
   const presentOpener = useRef<HTMLElement | null>(null);
   const insertGuard = useRef(createRepeatGuard());
   const canvasArea = useRef<HTMLDivElement>(null);
+  const stageFrame = useRef<HTMLDivElement>(null);
   const mediaInput = useRef<HTMLInputElement>(null);
   const videoInput = useRef<HTMLInputElement>(null);
   const projectInput = useRef<HTMLInputElement>(null);
@@ -631,20 +636,34 @@ function App() {
     if (!canvasArea.current) return;
     const observer = new ResizeObserver(([entry]) => {
       const ratio = project.width / project.height;
+      // What sits around the stage: its caption above and the hint line below.
+      // Both come and go with the layout, the open sheet and the dock, so they
+      // are measured. The old fixed numbers are only the fallback before the
+      // stage has been laid out.
+      const frame = stageFrame.current;
+      const chrome =
+        frame && stage.current && frame.offsetHeight > 0
+          ? Math.max(0, frame.offsetHeight - stage.current.offsetHeight)
+          : compact
+            ? activeSheet
+              ? 0
+              : 30
+            : 67;
       const width = Math.max(
         1,
         Math.floor(
           Math.min(
             entry.contentRect.width,
-            // Below the stage: the caption and hint on desktop, one hint line
-            // in the compact layout while no sheet is open.
-            (entry.contentRect.height -
-              (compact ? (activeSheet ? 0 : 30) : 67)) *
-              ratio,
+            (entry.contentRect.height - chrome) * ratio,
           ),
         ),
       );
-      setPreviewSize({ width, height: Math.max(1, Math.round(width / ratio)) });
+      const height = Math.max(1, Math.round(width / ratio));
+      setPreviewSize((previous) =>
+        previous.width === width && previous.height === height
+          ? previous
+          : { width, height },
+      );
     });
     observer.observe(canvasArea.current);
     return () => observer.disconnect();
@@ -1121,7 +1140,10 @@ function App() {
       cancelDrawing();
       commit(result.project);
       setSelected(result.project.surfaces[0]?.id || "");
-      if (result.project.show) setShowPanel(true);
+      if (result.project.show) {
+        setDockCollapsed(false);
+        setShowPanel(true);
+      }
       void refreshRecentProjects();
       message(
         result.missing?.length
@@ -1225,6 +1247,7 @@ function App() {
       setAudioFocus(false);
       setOutputSettings(true);
     }
+    setShowPanel(false);
     setSheet((open) => toggleSheet(open, id));
   };
   const startPresent = () => {
@@ -1290,7 +1313,12 @@ function App() {
     const key = (e: KeyboardEvent) => {
       // Present mode listens for its own keys.
       if (presenting) return;
-      if (showPanel && e.key === "Escape") {
+      // The dock sits beside the mapping tools, so Escape must still cancel a
+      // drawing or close the setup guide. It closes the dock only from inside it.
+      const inDock = Boolean(
+        (e.target as HTMLElement).closest?.(".show-panel"),
+      );
+      if (showPanel && inDock && e.key === "Escape") {
         setShowPanel(false);
         return;
       }
@@ -1338,6 +1366,9 @@ function App() {
         e.preventDefault();
         togglePlayback();
       }
+      // Delete, the arrows, digits and the drawing keys act on the selected
+      // layer, never from a control in the timeline dock.
+      if (inDock) return;
       if (tool !== "select") {
         if (e.key === "Escape") {
           e.preventDefault();
@@ -1713,6 +1744,13 @@ function App() {
       data-sheet={activeSheet ?? undefined}
       data-presenting={presenting ? "true" : undefined}
       data-show-active={showActive ? "true" : undefined}
+      data-dock={
+        showPanel && !presenting
+          ? dockCollapsed
+            ? "collapsed"
+            : "open"
+          : undefined
+      }
     >
       <header className="topbar">
         <div className="brand">
@@ -1751,6 +1789,7 @@ function App() {
             aria-pressed={showPanel}
             onClick={() => {
               setSheet(null);
+              if (!showPanel) setDockCollapsed(false);
               setShowPanel((previous) => !previous);
             }}
           >
@@ -2269,7 +2308,11 @@ function App() {
               if (activeSheet && e.target === e.currentTarget) setSheet(null);
             }}
           >
-            <div className="stage-frame" style={{ width: previewSize.width }}>
+            <div
+              className="stage-frame"
+              ref={stageFrame}
+              style={{ width: previewSize.width }}
+            >
               <div className="stage-caption">
                 <span>OUTPUT CANVAS</span>
                 <span>
@@ -2469,19 +2512,54 @@ function App() {
               <span className="loop-chip">LOOP</span>
             </div>
           </div>
-          <div className="getting-started">
-            <span className="step-index">01</span>
-            <div>
-              <strong>Start with something simple.</strong>
-              <p>
-                Point your projector at a box or wall. Use the calibration grid,
-                then use corners or the Line tool to fit the light.
-              </p>
+          {showPanel && !presenting ? (
+            <ShowPanel
+              project={project}
+              recent={recentProjects}
+              busy={showBusy || saving || opening}
+              position={showClock.position}
+              playing={showClock.playing}
+              active={showActive}
+              height={dockHeight}
+              collapsed={dockCollapsed}
+              onHeightChange={setDockHeight}
+              onCollapsedChange={setDockCollapsed}
+              onClose={() => setShowPanel(false)}
+              onShowChange={changeShow}
+              onCapture={captureScene}
+              onLoadScene={loadScene}
+              onUpdateScene={updateScene}
+              onImportVideos={importShowVideos}
+              onPlay={playShow}
+              onPause={pauseShow}
+              onStop={stopShow}
+              onSeek={seekShow}
+              onSave={() => {
+                void save();
+              }}
+              onNew={newShow}
+              onOpenRecent={(id) => {
+                void openRecent(id);
+              }}
+            />
+          ) : (
+            <div className="getting-started">
+              <span className="step-index">01</span>
+              <div>
+                <strong>Start with something simple.</strong>
+                <p>
+                  Point your projector at a box or wall. Use the calibration
+                  grid, then use corners or the Line tool to fit the light.
+                </p>
+              </div>
+              <button
+                onClick={() => setHelp(true)}
+                aria-label="Open setup guide"
+              >
+                Setup guide <span>↗</span>
+              </button>
             </div>
-            <button onClick={() => setHelp(true)} aria-label="Open setup guide">
-              Setup guide <span>↗</span>
-            </button>
-          </div>
+          )}
         </section>
         <aside className="right-panel" {...sheetPanel("right")}>
           <SheetBar
@@ -3207,33 +3285,6 @@ function App() {
             <X size={16} />
           </button>
         </div>
-      )}
-      {showPanel && !presenting && (
-        <ShowPanel
-          project={project}
-          recent={recentProjects}
-          busy={showBusy || saving || opening}
-          position={showClock.position}
-          playing={showClock.playing}
-          active={showActive}
-          onClose={() => setShowPanel(false)}
-          onShowChange={changeShow}
-          onCapture={captureScene}
-          onLoadScene={loadScene}
-          onUpdateScene={updateScene}
-          onImportVideos={importShowVideos}
-          onPlay={playShow}
-          onPause={pauseShow}
-          onStop={stopShow}
-          onSeek={seekShow}
-          onSave={() => {
-            void save();
-          }}
-          onNew={newShow}
-          onOpenRecent={(id) => {
-            void openRecent(id);
-          }}
-        />
       )}
       {help && (
         <div className="modal-backdrop" onClick={() => setHelp(false)}>

@@ -33,6 +33,8 @@ The default software brightness is 65%. The built-in **Setup guide** covers this
 
 Open **Scenes & timeline** in the header; on narrow windows it is the film icon. Scenes store complete snapshots of the mapped layers, including geometry, masks, stacking, sources, content transforms, blend modes and audio response settings. The media library belongs to the whole project. Master brightness and blackout remain live project controls.
 
+The panel docks under the preview, so the preview, Layers, the mapping tools and the Inspector stay on screen and keep working while it is open. It opens about 300 pixels tall. Drag its top edge to change the height, or focus that edge and press the up and down arrow keys (hold Shift for bigger steps; Home and End jump to the smallest and largest size). The preview always keeps room for itself, so a short window makes the panel shorter instead. The chevron button folds the panel into one bar that keeps **Play show**, **Stop show**, **Loop show** and the show clock; press it again to unfold to your size. **Close**, or Escape while focus is inside the panel, puts it away, and it remembers its size when you reopen it. On phones it opens as a sheet above the bottom tabs, and on a phone held sideways as a drawer on the right, with the preview still showing beside or above it.
+
 ### Arrange local videos for a band show
 
 1. Align the mapping and select the non-mask surface that should show the videos. If no video surface exists, importing creates one. Other layers and their sources stay in each scene.
@@ -91,7 +93,7 @@ Prism Mapper switches to a touch layout when its window is narrower than 1050 pi
 
 - Five tabs at the bottom open sheets: **Layers**, **Looks** (the animations and your own pictures and videos), **Adjust** (the settings of the selected layer), **Audio** and **Show** (output and brightness).
 - **Select** and **Line tool** sit at the top with undo, redo, pause and blackout. Drag corners with a finger. Tap the first point again to close an outline. Touch targets are at least 44 pixels.
-- The header's **film icon** opens **Scenes & timeline**, including video import, scene capture, clip order and the show playhead. The bottom **Show** tab remains the output and brightness controls.
+- The header's **film icon** opens **Scenes & timeline**, including video import, scene capture, clip order and the show playhead, in a sheet above the bottom tabs with the preview still showing. The bottom **Show** tab remains the output and brightness controls.
 - **Show, then Present on this screen** fills the screen with only the mapped light. A phone or tablet whose screen is cabled or cast to a projector can be the projector's source this way. Turn on **Align** to see the outlines and drag corners while presenting. Tap the screen to bring the controls back. **Blackout** turns the light off at once.
 - On Android the Back button closes a sheet, cancels an outline you are drawing, leaves Present, and otherwise leaves the app.
 - The screen stays on while the app is in front.
